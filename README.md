@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="agent-init logo" width="480">
+  <img src="assets/logo.png" alt="agent-init logo" width="480">
 </p>
 
 # agent-init
@@ -16,17 +16,17 @@ v0.1 — macOS / Linux only. Windows is not supported in this release.
 
 ## Install
 
-The recommended way to run `agent-init` is via `uvx`:
+The recommended way to run `agent-init` is via `uvx` from this repo:
 
 ```sh
-uvx agent-init --version
-uvx agent-init tui
+uvx --from git+https://github.com/jasperginn/agent-init.git agent-init --version
+uvx --from git+https://github.com/jasperginn/agent-init.git agent-init tui
 ```
 
 To install permanently as a `uv` tool:
 
 ```sh
-uv tool install agent-init
+uv tool install git+https://github.com/jasperginn/agent-init.git
 ```
 
 For local development:
