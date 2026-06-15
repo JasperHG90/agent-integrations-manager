@@ -12,3 +12,5 @@ wheels/
 .DS_Store
 DESIGN.md
 .claude
+snapshot_report.html
+tests/tui/__snapshots__

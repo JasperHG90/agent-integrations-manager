@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.jpg" alt="agent-init logo" width="480">
+</p>
+
 # agent-init
 
 A small CLI + TUI for scaffolding agent-engineering projects.
@@ -12,8 +16,17 @@ v0.1 — macOS / Linux only. Windows is not supported in this release.
 
 ## Install
 
+The recommended way to run `agent-init` is via `uvx`:
+
 ```sh
-uv tool install agent-init   # once published
+uvx agent-init --version
+uvx agent-init tui
+```
+
+To install permanently as a `uv` tool:
+
+```sh
+uv tool install agent-init
 ```
 
 For local development:
