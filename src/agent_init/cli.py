@@ -115,6 +115,18 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _format_callback(ctx: typer.Context, value: str) -> str:
+    """Store the selected output format in ctx.obj for subcommands."""
+    ctx.obj = ctx.obj or {}
+    ctx.obj["format"] = value
+    return value
+
+
+def _get_format(ctx: typer.Context) -> str:
+    """Read the output format selected by the global --format/--json flag."""
+    return (ctx.obj or {}).get("format", format_mod.OutputFormat.TABLE)
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -136,12 +148,27 @@ def main(
         "--profile",
         help="Layout profile to use when launching the TUI.",
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output list commands as JSON instead of tables.",
+    ),
+    output_format: str = typer.Option(
+        format_mod.OutputFormat.TABLE,
+        "--format",
+        help="Output format for list commands: table or json.",
+        callback=_format_callback,
+        is_eager=True,
+    ),
 ) -> None:
     """agent-init: scaffold and manage agent-engineering projects.
 
     With no subcommand, launches the Textual TUI — the primary surface.
     Subcommands are available for scripting/CI.
     """
+    if json_output:
+        ctx.obj = ctx.obj or {}
+        ctx.obj["format"] = format_mod.OutputFormat.JSON
     if ctx.invoked_subcommand is None:
         import sys
 
@@ -295,13 +322,11 @@ def root_add(path: Path = typer.Argument(..., help="Project root path.")) -> Non
 
 @root_app.command("list")
 @_friendly
-def root_list() -> None:
+def root_list(ctx: typer.Context) -> None:
+    """List configured project roots."""
     entries = roots_mod.list_roots()
-    if not entries:
-        typer.echo("no roots configured")
-        return
-    for r in entries:
-        typer.echo(str(r))
+    rows = [{"path": str(r)} for r in entries]
+    format_mod.render(rows, _get_format(ctx), title="roots configured", columns=["path"])
 
 
 @root_app.command("remove")
@@ -330,13 +355,21 @@ def rule_repo_add(
 
 @rule_repo_app.command("list")
 @_friendly
-def rule_repo_list() -> None:
+def rule_repo_list(ctx: typer.Context) -> None:
+    """List registered rule library overlays."""
     entries = rule_repos_mod.list_repos()
-    if not entries:
-        typer.echo("no rule-repos registered")
-        return
-    for r in entries:
-        typer.echo(f"{r.alias}\t{r.url}\tHEAD={(r.last_sha or '?')[:12]}")
+    format_mod.render(
+        entries,
+        _get_format(ctx),
+        title="rule-repos registered",
+        columns=["alias", "url", "default_ref", "head"],
+        row_extractor={
+            "alias": "alias",
+            "url": "url",
+            "default_ref": "default_ref",
+            "head": "last_sha",
+        },
+    )
 
 
 @rule_repo_app.command("refresh")
@@ -373,21 +406,27 @@ def profile_save(
 
 @profile_app.command("list")
 @_friendly
-def profile_list() -> None:
+def profile_list(ctx: typer.Context) -> None:
+    """List saved project profiles."""
     entries = profiles_mod.list_profiles()
-    if not entries:
-        typer.echo("no profiles saved")
-        return
-    for p in entries:
-        mirrors = ",".join(p.mirrors) if p.mirrors else "-"
-        skills_n = len(p.skills)
-        agents_n = len(p.agents)
-        mcp_n = len(p.mcp_servers)
-        rules_n = len(p.rules)
-        typer.echo(
-            f"{p.name}\ttemplate={p.template}\tmirrors={mirrors}\t"
-            f"skills={skills_n}\tagents={agents_n}\tmcp={mcp_n}\trules={rules_n}"
-        )
+    rows = [
+        {
+            "name": p.name,
+            "template": p.template,
+            "mirrors": ",".join(p.mirrors) or "-",
+            "skills": len(p.skills),
+            "agents": len(p.agents),
+            "mcp": len(p.mcp_servers),
+            "rules": len(p.rules),
+        }
+        for p in entries
+    ]
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title="profiles saved",
+        columns=["name", "template", "mirrors", "skills", "agents", "mcp", "rules"],
+    )
 
 
 @profile_app.command("show")
@@ -450,15 +489,22 @@ def mcp_search_cmd(query: str = typer.Argument(..., help="Search term.")) -> Non
 @mcp_app.command("list")
 @_friendly
 def mcp_list_cmd(
+    ctx: typer.Context,
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
     """List MCP servers installed in the project."""
     m = manifest_mod.load_or_default(_here(project))
-    if not m.mcp_servers:
-        typer.echo("no MCP servers installed")
-        return
-    for s in m.mcp_servers:
-        typer.echo(f"{s.alias}\t{s.registry_name}\t{s.current.registry_version or '?'}")
+    format_mod.render(
+        m.mcp_servers,
+        _get_format(ctx),
+        title="MCP servers installed",
+        columns=["alias", "registry_name", "version"],
+        row_extractor={
+            "alias": "alias",
+            "registry_name": "registry_name",
+            "version": "current.registry_version",
+        },
+    )
 
 
 @mcp_app.command("install")
@@ -652,17 +698,19 @@ def rule_add(
 
 @rule_app.command("list")
 @_friendly
-def rule_list() -> None:
+def rule_list(ctx: typer.Context) -> None:
     """List rules in the global library."""
     entries = rules_mod.list_all()
-    if not entries:
-        typer.echo("no rules registered")
-        return
-    for r in entries:
-        flag = "*" if r.is_default else " "
-        desc = f" — {r.description}" if r.description else ""
-        typer.echo(f"{flag} {r.name}{desc}")
-    typer.echo("\n(* = global default; auto-seeded by `init`)")
+    rows = [
+        {"name": r.name, "default": r.is_default, "source": r.source, "description": r.description}
+        for r in entries
+    ]
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title="rules registered",
+        columns=["name", "default", "source", "description"],
+    )
 
 
 @rule_app.command("edit")
@@ -745,15 +793,22 @@ def repo_add(
 
 @repo_app.command("list")
 @_friendly
-def repo_list() -> None:
+def repo_list(ctx: typer.Context) -> None:
+    """List registered skill source repositories."""
     repos = repos_mod.list_repos()
-    if not repos:
-        typer.echo("no repos registered")
-        return
-    for r in repos:
-        sha = r.last_sha[:12] if r.last_sha else "?"
-        when = r.last_fetched_at.isoformat() if r.last_fetched_at else "?"
-        typer.echo(f"{r.alias}\t{r.url}\t{sha}\tlast_fetched={when}")
+    format_mod.render(
+        repos,
+        _get_format(ctx),
+        title="repos registered",
+        columns=["alias", "url", "default_ref", "head", "last_fetched"],
+        row_extractor={
+            "alias": "alias",
+            "url": "url",
+            "default_ref": "default_ref",
+            "head": "last_sha",
+            "last_fetched": "last_fetched_at",
+        },
+    )
 
 
 @repo_app.command("remove")
@@ -784,27 +839,33 @@ def repo_refresh(alias: str) -> None:
 @skill_app.command("list")
 @_friendly
 def skill_list(
+    ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
 ) -> None:
+    """List indexed skills."""
     rows = skills_mod.list_skills(repo)
-    if not rows:
-        typer.echo("no skills indexed")
-        return
-    for row in rows:
-        desc = f" — {row.description}" if row.description else ""
-        typer.echo(f"{row.qualified_name}{desc}")
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title="skills indexed",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+    )
 
 
 @skill_app.command("search")
 @_friendly
-def skill_search(query: str = typer.Argument(..., help="Substring to match.")) -> None:
+def skill_search(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="Substring to match."),
+) -> None:
+    """Search indexed skills by substring."""
     rows = skills_mod.search(query)
-    if not rows:
-        typer.echo(f"no skills match {query!r}")
-        return
-    for row in rows:
-        desc = f" — {row.description}" if row.description else ""
-        typer.echo(f"{row.qualified_name}{desc}")
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title=f"skills matching {query!r}",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+    )
 
 
 @skill_app.command("install")
@@ -907,27 +968,33 @@ def skill_rollback(
 @agent_app.command("list")
 @_friendly
 def agent_list(
+    ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
 ) -> None:
+    """List indexed sub-agents."""
     rows = agents_mod.list_agents(repo)
-    if not rows:
-        typer.echo("no agents indexed")
-        return
-    for row in rows:
-        desc = f" — {row.description}" if row.description else ""
-        typer.echo(f"{row.qualified_name}{desc}")
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title="agents indexed",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+    )
 
 
 @agent_app.command("search")
 @_friendly
-def agent_search(query: str = typer.Argument(..., help="Substring to match.")) -> None:
+def agent_search(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="Substring to match."),
+) -> None:
+    """Search indexed sub-agents by substring."""
     rows = agents_mod.search(query)
-    if not rows:
-        typer.echo(f"no agents match {query!r}")
-        return
-    for row in rows:
-        desc = f" — {row.description}" if row.description else ""
-        typer.echo(f"{row.qualified_name}{desc}")
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title=f"agents matching {query!r}",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+    )
 
 
 @agent_app.command("install")
