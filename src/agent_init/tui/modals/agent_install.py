@@ -17,7 +17,10 @@ class AgentInstallConfig:
 
 
 class AgentInstallModal(ModalScreen[AgentInstallConfig | None]):
-    BINDINGS = [("escape", "action_cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "action_cancel", "Cancel"),
+        ("enter", "submit", "Install"),
+    ]
 
     def __init__(self, qualified_name: str, *, initial_project: Path | None = None) -> None:
         super().__init__()
@@ -43,15 +46,21 @@ class AgentInstallModal(ModalScreen[AgentInstallConfig | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "go":
-            value = self.query_one("#project-root", Input).value.strip()
-            if not value:
-                self.query_one("#error", Static).update("project root is required")
-                self.app.notify("project root is required", severity="error", title="Install")
-                self.query_one("#project-root", Input).focus()
-                return
-            self.dismiss(AgentInstallConfig(project_root=Path(value).expanduser()))
+            self._submit()
         else:
             self.dismiss(None)
+
+    def action_submit(self) -> None:
+        self._submit()
+
+    def _submit(self) -> None:
+        value = self.query_one("#project-root", Input).value.strip()
+        if not value:
+            self.query_one("#error", Static).update("project root is required")
+            self.app.notify("project root is required", severity="error", title="Install")
+            self.query_one("#project-root", Input).focus()
+            return
+        self.dismiss(AgentInstallConfig(project_root=Path(value).expanduser()))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

@@ -30,6 +30,7 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
     BINDINGS = [
         ("escape", "action_cancel", "Cancel"),
         ("b", "action_cancel", "Back"),
+        ("enter", "submit", "Install"),
     ]
 
     def __init__(
@@ -105,6 +106,15 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
         if not self._editable:
             self.dismiss(None)
             return
+        self._submit()
+
+    def action_submit(self) -> None:
+        if not self._editable:
+            self.dismiss(None)
+            return
+        self._submit()
+
+    def _submit(self) -> None:
         project = self.query_one("#project-root", Input).value.strip()
         alias = self.query_one("#alias", Input).value.strip()
         if not project:

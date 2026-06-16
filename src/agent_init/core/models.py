@@ -99,6 +99,18 @@ class AgentIndex(SQLModel, table=True):
     model: str | None = None
 
 
+class RuleIndex(SQLModel, table=True):
+    """Discovered rule within a registered repo, used for rule search/overlay."""
+
+    qualified_name: str = SQLField(primary_key=True)  # "<alias>/<rule_name>"
+    repo_alias: str = SQLField(index=True)
+    rule_name: str = SQLField(index=True)
+    rule_md_path: str  # path of the .md file relative to repo root
+    title: str | None = None
+    description: str | None = None
+    indexed_at_sha: str
+
+
 # ---------- Manifest (per-project JSON, committed) ----------
 
 CURRENT_MANIFEST_VERSION = 4  # v4: mcp_servers and agents lists (additive)

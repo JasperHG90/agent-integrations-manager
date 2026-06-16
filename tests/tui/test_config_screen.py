@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_init.core import init as init_mod
-from agent_init.core import manifest
+from agent_init.core import layout_profiles, manifest
 from agent_init.tui.app import AgentInitApp
 from agent_init.tui.screens.config_screen import ConfigScreen
 
@@ -19,7 +19,6 @@ async def test_project_tab_shows_current_manifest(
     init_mod.run(
         init_mod.InitOptions(
             project_root=project_root,
-            mirrors=("CLAUDE.md",),
             agent_dialect="claude",
         )
     )
@@ -28,12 +27,10 @@ async def test_project_tab_shows_current_manifest(
         await pilot.pause()
         app.push_screen(ConfigScreen(project_root))
         await pilot.pause()
-        from textual.widgets import Checkbox, Input, Static
+        from textual.widgets import Input, Static
 
         assert app.screen.query_one("#proj-root", Input).value == str(project_root.resolve())
         assert app.screen.query_one("#proj-template", Input).value == "default"
-        assert app.screen.query_one("#proj-mirror-CLAUDE-md", Checkbox).value is True
-        assert app.screen.query_one("#proj-mirror-GEMINI-md", Checkbox).value is False
         assert app.screen.query_one("#proj-dialect", Input).value == "claude"
         # Active layout profile summary is shown.
         assert "layout profile" in str(app.screen.query_one("#active-profile", Static).content).lower()
@@ -48,10 +45,8 @@ async def test_project_save_writes_manifest(
         await pilot.pause()
         app.push_screen(ConfigScreen(project_root))
         await pilot.pause()
-        from textual.widgets import Button, Checkbox
+        from textual.widgets import Button
 
-        app.screen.query_one("#proj-mirror-GEMINI-md", Checkbox).value = True
-        await pilot.pause()
         for btn in app.screen.query(Button):
             if btn.id == "proj-save":
                 btn.press()
@@ -60,5 +55,7 @@ async def test_project_save_writes_manifest(
         await pilot.pause()
 
     m = manifest.load(project_root)
-    assert "GEMINI.md" in m.managed_files
-    assert (project_root / "GEMINI.md").exists()
+    profile = layout_profiles.resolve_active(project_root)
+    for mirror in profile.mirrors:
+        assert mirror in m.managed_files
+        assert (project_root / mirror).exists()

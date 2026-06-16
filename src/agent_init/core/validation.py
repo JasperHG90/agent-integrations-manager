@@ -46,3 +46,12 @@ def is_valid_agent_name(name: str) -> bool:
     characters ending up in `.claude/agents/<name>.md`.
     """
     return bool(_ALIAS_RE.fullmatch(name))
+
+
+def is_valid_rule_name(name: str) -> bool:
+    """Validate a rule file stem.
+
+    Mirrors alias rules to avoid `.`, `..`, path separators, and shell-special
+    characters ending up in `.claude/rules/<name>.md`.
+    """
+    return bool(_ALIAS_RE.fullmatch(name))

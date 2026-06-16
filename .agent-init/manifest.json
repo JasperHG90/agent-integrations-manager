@@ -33,10 +33,93 @@
       "content_hash": "4557d54c524c67984e4bab23fa436e90196292ae8df4d2093f0ce0e6951bfc1c",
       "pin": null,
       "track": null
+    },
+    {
+      "qualified_name": "anthropic/internal-comms",
+      "repo_alias": "anthropic",
+      "repo_url": "https://github.com/anthropics/skills",
+      "source_path": "skills/internal-comms",
+      "target_dir": ".claude/skills/internal-comms",
+      "current": {
+        "tag": null,
+        "sha": "b9e19e6f44773509fbdd7001d77ff41a49a486c1",
+        "installed_at": "2026-06-16T13:01:14.661179Z"
+      },
+      "history": [],
+      "content_hash": "9ad903576ebda039209c784708f8a69135aef47ce3532438d0870a00ca30d00d",
+      "pin": null,
+      "track": null
+    },
+    {
+      "qualified_name": "hoodini/mermaid-diagrams",
+      "repo_alias": "hoodini",
+      "repo_url": "https://github.com/hoodini/ai-agents-skills",
+      "source_path": "skills/mermaid-diagrams",
+      "target_dir": ".claude/skills/mermaid-diagrams",
+      "current": {
+        "tag": "stable-pre-design-consolidation-v1",
+        "sha": "0951120990283b242dfc8c8cc238775e361a6df4",
+        "installed_at": "2026-06-16T13:01:50.035147Z"
+      },
+      "history": [],
+      "content_hash": "1f2b8c27568304cd1634dd6cd480ce34567f3b8009f30a38836b3a28444f32ee",
+      "pin": null,
+      "track": null
     }
   ],
-  "agents": [],
-  "mcp_servers": [],
+  "agents": [
+    {
+      "qualified_name": "0xforai/astro-expert",
+      "repo_alias": "0xforai",
+      "repo_url": "https://github.com/0xfurai/claude-code-subagents",
+      "source_path": "agents/astro-expert.md",
+      "target_path": ".claude/agents/astro-expert.md",
+      "current": {
+        "tag": null,
+        "sha": "ac521270089d83ad1e427acb4bff0b5d7434b276",
+        "installed_at": "2026-06-16T13:02:38.827026Z"
+      },
+      "history": [],
+      "content_hash": "2dca9595f2a8635a224862027352f5f8a8bd0b2070f20321c2b1ad67fa709398",
+      "pin": null,
+      "track": null
+    }
+  ],
+  "mcp_servers": [
+    {
+      "alias": "playwright-mcp",
+      "registry_name": "io.github.microsoft/playwright-mcp",
+      "entry": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@playwright/mcp"
+        ],
+        "env": {},
+        "url": null,
+        "headers": {}
+      },
+      "entry_hash": "b4dc275c4ef0af87dc483e09040bee9f9ca8922d049d6cdececf4ef50ea5a85d",
+      "current": {
+        "definition_hash": "3350512cdb6b562248ead5902acf572e29285d89246c98be70129f1f46f70688",
+        "registry_version": "0.0.76",
+        "installed_at": "2026-06-16T13:02:23.062658Z",
+        "entry": {
+          "type": "stdio",
+          "command": "npx",
+          "args": [
+            "-y",
+            "@playwright/mcp"
+          ],
+          "env": {},
+          "url": null,
+          "headers": {}
+        }
+      },
+      "history": []
+    }
+  ],
   "rules": [],
   "managed_files": [
     "AGENTS.md",

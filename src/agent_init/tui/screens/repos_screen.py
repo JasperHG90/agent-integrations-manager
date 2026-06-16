@@ -15,13 +15,14 @@ from agent_init.tui.modals.repo_add import RepoAddModal, RepoAddResult
 
 
 def kind_tag(kinds: set[str]) -> str:
-    if "skill" in kinds and "agent" in kinds:
-        return "skills + agents"
+    parts: list[str] = []
     if "skill" in kinds:
-        return "skills"
+        parts.append("skills")
     if "agent" in kinds:
-        return "agents"
-    return "—"
+        parts.append("agents")
+    if "rules" in kinds:
+        parts.append("rules")
+    return " + ".join(parts) if parts else "—"
 
 
 class ReposScreen(Screen[None]):

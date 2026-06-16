@@ -15,6 +15,7 @@ all read operations use `git -C` against the bare repo.
 
 from __future__ import annotations
 
+import importlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from agent_init.core import db, git, paths
-from agent_init.core.models import AgentIndex, RegisteredRepo, SkillIndex
+from agent_init.core.models import AgentIndex, RegisteredRepo, RuleIndex, SkillIndex
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -96,21 +97,29 @@ def add(
         session.refresh(repo)
 
     # Index now. Lazy imports to break circular deps.
-    from agent_init.core import agents as _agents
-    from agent_init.core import skills as _skills
+    _skills = importlib.import_module("agent_init.core.skills")
+    _agents = importlib.import_module("agent_init.core.agents")
+    _repo_rules = importlib.import_module("agent_init.core.repo_rules")
 
     try:
         skill_result = _skills.index_repo(alias)
         agent_result = _agents.index_repo(alias)
+        rule_result = _repo_rules.index_repo(alias)
     except Exception:
         # Roll back the registration so the next attempt isn't blocked.
         remove(alias)
         raise
-    if not skill_result.indexed and not agent_result.indexed and not allow_empty:
+    if (
+        not skill_result.indexed
+        and not agent_result.indexed
+        and not rule_result.indexed
+        and not allow_empty
+    ):
         remove(alias)
         raise RepoHasNoArtifactsError(
             f"{alias}: no SKILL.md found under skills/, .claude/skills/, or repo root, "
-            f"and no AGENT.md found under agents/ or .claude/agents/"
+            f"no AGENT.md found under agents/ or .claude/agents/, "
+            f"and no rule .md found under rules/ or .claude/rules/"
         )
     return repo
 
@@ -123,13 +132,15 @@ def list_repos() -> list[RegisteredRepo]:
 
 
 def artifact_kinds(alias: str) -> set[str]:
-    """Return {"skill"} / {"agent"} / {"skill", "agent"} / set() for a repo."""
+    """Return which artifact types a repo contains: skill, agent, rules."""
     kinds: set[str] = set()
     with db.session() as session:
-        if session.exec(select(SkillIndex).where(SkillIndex.repo_alias == alias).limit(1)).first():
+        if session.exec(select(SkillIndex).where(SkillIndex.repo_alias == alias).limit(1)).first():  # type: ignore[arg-type]
             kinds.add("skill")
-        if session.exec(select(AgentIndex).where(AgentIndex.repo_alias == alias).limit(1)).first():
+        if session.exec(select(AgentIndex).where(AgentIndex.repo_alias == alias).limit(1)).first():  # type: ignore[arg-type]
             kinds.add("agent")
+        if session.exec(select(RuleIndex).where(RuleIndex.repo_alias == alias).limit(1)).first():  # type: ignore[arg-type]
+            kinds.add("rules")
     return kinds
 
 
@@ -148,6 +159,7 @@ def remove(alias: str) -> None:
             raise RepoNotFoundError(alias)
         session.exec(_delete_skill_index(alias))
         session.exec(_delete_agent_index(alias))
+        session.exec(_delete_rule_index(alias))
         session.delete(row)
         session.commit()
     git.remove_clone(clone_dir(alias))
@@ -156,7 +168,7 @@ def remove(alias: str) -> None:
 def _delete_skill_index(alias: str):  # type: ignore[no-untyped-def]
     from sqlmodel import delete as _delete
 
-    return _delete(SkillIndex).where(SkillIndex.repo_alias == alias)
+    return _delete(SkillIndex).where(SkillIndex.repo_alias == alias)  # type: ignore[arg-type]
 
 
 def _delete_agent_index(alias: str):  # type: ignore[no-untyped-def]
@@ -164,7 +176,15 @@ def _delete_agent_index(alias: str):  # type: ignore[no-untyped-def]
 
     from agent_init.core.models import AgentIndex as _AgentIndex
 
-    return _delete(_AgentIndex).where(_AgentIndex.repo_alias == alias)
+    return _delete(_AgentIndex).where(_AgentIndex.repo_alias == alias)  # type: ignore[arg-type]
+
+
+def _delete_rule_index(alias: str):  # type: ignore[no-untyped-def]
+    from sqlmodel import delete as _delete
+
+    from agent_init.core.models import RuleIndex as _RuleIndex
+
+    return _delete(_RuleIndex).where(_RuleIndex.repo_alias == alias)  # type: ignore[arg-type]
 
 
 def rename(old: str, new: str) -> RegisteredRepo:
@@ -190,7 +210,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
         session.delete(existing)
         session.add(renamed)
         # Move skill and agent index rows too.
-        for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == old)).all()):
+        for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == old)).all()):  # type: ignore[arg-type]
             new_qn = f"{new}/{row.skill_name}"
             session.add(
                 SkillIndex(
@@ -207,7 +227,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
                 )
             )
             session.delete(row)
-        for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == old)).all()):
+        for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == old)).all()):  # type: ignore[arg-type]
             new_qn = f"{new}/{row.agent_name}"
             session.add(
                 AgentIndex(
@@ -246,7 +266,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     )
                     session.delete(cur)
                     session.add(restored)
-                    for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == new)).all()):
+                    for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == new)).all()):  # type: ignore[arg-type]
                         session.add(
                             SkillIndex(
                                 qualified_name=f"{old}/{row.skill_name}",
@@ -262,7 +282,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
                             )
                         )
                         session.delete(row)
-                    for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == new)).all()):
+                    for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == new)).all()):  # type: ignore[arg-type]
                         session.add(
                             AgentIndex(
                                 qualified_name=f"{old}/{row.agent_name}",
@@ -316,9 +336,11 @@ def refresh(alias: str) -> RegisteredRepo:
         )
 
     if new_sha != previous_sha:
-        from agent_init.core import agents as _agents
-        from agent_init.core import skills as _skills
+        _skills = importlib.import_module("agent_init.core.skills")
+        _agents = importlib.import_module("agent_init.core.agents")
+        _repo_rules = importlib.import_module("agent_init.core.repo_rules")
 
         _skills.index_repo(alias)
         _agents.index_repo(alias)
+        _repo_rules.index_repo(alias)
     return fresh

@@ -23,6 +23,7 @@ from agent_init.core.models import (  # noqa: F401
     LayoutProfile,
     RegisteredRepo,
     RuleEntry,
+    RuleIndex,
     SkillIndex,
     Template,
 )

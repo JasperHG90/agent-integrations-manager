@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_init.core import repos
+from agent_init.core import repo_rules, repos
 from tests.fixtures import git_fixtures
 
 
@@ -81,3 +81,77 @@ def test_refresh_updates_last_sha_on_new_commit(
     assert refreshed.last_sha != initial_sha
     assert refreshed.last_sha == new_sha
     assert refreshed.last_fetched_at is not None
+
+
+def _build_repo_with(tmp_path: Path, files: dict[str, str]) -> tuple[Path, Path]:
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    return working, bare
+
+
+def test_add_indexes_rules(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "rules/style.md": "# Style\n\nBe consistent.\n",
+            "README.md": "x\n",
+        },
+    )
+    repos.add("r", f"file://{bare}")
+    assert repos.artifact_kinds("r") == {"rules"}
+    rows = repo_rules.list_rules("r")
+    assert [row.rule_name for row in rows] == ["style"]
+    assert rows[0].title == "Style"
+
+
+def test_add_indexes_rules_alongside_skills(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/foo/SKILL.md": "# Foo\n",
+            "rules/r.md": "# R\n",
+            "README.md": "x\n",
+        },
+    )
+    repos.add("mixed", f"file://{bare}")
+    assert repos.artifact_kinds("mixed") == {"skill", "rules"}
+
+
+def test_rules_precedence_shadows_claude_path(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "rules/x.md": "# canonical\n",
+            ".claude/rules/x.md": "# shadow\n",
+            "README.md": "x\n",
+        },
+    )
+    repos.add("prec", f"file://{bare}")
+    rows = repo_rules.list_rules("prec")
+    assert [row.rule_name for row in rows] == ["x"]
+    assert rows[0].rule_md_path == "rules/x.md"
+
+
+def test_refresh_reindexes_rules(home: Path, tmp_path: Path) -> None:
+    working, bare = _build_repo_with(
+        tmp_path,
+        {"rules/a.md": "a\n", "README.md": "x\n"},
+    )
+    repos.add("r", f"file://{bare}")
+    assert {row.rule_name for row in repo_rules.list_rules("r")} == {"a"}
+
+    git_fixtures.add_commit(working, {"rules/b.md": "b\n"}, "add b")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("r")
+    assert {row.rule_name for row in repo_rules.list_rules("r")} == {"a", "b"}
+
+
+def test_remove_deletes_rule_index(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {"rules/a.md": "a\n", "README.md": "x\n"},
+    )
+    repos.add("r", f"file://{bare}")
+    assert repo_rules.list_rules("r")
+    repos.remove("r")
+    assert repo_rules.list_rules("r") == []
