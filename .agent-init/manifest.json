@@ -65,6 +65,38 @@
       "content_hash": "1f2b8c27568304cd1634dd6cd480ce34567f3b8009f30a38836b3a28444f32ee",
       "pin": null,
       "track": null
+    },
+    {
+      "qualified_name": "google/gcloud",
+      "repo_alias": "google",
+      "repo_url": "https://github.com/google/skills",
+      "source_path": "skills/cloud/gcloud",
+      "target_dir": ".claude/skills/gcloud",
+      "current": {
+        "tag": null,
+        "sha": "cafef5eec0a797581c4932410f06231b2c5de6d0",
+        "installed_at": "2026-06-16T14:49:29.820961Z"
+      },
+      "history": [],
+      "content_hash": "3740aa645a215d80ab2927b0b499573dc7eb9e0c3e39bbedecb46c6b70f72549",
+      "pin": null,
+      "track": null
+    },
+    {
+      "qualified_name": "anthropic/brand-guidelines",
+      "repo_alias": "anthropic",
+      "repo_url": "https://github.com/anthropics/skills",
+      "source_path": "skills/brand-guidelines",
+      "target_dir": ".claude/skills/brand-guidelines",
+      "current": {
+        "tag": null,
+        "sha": "b9e19e6f44773509fbdd7001d77ff41a49a486c1",
+        "installed_at": "2026-06-16T15:52:55.734900Z"
+      },
+      "history": [],
+      "content_hash": "ddf22e788d6aa33e818ec59be85d4fba5aeda23075518dafc412bb90b7cc63ce",
+      "pin": null,
+      "track": null
     }
   ],
   "agents": [

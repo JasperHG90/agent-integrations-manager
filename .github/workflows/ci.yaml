@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+  UV_VERSION: '0.11.x'
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      firefox-extension: ${{ steps.filter.outputs.firefox-extension }}
+      docker: ${{ steps.filter.outputs.docker }}
+      ci-config: ${{ steps.filter.outputs.ci-config }}
+      hermes-runner: ${{ steps.filter.outputs.hermes-runner }}
+      hermes-plugin: ${{ steps.filter.outputs.hermes-plugin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.pre-commit-config.yaml'
+            ci-config:
+              - '.github/workflows/ci.yaml'
+
+  pre-commit:
+    needs: changes
+    if: always() && (github.event_name == 'push' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run pre-commit checks
+        uses: JasperHG90/toiminnot/actions/prek@main
+        with:
+          python_version: ${{ env.PYTHON_VERSION }}
+          prek_version: '0.2.25'
+
+  python-tests:
+    needs: changes
+    if: always() && (github.event_name == 'push' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Run tests
+        uses: JasperHG90/toiminnot/actions/pytest@main
+        with:
+          directory: tests
+          uv_version: ${{ env.UV_VERSION }}
+          python_version: ${{ matrix.python-version }}
+          markers: "not integration"
+
+  build-python:
+    needs: [changes, pre-commit, python-tests, mcp-import-check]
+    if: always() && !failure() && !cancelled() && (github.event_name == 'push' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        package: [agent_init]
+    steps:
+      - name: Build package
+        uses: JasperHG90/toiminnot/actions/uv_build@main
+        with:
+          uv_version: ${{ env.UV_VERSION }}
+          python_version: ${{ env.PYTHON_VERSION }}
+          package: ${{ matrix.package }}

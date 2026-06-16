@@ -1,7 +1,0 @@
-- id: agent-init-check
-  name: agent-init check
-  description: Fail commit if AGENTS.md / mirror regions or installed skills have drifted.
-  entry: agent-init check
-  language: python
-  files: '(^AGENTS\.md$|^CLAUDE\.md$|^GEMINI\.md$|^OPENCODE\.md$|^\.agent-init/|^\.claude/skills/)'
-  pass_filenames: false

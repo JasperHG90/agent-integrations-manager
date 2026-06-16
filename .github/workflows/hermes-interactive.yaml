@@ -1,0 +1,35 @@
+name: Hermes Interactive
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: hermes-interactive-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  respond:
+    if: >-
+      contains(github.event.comment.body, '@hermes') &&
+      github.event.comment.user.login != 'github-actions[bot]' &&
+      github.actor == 'JasperHG90'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: JasperHG90/toiminnot/actions/hermes-interactive@main
+        with:
+          api_key: ${{ secrets.OLLAMA_API_KEY }}
+          github_token: ${{ github.token }}
+          # push_changes: 'pr'
