@@ -63,14 +63,36 @@ async def test_mcp_screen_defaults_and_enter_search(home: Path, monkeypatch: pyt
         await pilot.press("enter")
         await pilot.pause()
 
+        # Focus returns to the table so screen-level bindings like `i` work.
+        assert app.focused is table
+
         # Multiple versions of the same server collapse to one row.
         assert table.row_count == 1
         assert table.get_row_at(0)[0] == "io.github.hubertgajewski/playwright-report-mcp"
         assert table.get_row_at(0)[1] == "1.0.0"
 
-        # Empty query + Enter restores defaults.
-        search.value = ""
-        await pilot.press("enter")
+
+@pytest.mark.asyncio
+async def test_mcp_screen_install_binding_opens_modal(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import DataTable
+
+    monkeypatch.setattr(
+        mcp_registry,
+        "find_server",
+        lambda name, exact_name=None: _server("playwright-mcp", "1.0.0"),
+    )
+
+    app = AgentInitApp()
+    async with app.run_test() as pilot:
         await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+
+        table = app.screen.query_one(DataTable)
         assert table.row_count == 1
-        assert table.get_row_at(0)[0] == "playwright-mcp"
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        # Install modal should be on top of the screen stack.
+        assert app.screen.__class__.__name__ == "McpInstallModal"

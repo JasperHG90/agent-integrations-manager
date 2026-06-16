@@ -16,9 +16,9 @@ class McpScreen(Screen[None]):
         ("escape", "app.pop_screen", "Back"),
         ("b", "app.pop_screen", "Back"),
         ("slash", "focus_search", "Search"),
-        ("enter", "action_enter", "View / Search"),
-        ("v", "action_enter", "View"),
-        ("i", "action_install_current", "Install"),
+        ("enter", "enter", "View / Search"),
+        ("v", "enter", "View"),
+        ("i", "install_current", "Install"),
         ("q", "app.quit", "Quit"),
     ]
 
@@ -109,6 +109,7 @@ class McpScreen(Screen[None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "search-bar":
             self._populate(event.value)
+            self.query_one("#mcp-table", DataTable).focus()
             return
 
     def action_focus_search(self) -> None:
