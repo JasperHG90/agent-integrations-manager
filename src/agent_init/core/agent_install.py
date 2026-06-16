@@ -264,9 +264,11 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
     target_version = existing.history[0]
 
     repo_dir = agents.repos.clone_dir(existing.repo_alias)
-    content = agents.git.get_backend().cat_file(
-        repo_dir, target_version.sha, f"{existing.source_path}/AGENT.md"
-    )
+    if existing.source_path.endswith(".md"):
+        artifact_path = existing.source_path
+    else:
+        artifact_path = f"{existing.source_path}/AGENT.md"
+    content = agents.git.get_backend().cat_file(repo_dir, target_version.sha, artifact_path)
 
     target = project_root / existing.target_path
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -157,12 +157,18 @@ def resolve_install_version(
     head_sha = backend.resolve_ref(repo_dir, ref)
     sha = backend.last_touching_sha(repo_dir, head_sha, source_path)
 
+    # Flat file: source_path may already point at the artifact itself
+    # (e.g. agents/foo.md). Otherwise it's the directory containing it.
+    if source_path.endswith(f"/{artifact_name}") or source_path.endswith(".md"):
+        artifact_path = source_path
+    else:
+        artifact_path = f"{source_path}/{artifact_name}" if source_path else artifact_name
+
     tag: str | None = backend.latest_tag(repo_dir, head_sha)
     if tag is not None:
         try:
             tag_sha = backend.resolve_ref(repo_dir, tag)
             tag_paths = backend.ls_tree(repo_dir, tag_sha, source_path or "")
-            artifact_path = f"{source_path}/{artifact_name}" if source_path else artifact_name
             has_artifact = any(p == artifact_path or p.endswith(f"/{artifact_name}") for p in tag_paths)
             if not has_artifact:
                 tag = None

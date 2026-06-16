@@ -25,13 +25,13 @@ from agent_init.core import init as init_mod
 from agent_init.core import layout_profiles, manifest, paths
 
 _HELP_TEXT = (
-    "Fields:\\n"
-    "  Template      — which AGENTS.md scaffold to use.\\n"
-    "  Mirrors       — per-agent copies of AGENTS.md (e.g. CLAUDE.md).\\n"
-    "  Agent dialect — target agent: claude, gemini, opencode, etc.\\n"
-    "  Applied rules — managed on the Rules [u] screen.\\n"
-    "  Layout profile — controls where skills, rules, agents, and .mcp.json go.\\n"
-    "Manage layout profiles from [l] PROFILES; manage rules from [u] RULES."
+    "Fields:\n"
+    "  Template      — which AGENTS.md scaffold to use.\n"
+    "  Mirrors       — per-agent copies of AGENTS.md (e.g. CLAUDE.md).\n"
+    "  Agent dialect — target agent: claude, gemini, opencode, etc.\n"
+    "  Applied rules — managed on the Rules [u] screen.\n"
+    "  Layout profile — controls where skills, rules, agents, and .mcp.json go.\n"
+    "Shortcuts work from the main menu: [l] PROFILES, [u] RULES."
 )
 
 

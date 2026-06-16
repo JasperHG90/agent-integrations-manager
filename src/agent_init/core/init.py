@@ -286,7 +286,7 @@ def run(options: InitOptions) -> InitResult:
     m.managed_files = list(dict.fromkeys(managed))
     m.managed_region_hashes = new_hashes
     if options.agent_dialect is not None:
-        m.agent_dialect = options.agent_dialect
+        m.agent_dialect = options.agent_dialect or None
     m.layout_profile = active_profile.name
     manifest.save(proj, m)
 
