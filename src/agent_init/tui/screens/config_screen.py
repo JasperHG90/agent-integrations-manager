@@ -28,6 +28,7 @@ _HELP_TEXT = (
     "Fields:\n"
     "  Template      — which AGENTS.md scaffold to use.\n"
     "  Mirrors       — per-agent copies of AGENTS.md (e.g. CLAUDE.md).\n"
+    "  Symlinks      — symlinks to AGENTS.md (e.g. CLAUDE.md).\n"
     "  Agent dialect — target agent: claude, gemini, opencode, etc.\n"
     "  Applied rules — managed on the Rules [u] screen.\n"
     "  Layout profile — controls where skills, rules, agents, and .mcp.json go.\n"
@@ -85,6 +86,14 @@ class ConfigScreen(Screen[None]):
             Static("Other mirror (optional):", classes="config-heading", markup=False),
             Input(value="", placeholder="<name>.md", id="proj-other-mirror"),
             Static(
+                "Symlinks (point to AGENTS.md):",
+                classes="config-heading",
+                markup=False,
+            ),
+            *self._symlink_checkboxes(m),
+            Static("Other symlink (optional):", classes="config-heading", markup=False),
+            Input(value="", placeholder="<name>.md", id="proj-other-symlink"),
+            Static(
                 "Agent dialect (claude / gemini / opencode / blank):",
                 classes="config-heading",
                 markup=False,
@@ -131,6 +140,17 @@ class ConfigScreen(Screen[None]):
             for name in init_mod.KNOWN_MIRRORS
         ]
 
+    def _symlink_checkboxes(self, m: manifest.Manifest | None) -> list[Checkbox]:
+        active = set(m.managed_files) if m else set()
+        return [
+            Checkbox(
+                name,
+                value=(name in active),
+                id=f"proj-symlink-{name.replace('.', '-')}",
+            )
+            for name in init_mod.KNOWN_MIRRORS
+        ]
+
     def on_mount(self) -> None:
         self._status("edit project settings and save, or press [b] to go back")
 
@@ -151,6 +171,21 @@ class ConfigScreen(Screen[None]):
                 return
             if other not in mirrors:
                 mirrors.append(other)
+        symlinks: list[str] = [
+            name
+            for name in init_mod.KNOWN_MIRRORS
+            if self.query_one(f"#proj-symlink-{name.replace('.', '-')}", Checkbox).value
+        ]
+        other_link = self.query_one("#proj-other-symlink", Input).value.strip()
+        if other_link:
+            if not init_mod.is_valid_mirror_name(other_link):
+                self.app.notify(f"other symlink {other_link!r} invalid", severity="error")
+                return
+            if other_link not in symlinks:
+                symlinks.append(other_link)
+            if other_link in mirrors:
+                self.app.notify(f"{other_link!r} cannot be both mirror and symlink", severity="error")
+                return
         dialect = self.query_one("#proj-dialect", Input).value.strip().lower() or None
         force = self.query_one("#proj-force", Checkbox).value
         try:
@@ -159,6 +194,7 @@ class ConfigScreen(Screen[None]):
                     project_root=project,
                     template=template,
                     mirrors=tuple(mirrors),
+                    symlinks=tuple(symlinks),
                     clear_mirrors=True,
                     agent_dialect=dialect,
                     force=force,

@@ -51,6 +51,7 @@ class InitOptions:
     # mirrors a user already had. To remove a mirror, delete the file and
     # re-init, or use `clear_mirrors=True`.
     mirrors: tuple[str, ...] = DEFAULT_MIRRORS
+    symlinks: tuple[str, ...] = ()
     clear_mirrors: bool = False
     seed_default_rules: bool = True
     extra_rules: list[str] = field(default_factory=list)
@@ -75,6 +76,7 @@ class InitResult:
     project_root: Path
     agents_md_path: Path
     mirror_paths: list[Path]
+    symlink_paths: list[Path]
     applied_rules: list[str]
     manifest_path: Path
     re_init: bool
@@ -118,22 +120,30 @@ def run(options: InitOptions) -> InitResult:
     # silently drop CLAUDE.md/GEMINI.md the user already had. On first init,
     # fall back to the profile's default mirrors when no mirrors are supplied.
     requested_mirrors = options.mirrors
+    requested_symlinks = options.symlinks
     if not re_init and not requested_mirrors:
         requested_mirrors = tuple(active_profile.mirrors)
+    if not re_init and not requested_symlinks:
+        requested_symlinks = tuple(active_profile.symlinks)
     if re_init and not options.clear_mirrors:
         prior_mirrors = tuple(
             name
             for name in m.managed_files
             if name.lower() != active_profile.agents_md.lower() and is_valid_mirror_name(name)
         )
-        merged = list(dict.fromkeys((*requested_mirrors, *prior_mirrors)))
+        merged_mirrors = list(dict.fromkeys((*requested_mirrors, *prior_mirrors)))
+        merged_symlinks = list(dict.fromkeys((*requested_symlinks, *prior_mirrors)))
         # If the manifest has no prior managed files (e.g. it was only created by
-        # set_active), apply the profile's default mirrors on first real init.
-        if not merged and not requested_mirrors:
-            merged = list(active_profile.mirrors)
-        effective_mirrors: tuple[str, ...] = tuple(merged)
+        # set_active), apply the profile's default mirrors/symlinks on first real init.
+        if not merged_mirrors and not requested_mirrors:
+            merged_mirrors = list(active_profile.mirrors)
+        if not merged_symlinks and not requested_symlinks:
+            merged_symlinks = list(active_profile.symlinks)
+        effective_mirrors: tuple[str, ...] = tuple(merged_mirrors)
+        effective_symlinks: tuple[str, ...] = tuple(merged_symlinks)
     else:
         effective_mirrors = requested_mirrors
+        effective_symlinks = requested_symlinks
 
     # Resolve which rules to apply.
     rule_names: list[str] = []
@@ -186,17 +196,22 @@ def run(options: InitOptions) -> InitResult:
     new_hashes = {r.name: hashing.hash_text(r.body) for r in agents_md.parse(merged)}
 
     mirror_paths: list[Path] = []
+    symlink_paths: list[Path] = []
     mirror_render_cache: dict[str | None, tuple[str, dict[str, str]]] = {
         None: (merged, fresh_regions_canonical)
     }
-    for mirror in effective_mirrors:
-        target = proj / mirror
-        agent = agent_for_filename(mirror)
+
+    def _render_mirror(agent: str | None) -> tuple[str, dict[str, str]]:
         if agent not in mirror_render_cache:
             rendered_for_agent = _render_for_agent(agent)
             regions_for_agent = {r.name: r.body for r in agents_md.parse(rendered_for_agent)}
             mirror_render_cache[agent] = (rendered_for_agent, regions_for_agent)
-        rendered_for_mirror, regions_for_mirror = mirror_render_cache[agent]
+        return mirror_render_cache[agent]
+
+    for mirror in effective_mirrors:
+        target = proj / mirror
+        agent = agent_for_filename(mirror)
+        rendered_for_mirror, regions_for_mirror = _render_mirror(agent)
         if target.exists() and target.resolve() == agents_path.resolve():
             mirror_paths.append(target)
             continue
@@ -233,6 +248,25 @@ def run(options: InitOptions) -> InitResult:
         pending.append(FileChange(path=target, before=before, after=rendered_for_mirror))
         mirror_paths.append(target)
 
+    for link_name in effective_symlinks:
+        target = proj / link_name
+        symlink_paths.append(target)
+        if target.exists() and target.resolve() == agents_path.resolve():
+            continue
+        if target.exists() and not options.force:
+            drift_warnings.append(
+                f"{target.name} exists; left as-is (use --force to overwrite)"
+            )
+            continue
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        before = "<symlink>" if target.is_symlink() else None
+        pending.append(
+            FileChange(path=target, before=before, after=f"<symlink to {active_profile.agents_md}>")
+        )
+
+    # Actual symlink creation happens during commit, after AGENTS.md exists.
+
     # Rules: dry-run also collects each rule-body write.
     project_rules_dir = proj / active_profile.rules_dir
     for rule in applied:
@@ -246,6 +280,7 @@ def run(options: InitOptions) -> InitResult:
             project_root=proj,
             agents_md_path=agents_path,
             mirror_paths=mirror_paths,
+            symlink_paths=symlink_paths,
             applied_rules=[r.name for r in applied],
             manifest_path=existing_manifest_path,
             re_init=re_init,
@@ -279,10 +314,17 @@ def run(options: InitOptions) -> InitResult:
             continue
         target.write_text(rendered_for_mirror)
 
+    # Create/refresh symlinks to agents_md.
+    for link_name in effective_symlinks:
+        target = proj / link_name
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(agents_path.name)
+
     # Finalize manifest.
     m.template = options.template
     m.rules = rule_names
-    managed = [active_profile.agents_md, *(p.name for p in mirror_paths)]
+    managed = [active_profile.agents_md, *(p.name for p in mirror_paths), *(p.name for p in symlink_paths)]
     m.managed_files = list(dict.fromkeys(managed))
     m.managed_region_hashes = new_hashes
     if options.agent_dialect is not None:
@@ -294,6 +336,7 @@ def run(options: InitOptions) -> InitResult:
         project_root=proj,
         agents_md_path=agents_path,
         mirror_paths=mirror_paths,
+        symlink_paths=symlink_paths,
         applied_rules=[r.name for r in applied],
         manifest_path=existing_manifest_path,
         re_init=re_init,

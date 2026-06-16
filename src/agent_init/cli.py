@@ -591,6 +591,8 @@ def init_cmd(
     typer.echo(f"{verb} {result.agents_md_path}")
     for mp in result.mirror_paths:
         typer.echo(f"  mirror: {mp}")
+    for sp in result.symlink_paths:
+        typer.echo(f"  symlink: {sp}")
     if result.applied_rules:
         typer.echo(f"  rules:  {', '.join(result.applied_rules)}")
     if result.region_drift_warnings:

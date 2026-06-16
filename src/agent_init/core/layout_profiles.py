@@ -73,6 +73,7 @@ class LayoutProfile(BaseModel):
     agents_md: str = "AGENTS.md"
     mcp_json: str = ".mcp.json"
     mirrors: list[str] = Field(default_factory=list)
+    symlinks: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -103,18 +104,23 @@ class LayoutProfile(BaseModel):
                 )
         return value
 
-    @field_validator("mirrors")
+    @field_validator("mirrors", "symlinks")
     @classmethod
-    def _validate_mirrors(cls, values: list[str]) -> list[str]:
+    def _validate_mirror_like(cls, values: list[str]) -> list[str]:
         for value in values:
             if not is_valid_mirror_name(value):
-                raise ValueError(f"mirror filename {value!r} invalid")
+                raise ValueError(f"filename {value!r} invalid")
         return values
 
     @model_validator(mode="after")
-    def _agents_md_not_in_mirrors(self) -> LayoutProfile:
+    def _agents_md_not_in_mirror_like(self) -> LayoutProfile:
         if self.agents_md in self.mirrors:
             raise ValueError(f"agents_md {self.agents_md!r} must not also be listed in mirrors")
+        if self.agents_md in self.symlinks:
+            raise ValueError(f"agents_md {self.agents_md!r} must not also be listed in symlinks")
+        overlap = set(self.mirrors) & set(self.symlinks)
+        if overlap:
+            raise ValueError(f"filename {overlap.pop()!r} cannot be both a mirror and a symlink")
         return self
 
 
@@ -126,6 +132,7 @@ def _builtin(
     skills_dir: str,
     agents_dir: str,
     mirrors: list[str],
+    symlinks: list[str] | None = None,
 ) -> LayoutProfile:
     return LayoutProfile(
         name=name,
@@ -139,6 +146,7 @@ def _builtin(
         agents_md="AGENTS.md",
         mcp_json=".mcp.json",
         mirrors=mirrors,
+        symlinks=symlinks or [],
     )
 
 
@@ -231,6 +239,8 @@ def render_toml(profile: LayoutProfile, *, read_only_copy: bool = False) -> str:
     lines.append(f'agents_md = "{profile.agents_md}"')
     lines.append(f'mcp_json = "{profile.mcp_json}"')
     lines.append(f"mirrors = {_render_string_list(profile.mirrors)}")
+    if profile.symlinks:
+        lines.append(f"symlinks = {_render_string_list(profile.symlinks)}")
     lines.append("")
     return "\n".join(lines)
 
