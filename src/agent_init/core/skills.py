@@ -221,10 +221,17 @@ def read_skill_content(qualified_name: str) -> str:
     """Return the raw SKILL.md bytes for an indexed skill."""
     with db.session() as session:
         row = session.get(SkillIndex, qualified_name)
-    if row is None or not row.skill_md_path:
+    if row is None:
+        raise SkillNotIndexedError(qualified_name)
+    skill_md_path = row.skill_md_path
+    # Legacy indexes written before the skill_md_path column may have NULL
+    # here even though source_path is present. Reconstruct the expected path.
+    if not skill_md_path and row.source_path:
+        skill_md_path = f"{row.source_path}/SKILL.md"
+    if not skill_md_path:
         raise SkillNotIndexedError(qualified_name)
     repo_dir = repos.clone_dir(row.repo_alias)
-    return git.get_backend().cat_file(repo_dir, row.indexed_at_sha, row.skill_md_path)
+    return git.get_backend().cat_file(repo_dir, row.indexed_at_sha, skill_md_path)
 
 
 def list_skills(repo_alias: str | None = None) -> list[SkillIndex]:
