@@ -17,7 +17,15 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from agent_init.core import paths
-from agent_init.core.models import RegisteredRepo, RuleEntry, SkillIndex, Template  # noqa: F401
+from agent_init.core.models import (  # noqa: F401
+    AgentIndex,
+    GlobalSetting,
+    LayoutProfile,
+    RegisteredRepo,
+    RuleEntry,
+    SkillIndex,
+    Template,
+)
 
 _engine: Engine | None = None
 

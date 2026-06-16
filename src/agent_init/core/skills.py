@@ -25,6 +25,7 @@ from typing import NamedTuple
 from sqlmodel import delete, select
 
 from agent_init.core import db, git, repos
+from agent_init.core.agents import _as_str, _as_str_list, _extract_frontmatter
 from agent_init.core.models import SkillIndex
 
 
@@ -143,11 +144,14 @@ def _parse_skill_md(
     Front-matter (optional, must be at top):
 
         ---
+        name: <display name>
+        description: <short description>
         prereqs: [other/skill, other/skill2]
         provides: [code-review]
         ---
 
-    Falls through to title/description heuristics if no front-matter.
+    `name` and `description` are used when present; otherwise title/description
+    heuristics fall back to the body.
     """
     repo_dir = repos.clone_dir(repo_alias)
     try:
@@ -155,49 +159,30 @@ def _parse_skill_md(
     except git.GitError:
         return None, None, [], []
 
-    prereqs: list[str] = []
-    provides: list[str] = []
-    fm_match = re.match(r"\A---\n(.*?)\n---\n", body, re.DOTALL)
-    if fm_match:
-        for line in fm_match.group(1).splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or ":" not in line:
-                continue
-            key, _, value = line.partition(":")
-            key = key.strip()
-            value = value.strip()
-            list_match = re.match(r"^\[(.*)\]$", value)
-            items: list[str] = []
-            if list_match:
-                items = [
-                    p.strip().strip("'\"")
-                    for p in list_match.group(1).split(",")
-                    if p.strip()
-                ]
-            elif value:
-                items = [value.strip("'\"")]
-            if key == "prereqs":
-                prereqs = items
-            elif key == "provides":
-                provides = items
-        body = body[fm_match.end() :]
+    frontmatter, remainder = _extract_frontmatter(body)
+    title = _as_str(frontmatter.get("name"))
+    description = _as_str(frontmatter.get("description"))
+    prereqs = _as_str_list(frontmatter.get("prereqs"))
+    provides = _as_str_list(frontmatter.get("provides"))
 
-    lines = body.splitlines()
-    title: str | None = None
+    lines = remainder.splitlines()
+    body_title: str | None = None
     title_idx: int | None = None
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("# "):
-            title = stripped[2:].strip()
+            body_title = stripped[2:].strip()
             title_idx = i
             break
-    if title is None:
+    if body_title is None:
         for line in lines:
             if line.strip():
-                title = line.strip()
+                body_title = line.strip()
                 break
-    description: str | None = None
-    if title_idx is not None:
+    if title is None:
+        title = body_title
+
+    if description is None and title_idx is not None:
         para: list[str] = []
         for line in lines[title_idx + 1 :]:
             stripped = line.strip()
@@ -210,6 +195,7 @@ def _parse_skill_md(
             para.append(stripped)
         if para:
             description = " ".join(para)
+
     return title, description, prereqs, provides
 
 

@@ -30,9 +30,26 @@ def _v1_to_v2(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v2_to_v3(raw: dict[str, Any]) -> dict[str, Any]:
+    """v3 adds optional `layout_profile`. Additive only."""
+    raw.setdefault("layout_profile", None)
+    raw["manifest_version"] = 3
+    return raw
+
+
+def _v3_to_v4(raw: dict[str, Any]) -> dict[str, Any]:
+    """v4 adds optional `mcp_servers` and `agents` lists. Additive only."""
+    raw.setdefault("mcp_servers", [])
+    raw.setdefault("agents", [])
+    raw["manifest_version"] = 4
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
+    2: _v2_to_v3,
+    3: _v3_to_v4,
 }
 
 

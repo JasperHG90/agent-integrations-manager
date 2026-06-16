@@ -77,6 +77,27 @@ def project_rules_dir(project_root: Path) -> Path:
     return project_agent_init_dir(project_root) / "rules"
 
 
+def project_layout_profiles_dir(project_root: Path) -> Path:
+    return project_agent_init_dir(project_root) / "layout-profiles"
+
+
+def safe_project_path(project_root: Path, rel: str, *extra: str) -> Path | None:
+    """Resolve a relative project path and ensure it stays inside the project.
+
+    Returns None if the resolved path escapes the project root or if resolution
+    fails. The project root itself is considered out of bounds so that empty or
+    `..`-only relative paths are rejected.
+    """
+    try:
+        base = project_root.resolve()
+        target = (base / rel / "/".join(extra)).resolve()
+        if target != base and target.is_relative_to(base):
+            return target
+    except (ValueError, OSError):
+        pass
+    return None
+
+
 def ensure_global_dirs() -> None:
     for path in (
         user_data_dir(),

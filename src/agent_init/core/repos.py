@@ -22,7 +22,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from agent_init.core import db, git, paths
-from agent_init.core.models import RegisteredRepo, SkillIndex
+from agent_init.core.models import AgentIndex, RegisteredRepo, SkillIndex
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -39,8 +39,12 @@ class RepoNotFoundError(KeyError):
     pass
 
 
-class RepoHasNoSkillsError(ValueError):
-    """Raised when a registered repo contains no discoverable skills."""
+class RepoHasNoArtifactsError(ValueError):
+    """Raised when a registered repo contains no discoverable skills or agents."""
+
+
+# Backward-compatible alias for existing callers/tests.
+RepoHasNoSkillsError = RepoHasNoArtifactsError
 
 
 def _validate_alias(alias: str) -> None:
@@ -91,19 +95,22 @@ def add(
         session.commit()
         session.refresh(repo)
 
-    # Index now. Lazy import to break the repos<->skills circular dep.
+    # Index now. Lazy imports to break circular deps.
+    from agent_init.core import agents as _agents
     from agent_init.core import skills as _skills
 
     try:
-        result = _skills.index_repo(alias)
+        skill_result = _skills.index_repo(alias)
+        agent_result = _agents.index_repo(alias)
     except Exception:
         # Roll back the registration so the next attempt isn't blocked.
         remove(alias)
         raise
-    if not result.indexed and not allow_empty:
+    if not skill_result.indexed and not agent_result.indexed and not allow_empty:
         remove(alias)
-        raise RepoHasNoSkillsError(
-            f"{alias}: no SKILL.md found under skills/, .claude/skills/, or repo root"
+        raise RepoHasNoArtifactsError(
+            f"{alias}: no SKILL.md found under skills/, .claude/skills/, or repo root, "
+            f"and no AGENT.md found under agents/ or .claude/agents/"
         )
     return repo
 
@@ -129,6 +136,7 @@ def remove(alias: str) -> None:
         if row is None:
             raise RepoNotFoundError(alias)
         session.exec(_delete_skill_index(alias))
+        session.exec(_delete_agent_index(alias))
         session.delete(row)
         session.commit()
     git.remove_clone(clone_dir(alias))
@@ -138,6 +146,14 @@ def _delete_skill_index(alias: str):  # type: ignore[no-untyped-def]
     from sqlmodel import delete as _delete
 
     return _delete(SkillIndex).where(SkillIndex.repo_alias == alias)
+
+
+def _delete_agent_index(alias: str):  # type: ignore[no-untyped-def]
+    from sqlmodel import delete as _delete
+
+    from agent_init.core.models import AgentIndex as _AgentIndex
+
+    return _delete(_AgentIndex).where(_AgentIndex.repo_alias == alias)
 
 
 def rename(old: str, new: str) -> RegisteredRepo:
@@ -162,7 +178,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
         )
         session.delete(existing)
         session.add(renamed)
-        # Move skill index rows too.
+        # Move skill and agent index rows too.
         for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == old)).all()):
             new_qn = f"{new}/{row.skill_name}"
             session.add(
@@ -177,6 +193,23 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     indexed_at_sha=row.indexed_at_sha,
                     prereqs=row.prereqs,
                     provides=row.provides,
+                )
+            )
+            session.delete(row)
+        for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == old)).all()):
+            new_qn = f"{new}/{row.agent_name}"
+            session.add(
+                AgentIndex(
+                    qualified_name=new_qn,
+                    repo_alias=new,
+                    agent_name=row.agent_name,
+                    source_path=row.source_path,
+                    agent_md_path=row.agent_md_path,
+                    title=row.title,
+                    description=row.description,
+                    indexed_at_sha=row.indexed_at_sha,
+                    tools=row.tools,
+                    model=row.model,
                 )
             )
             session.delete(row)
@@ -218,6 +251,22 @@ def rename(old: str, new: str) -> RegisteredRepo:
                             )
                         )
                         session.delete(row)
+                    for row in list(session.exec(select(AgentIndex).where(AgentIndex.repo_alias == new)).all()):
+                        session.add(
+                            AgentIndex(
+                                qualified_name=f"{old}/{row.agent_name}",
+                                repo_alias=old,
+                                agent_name=row.agent_name,
+                                source_path=row.source_path,
+                                agent_md_path=row.agent_md_path,
+                                title=row.title,
+                                description=row.description,
+                                indexed_at_sha=row.indexed_at_sha,
+                                tools=row.tools,
+                                model=row.model,
+                            )
+                        )
+                        session.delete(row)
                     session.commit()
             raise
     return get(new)
@@ -256,7 +305,9 @@ def refresh(alias: str) -> RegisteredRepo:
         )
 
     if new_sha != previous_sha:
+        from agent_init.core import agents as _agents
         from agent_init.core import skills as _skills
 
         _skills.index_repo(alias)
+        _agents.index_repo(alias)
     return fresh

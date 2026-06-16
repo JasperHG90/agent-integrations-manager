@@ -12,10 +12,14 @@ from typing import Any
 import typer
 
 from agent_init import __version__
+from agent_init.core import agent_install as agent_install_mod
+from agent_init.core import agents as agents_mod
 from agent_init.core import doctor as doctor_mod
 from agent_init.core import git
 from agent_init.core import init as init_mod
 from agent_init.core import install as install_mod
+from agent_init.core import mcp_install as mcp_install_mod
+from agent_init.core import mcp_registry as mcp_registry_mod
 from agent_init.core import profiles as profiles_mod
 from agent_init.core import repos as repos_mod
 from agent_init.core import roots as roots_mod
@@ -32,9 +36,11 @@ app = typer.Typer(
 rule_app = typer.Typer(no_args_is_help=True, help="Manage the global rule library.")
 repo_app = typer.Typer(no_args_is_help=True, help="Manage skill source repositories.")
 skill_app = typer.Typer(no_args_is_help=True, help="Discover and manage skills.")
+agent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
 app.add_typer(rule_app, name="rule")
 app.add_typer(repo_app, name="repo")
 app.add_typer(skill_app, name="skill")
+app.add_typer(agent_app, name="agent")
 
 
 from agent_init.core import manifest as manifest_mod  # noqa: E402
@@ -48,6 +54,7 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     repos_mod.RepoExistsError,
     repos_mod.RepoAliasError,
     repos_mod.RepoHasNoSkillsError,
+    repos_mod.RepoHasNoArtifactsError,
     repos_mod.RefDisappearedError,
     rules_mod.RuleNameError,
     rules_mod.RuleNotFoundError,
@@ -57,6 +64,19 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     install_mod.LocalEditsError,
     install_mod.NoHistoryToRollbackError,
     install_mod.RollbackUnavailableError,
+    agent_install_mod.AgentNotIndexedError,
+    agent_install_mod.AgentNotInstalledError,
+    agent_install_mod.AgentSourcePathChangedError,
+    agent_install_mod.AgentLocalEditsError,
+    agent_install_mod.AgentNoHistoryToRollbackError,
+    mcp_install_mod.McpAliasInvalidError,
+    mcp_install_mod.McpAliasConflictError,
+    mcp_install_mod.McpServerNotInstalledError,
+    mcp_install_mod.McpLocalEditsError,
+    mcp_install_mod.McpNoHistoryToRollbackError,
+    mcp_install_mod.McpOverrideError,
+    mcp_registry_mod.McpRegistryError,
+    mcp_registry_mod.McpMappingError,
     templates_mod.TemplateNotFoundError,
     manifest_mod.ManifestNotFoundError,
     profiles_mod.ProfileNameError,
@@ -104,6 +124,17 @@ def main(
         callback=_version_callback,
         is_eager=True,
     ),
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Project root for the TUI (default: current directory).",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Layout profile to use when launching the TUI.",
+    ),
 ) -> None:
     """agent-init: scaffold and manage agent-engineering projects.
 
@@ -118,11 +149,12 @@ def main(
             raise typer.Exit(code=2)
         from agent_init.tui.app import run as run_tui
 
-        run_tui()
+        run_tui(project_root=project, profile_name=profile)
         raise typer.Exit()
 
 
 # ---------- init ----------
+
 
 @app.command("check")
 @_friendly
@@ -144,6 +176,7 @@ def check_cmd(
     for proj in proj_list:
         try:
             from agent_init.core import agents_md, hashing, manifest
+
             m = manifest.load(proj)
         except manifest.ManifestNotFoundError:
             typer.echo(f"{proj}: no manifest (skipped)", err=True)
@@ -180,6 +213,37 @@ def check_cmd(
                     err=True,
                 )
                 bad += 1
+        for agent in m.agents:
+            target = proj / agent.target_path
+            if agent.content_hash is None or not target.exists():
+                continue
+            if hashing.hash_text(target.read_text(encoding="utf-8")) != agent.content_hash:
+                typer.echo(
+                    f"{proj}/{agent.target_path}: agent {agent.qualified_name} drifted",
+                    err=True,
+                )
+                bad += 1
+        try:
+            mcp_data = mcp_registry_mod.read_mcp_json(proj)
+        except mcp_registry_mod.McpRegistryError as exc:
+            typer.echo(f"{proj}/.mcp.json: invalid — {exc}", err=True)
+            bad += 1
+            mcp_data = {"mcpServers": {}}
+        mcp_servers = mcp_data.get("mcpServers", {})
+        for mcp in m.mcp_servers:
+            if not isinstance(mcp_servers, dict) or mcp.alias not in mcp_servers:
+                typer.echo(f"{proj}/.mcp.json: MCP alias {mcp.alias!r} missing", err=True)
+                bad += 1
+                continue
+            current_hash = hashing.hash_text(
+                mcp_registry_mod._canonical_json(mcp_servers[mcp.alias])
+            )
+            if current_hash != mcp.entry_hash:
+                typer.echo(
+                    f"{proj}/.mcp.json: MCP alias {mcp.alias!r} drifted",
+                    err=True,
+                )
+                bad += 1
     if bad:
         raise typer.Exit(code=1)
     typer.echo("clean")
@@ -209,16 +273,15 @@ def doctor_cmd(
         f"  info:     {counts['info']}"
     )
     for finding in report.findings:
-        prefix = (
-            f"[{finding.severity}] "
-            + (f"{finding.project}: " if finding.project else "")
-        )
+        prefix = f"[{finding.severity}] " + (f"{finding.project}: " if finding.project else "")
         typer.echo(prefix + finding.message)
     if not report.ok:
         raise typer.Exit(code=1)
 
 
-root_app = typer.Typer(no_args_is_help=True, help="Manage the global list of project roots used by `doctor`.")
+root_app = typer.Typer(
+    no_args_is_help=True, help="Manage the global list of project roots used by `doctor`."
+)
 app.add_typer(root_app, name="root")
 
 
@@ -247,7 +310,9 @@ def root_remove(path: Path = typer.Argument(...)) -> None:
     typer.echo(f"removed {path}" if removed else f"not in roots: {path}")
 
 
-rule_repo_app = typer.Typer(no_args_is_help=True, help="Manage shared rule library overlays (git-backed).")
+rule_repo_app = typer.Typer(
+    no_args_is_help=True, help="Manage shared rule library overlays (git-backed)."
+)
 app.add_typer(rule_repo_app, name="rule-repo")
 
 
@@ -346,7 +411,10 @@ def profile_apply(
         typer.echo(f"  skipped (not indexed locally): {qn}", err=True)
 
 
-mcp_app = typer.Typer(no_args_is_help=True, help="MCP server — expose installed skills to live agents.")
+mcp_app = typer.Typer(
+    no_args_is_help=True,
+    help="MCP servers: `serve` runs the local MCP server; other commands manage .mcp.json entries.",
+)
 app.add_typer(mcp_app, name="mcp")
 
 
@@ -354,18 +422,122 @@ app.add_typer(mcp_app, name="mcp")
 def mcp_serve_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: cwd)."),
 ) -> None:
-    """Run a stdio MCP server exposing list_skills and get_skill tools."""
+    """Run a stdio MCP server exposing installed skills and agents."""
     from agent_init import mcp_server
 
     mcp_server.serve(project)
 
 
+@mcp_app.command("search")
+@_friendly
+def mcp_search_cmd(query: str = typer.Argument(..., help="Search term.")) -> None:
+    """Search the public MCP registry."""
+    results, _ = mcp_registry_mod.search_registry(query)
+    if not results:
+        typer.echo(f"no MCP servers match {query!r}")
+        return
+    for r in results:
+        server = r.server
+        desc = f" — {server.description}" if server.description else ""
+        typer.echo(f"{server.name}{desc}")
+
+
+@mcp_app.command("list")
+@_friendly
+def mcp_list_cmd(
+    project: Path | None = typer.Argument(None, help="Project root."),
+) -> None:
+    """List MCP servers installed in the project."""
+    m = manifest_mod.load_or_default(_here(project))
+    if not m.mcp_servers:
+        typer.echo("no MCP servers installed")
+        return
+    for s in m.mcp_servers:
+        typer.echo(f"{s.alias}\t{s.registry_name}\t{s.current.registry_version or '?'}")
+
+
+@mcp_app.command("install")
+@_friendly
+def mcp_install_cmd(
+    registry_name: str = typer.Argument(..., help="Canonical registry server name."),
+    alias: str = typer.Argument(..., help="Local alias for .mcp.json -> mcpServers."),
+    project: Path | None = typer.Argument(None, help="Project root."),
+    transport: str | None = typer.Option(
+        None, "--transport", help="Preferred transport: stdio, http, sse, ws."
+    ),
+    command: str | None = typer.Option(None, "--command", help="Override entry command."),
+    arg: list[str] = typer.Option([], "--arg", help="Override entry args (repeatable)."),
+    env: list[str] = typer.Option([], "--env", help="Override env var NAME=VALUE (repeatable)."),
+    url: str | None = typer.Option(None, "--url", help="Override entry URL."),
+    header: list[str] = typer.Option(
+        [], "--header", help="Override header Name:Value (repeatable)."
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing alias."),
+) -> None:
+    """Install an MCP server into the project's .mcp.json."""
+    overrides: dict[str, object] = {}
+    if command:
+        overrides["command"] = command
+    if arg:
+        overrides["args"] = list(arg)
+    if env:
+        overrides["env"] = _parse_key_value_list(env)
+    if url:
+        overrides["url"] = url
+    if header:
+        overrides["headers"] = _parse_header_list(header)
+    installed = mcp_install_mod.install(
+        _here(project),
+        registry_name,
+        alias=alias,
+        preferred_transport=transport,
+        overrides=overrides or None,
+        force=force,
+    )
+    typer.echo(f"installed MCP server {installed.registry_name} as {installed.alias}")
+
+
+@mcp_app.command("update")
+@_friendly
+def mcp_update_cmd(
+    alias: str = typer.Argument(..., help="Local alias."),
+    project: Path | None = typer.Argument(None, help="Project root."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
+) -> None:
+    """Refresh a managed MCP server from the registry."""
+    updated = mcp_install_mod.update(_here(project), alias, force=force)
+    typer.echo(f"updated MCP server {updated.alias} -> {updated.current.registry_version or '?'}")
+
+
+@mcp_app.command("delete")
+@_friendly
+def mcp_delete_cmd(
+    alias: str = typer.Argument(..., help="Local alias."),
+    project: Path | None = typer.Argument(None, help="Project root."),
+) -> None:
+    """Remove a managed MCP server from .mcp.json."""
+    mcp_install_mod.delete(_here(project), alias)
+    typer.echo(f"deleted MCP server {alias}")
+
+
 @app.command("tui")
-def tui_cmd() -> None:
+def tui_cmd(
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Project root (default: current directory).",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Layout profile to use when launching the TUI.",
+    ),
+) -> None:
     """Launch the Textual TUI."""
     from agent_init.tui.app import run as run_tui
 
-    run_tui()
+    run_tui(project_root=project, profile_name=profile)
 
 
 @app.command("init")
@@ -393,6 +565,9 @@ def init_cmd(
     diff: bool = typer.Option(
         False, "--diff", help="Print pending changes as a unified diff; don't write."
     ),
+    layout_profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Layout profile to use (overrides manifest)."
+    ),
 ) -> None:
     """Initialize or refresh agent-init scaffolding in PROJECT."""
     options = init_mod.InitOptions(
@@ -403,6 +578,7 @@ def init_cmd(
         extra_rules=list(rule),
         force=force,
         dry_run=diff,
+        layout_profile=layout_profile,
     )
     result = init_mod.run(options)
     if diff:
@@ -442,6 +618,7 @@ def _print_diffs(changes: list) -> None:  # type: ignore[type-arg]
 
 
 # ---------- rule ----------
+
 
 @rule_app.command("add")
 @_friendly
@@ -539,6 +716,7 @@ def rule_install(
 
 # ---------- repo ----------
 
+
 @repo_app.command("add")
 @_friendly
 def repo_add(
@@ -595,6 +773,7 @@ def repo_refresh(alias: str) -> None:
 
 # ---------- skill ----------
 
+
 @skill_app.command("list")
 @_friendly
 def skill_list(
@@ -626,7 +805,9 @@ def skill_search(query: str = typer.Argument(..., help="Substring to match.")) -
 def skill_install(
     qualified_name: str = typer.Argument(..., help="<repo_alias>/<skill_name>"),
     project: Path | None = typer.Argument(None, help="Project root."),
-    pin: str | None = typer.Option(None, "--pin", help="Pin to an exact tag/sha; update never advances past it."),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
     track: str | None = typer.Option(
         None,
         "--track",
@@ -634,7 +815,9 @@ def skill_install(
     ),
 ) -> None:
     installed = install_mod.install(_here(project), qualified_name, pin=pin, track=track)
-    typer.echo(f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_dir}")
+    typer.echo(
+        f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
+    )
     for warn in install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
 
@@ -656,9 +839,7 @@ def skill_update(
             if preview.proposed_tag
             else preview.proposed_sha[:7]
         )
-        typer.echo(
-            f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}"
-        )
+        typer.echo(f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}")
         return
     updated = install_mod.update(_here(project), qualified_name, force=force)
     assert not isinstance(updated, install_mod.UpdatePreview)
@@ -711,6 +892,134 @@ def skill_rollback(
 ) -> None:
     rolled = install_mod.rollback(_here(project), qualified_name, force=force)
     typer.echo(f"rolled back {qualified_name} -> {rolled.current.identifier()}")
+
+
+# ---------- agent ----------
+
+
+@agent_app.command("list")
+@_friendly
+def agent_list(
+    repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+) -> None:
+    rows = agents_mod.list_agents(repo)
+    if not rows:
+        typer.echo("no agents indexed")
+        return
+    for row in rows:
+        desc = f" — {row.description}" if row.description else ""
+        typer.echo(f"{row.qualified_name}{desc}")
+
+
+@agent_app.command("search")
+@_friendly
+def agent_search(query: str = typer.Argument(..., help="Substring to match.")) -> None:
+    rows = agents_mod.search(query)
+    if not rows:
+        typer.echo(f"no agents match {query!r}")
+        return
+    for row in rows:
+        desc = f" — {row.description}" if row.description else ""
+        typer.echo(f"{row.qualified_name}{desc}")
+
+
+@agent_app.command("install")
+@_friendly
+def agent_install_cmd(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<agent_name>"),
+    project: Path | None = typer.Argument(None, help="Project root."),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
+    ),
+) -> None:
+    installed = agent_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
+    typer.echo(
+        f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
+    )
+    for warn in agent_install_mod.take_install_warnings():
+        typer.echo(f"  warning: {warn}", err=True)
+
+
+@agent_app.command("update")
+@_friendly
+def agent_update(
+    qualified_name: str = typer.Argument(...),
+    project: Path | None = typer.Argument(None),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
+) -> None:
+    updated = agent_install_mod.update(_here(project), qualified_name, force=force)
+    typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
+
+
+@agent_app.command("update-many")
+@_friendly
+def agent_update_many(
+    project: Path | None = typer.Argument(None),
+    all_agents: bool = typer.Option(False, "--all", help="Update every installed agent."),
+    repo: str | None = typer.Option(None, "--repo", help="Limit to a single repo alias."),
+    only_outdated: bool = typer.Option(False, "--outdated", help="Skip agents already at HEAD."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
+) -> None:
+    """Update installed agents in bulk."""
+    if not all_agents and repo is None:
+        raise typer.BadParameter("pass --all or --repo <alias>")
+    outcomes = agent_install_mod.update_many(
+        _here(project),
+        repo_alias=repo,
+        only_outdated=only_outdated,
+        force=force,
+    )
+    for o in outcomes:
+        typer.echo(f"{o['status']:>12}  {o['qualified_name']}  {o['detail']}")
+    errors = [o for o in outcomes if o["status"] == "error"]
+    if errors:
+        raise typer.Exit(code=1)
+
+
+@agent_app.command("delete")
+@_friendly
+def agent_delete(
+    qualified_name: str = typer.Argument(...),
+    project: Path | None = typer.Argument(None),
+) -> None:
+    agent_install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"deleted {qualified_name}")
+
+
+@agent_app.command("rollback")
+@_friendly
+def agent_rollback(
+    qualified_name: str = typer.Argument(...),
+    project: Path | None = typer.Argument(None),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
+) -> None:
+    rolled = agent_install_mod.rollback(_here(project), qualified_name, force=force)
+    typer.echo(f"rolled back {qualified_name} -> {rolled.current.identifier()}")
+
+
+def _parse_key_value_list(items: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise typer.BadParameter(f"expected NAME=VALUE, got {item!r}")
+        name, _, value = item.partition("=")
+        out[name] = value
+    return out
+
+
+def _parse_header_list(items: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items:
+        if ":" not in item:
+            raise typer.BadParameter(f"expected Name:Value, got {item!r}")
+        name, _, value = item.partition(":")
+        out[name.strip()] = value.strip()
+    return out
 
 
 def _resolve_body(body: str | None, body_file: Path | None) -> str:

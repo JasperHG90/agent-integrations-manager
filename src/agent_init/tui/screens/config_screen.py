@@ -85,7 +85,7 @@ class ConfigScreen(Screen[None]):
             DataTable(id="roots-table", cursor_type="row", show_header=False),
             Static("Registered rule-repo overlays:", classes="config-heading", markup=False),
             DataTable(id="rule-repos-table", cursor_type="row"),
-            Static("Saved profiles:", classes="config-heading", markup=False),
+            Static("Saved init profiles:", classes="config-heading", markup=False),
             DataTable(id="profiles-table", cursor_type="row"),
             Static(
                 "Delete: focus a row and press X. Add: use CLI for now "
@@ -109,7 +109,8 @@ class ConfigScreen(Screen[None]):
         yield Vertical(
             Static(f"Project: {self._project_root}", classes="config-paths", markup=False),
             Static(
-                "manifest: " + str(paths.project_manifest_path(self._project_root))
+                "manifest: "
+                + str(paths.project_manifest_path(self._project_root))
                 + ("" if has_manifest else "  (not initialized — fields below will create one)"),
                 classes="config-paths",
                 markup=False,
@@ -118,11 +119,19 @@ class ConfigScreen(Screen[None]):
             Input(value=str(self._project_root), id="proj-root"),
             Static("Template:", classes="config-heading", markup=False),
             Input(value=m.template if m else "default", id="proj-template"),
-            Static("Mirrors (per-agent dialect copies of AGENTS.md):", classes="config-heading", markup=False),
+            Static(
+                "Mirrors (per-agent dialect copies of AGENTS.md):",
+                classes="config-heading",
+                markup=False,
+            ),
             *self._mirror_checkboxes(m),
             Static("Other mirror (optional):", classes="config-heading", markup=False),
             Input(value="", placeholder="<name>.md", id="proj-other-mirror"),
-            Static("Agent dialect (claude / gemini / opencode / blank):", classes="config-heading", markup=False),
+            Static(
+                "Agent dialect (claude / gemini / opencode / blank):",
+                classes="config-heading",
+                markup=False,
+            ),
             Input(value=(m.agent_dialect or "") if m else "", id="proj-dialect"),
             Static(
                 f"Applied rules ({len(m.rules) if m else 0}):",
@@ -230,16 +239,12 @@ class ConfigScreen(Screen[None]):
         mirrors: list[str] = [
             name
             for name in init_mod.KNOWN_MIRRORS
-            if self.query_one(
-                f"#proj-mirror-{name.replace('.', '-')}", Checkbox
-            ).value
+            if self.query_one(f"#proj-mirror-{name.replace('.', '-')}", Checkbox).value
         ]
         other = self.query_one("#proj-other-mirror", Input).value.strip()
         if other:
             if not init_mod.is_valid_mirror_name(other):
-                self.app.notify(
-                    f"other mirror {other!r} invalid", severity="error"
-                )
+                self.app.notify(f"other mirror {other!r} invalid", severity="error")
                 return
             if other not in mirrors:
                 mirrors.append(other)

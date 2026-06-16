@@ -55,17 +55,7 @@ Screen {
 
 #banner {
     background: $background;
-    color: $primary;
-    text-style: bold;
-    height: 2;
-}
-
-#banner-sub {
-    background: $background;
-    color: $text-muted;
-    text-style: italic;
-    height: 1;
-    padding-top: 0;
+    height: 7;
 }
 
 #hint {
@@ -238,6 +228,7 @@ ModalScreen {
     background: $surface;
     border: thick $primary;
     padding: 1 2;
+    overflow-y: scroll;
 }
 
 .modal-title {

@@ -7,12 +7,21 @@ hashes; we emit a warning but still overwrite (the plan's accepted behavior).
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent_init.core import agents_md, hashing, manifest, paths, rule_compose, rules, templates
+from agent_init.core import (
+    agents_md,
+    hashing,
+    layout_profiles,
+    manifest,
+    paths,
+    rule_compose,
+    rules,
+    templates,
+)
 from agent_init.core.models import Manifest
+from agent_init.core.validation import MirrorNameError, is_valid_mirror_name
 
 KNOWN_MIRRORS = ("CLAUDE.md", "GEMINI.md", "OPENCODE.md")
 DEFAULT_MIRRORS: tuple[str, ...] = ()  # opt-in only — `init` writes mirrors you ask for
@@ -31,22 +40,6 @@ _AGENT_FROM_FILENAME = {
 
 def agent_for_filename(filename: str) -> str | None:
     return _AGENT_FROM_FILENAME.get(filename)
-_MIRROR_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.md$")
-
-
-class MirrorNameError(ValueError):
-    """A mirror filename failed validation (path traversal, bad chars, etc.)."""
-
-
-def is_valid_mirror_name(name: str) -> bool:
-    """Reject `../etc/passwd.md`, absolute paths, weird chars.
-
-    Rules: letters/digits/`_`/`-`/`.` only, must start with alnum, must end
-    with `.md`. Single segment (no `/` or `\\`).
-    """
-    if "/" in name or "\\" in name:
-        return False
-    return bool(_MIRROR_NAME_RE.fullmatch(name))
 
 
 @dataclass
@@ -64,6 +57,8 @@ class InitOptions:
     force: bool = False
     agent_dialect: str | None = None
     dry_run: bool = False
+    # Name of a layout profile to use; overrides manifest.layout_profile.
+    layout_profile: str | None = None
 
 
 @dataclass
@@ -111,17 +106,34 @@ def run(options: InitOptions) -> InitResult:
     re_init = existing_manifest_path.exists()
     m = manifest.load(proj) if re_init else Manifest(template=options.template)
 
+    # Resolve the active layout profile. CLI option wins, then manifest, then legacy.
+    active_profile_name = options.layout_profile or m.layout_profile
+    if active_profile_name:
+        active_profile = layout_profiles.get_profile(proj, active_profile_name)
+    else:
+        active_profile = layout_profiles.LEGACY_PROFILE
+
     # Mirror semantics: opt-in on first init; on re-init, UNION with prior
     # managed_files so a `init` invocation that just adds a rule doesn't
-    # silently drop CLAUDE.md/GEMINI.md the user already had.
+    # silently drop CLAUDE.md/GEMINI.md the user already had. On first init,
+    # fall back to the profile's default mirrors when no mirrors are supplied.
+    requested_mirrors = options.mirrors
+    if not re_init and not requested_mirrors:
+        requested_mirrors = tuple(active_profile.mirrors)
     if re_init and not options.clear_mirrors:
         prior_mirrors = tuple(
-            name for name in m.managed_files if name.lower() != "agents.md"
+            name
+            for name in m.managed_files
+            if name.lower() != active_profile.agents_md.lower() and is_valid_mirror_name(name)
         )
-        merged_mirrors = list(dict.fromkeys((*options.mirrors, *prior_mirrors)))
-        effective_mirrors: tuple[str, ...] = tuple(merged_mirrors)
+        merged = list(dict.fromkeys((*requested_mirrors, *prior_mirrors)))
+        # If the manifest has no prior managed files (e.g. it was only created by
+        # set_active), apply the profile's default mirrors on first real init.
+        if not merged and not requested_mirrors:
+            merged = list(active_profile.mirrors)
+        effective_mirrors: tuple[str, ...] = tuple(merged)
     else:
-        effective_mirrors = options.mirrors
+        effective_mirrors = requested_mirrors
 
     # Resolve which rules to apply.
     rule_names: list[str] = []
@@ -143,9 +155,7 @@ def run(options: InitOptions) -> InitResult:
     applied = [rules.get(name) for name in rule_names]
 
     def _render_for_agent(agent: str | None) -> str:
-        return templates.render(
-            options.template, {"rules": applied, "agent": agent}
-        )
+        return templates.render(options.template, {"rules": applied, "agent": agent})
 
     def _regions_for_agent(agent: str | None) -> dict[str, str]:
         rendered = _render_for_agent(agent)
@@ -156,7 +166,7 @@ def run(options: InitOptions) -> InitResult:
 
     pending: list[FileChange] = []
 
-    agents_path = proj / "AGENTS.md"
+    agents_path = proj / active_profile.agents_md
     drift_warnings: list[str] = []
     if agents_path.exists() and not options.force:
         existing = agents_path.read_text()
@@ -184,9 +194,7 @@ def run(options: InitOptions) -> InitResult:
         agent = agent_for_filename(mirror)
         if agent not in mirror_render_cache:
             rendered_for_agent = _render_for_agent(agent)
-            regions_for_agent = {
-                r.name: r.body for r in agents_md.parse(rendered_for_agent)
-            }
+            regions_for_agent = {r.name: r.body for r in agents_md.parse(rendered_for_agent)}
             mirror_render_cache[agent] = (rendered_for_agent, regions_for_agent)
         rendered_for_mirror, regions_for_mirror = mirror_render_cache[agent]
         if target.exists() and target.resolve() == agents_path.resolve():
@@ -208,7 +216,9 @@ def run(options: InitOptions) -> InitResult:
                     f"force-overwrote {target.name} (had no agent-init markers; "
                     "any hand-written content was lost)"
                 )
-                pending.append(FileChange(path=target, before=mirror_text, after=rendered_for_mirror))
+                pending.append(
+                    FileChange(path=target, before=mirror_text, after=rendered_for_mirror)
+                )
                 mirror_paths.append(target)
                 continue
             drift_warnings.append(
@@ -224,7 +234,7 @@ def run(options: InitOptions) -> InitResult:
         mirror_paths.append(target)
 
     # Rules: dry-run also collects each rule-body write.
-    project_rules_dir = paths.project_rules_dir(proj)
+    project_rules_dir = proj / active_profile.rules_dir
     for rule in applied:
         rule_path = project_rules_dir / f"{rule.name}.md"
         before = rule_path.read_text() if rule_path.exists() else None
@@ -245,7 +255,8 @@ def run(options: InitOptions) -> InitResult:
         )
 
     # --- COMMIT: apply pending changes ---
-    rules.apply_to_project(proj, rule_names)
+    rules.apply_to_project(proj, rule_names, rules_dir=project_rules_dir)
+    agents_path.parent.mkdir(parents=True, exist_ok=True)
     agents_path.write_text(merged)
     for mirror in effective_mirrors:
         target = proj / mirror
@@ -271,11 +282,12 @@ def run(options: InitOptions) -> InitResult:
     # Finalize manifest.
     m.template = options.template
     m.rules = rule_names
-    managed = ["AGENTS.md", *(p.name for p in mirror_paths)]
+    managed = [active_profile.agents_md, *(p.name for p in mirror_paths)]
     m.managed_files = list(dict.fromkeys(managed))
     m.managed_region_hashes = new_hashes
     if options.agent_dialect is not None:
         m.agent_dialect = options.agent_dialect
+    m.layout_profile = active_profile.name
     manifest.save(proj, m)
 
     return InitResult(
@@ -300,9 +312,7 @@ def _region_hashes(text: str) -> dict[str, str]:
     return {r.name: hashing.hash_text(r.body) for r in agents_md.parse(text)}
 
 
-def _detect_region_drift(
-    filename: str, body: str, stored_hashes: dict[str, str]
-) -> list[str]:
+def _detect_region_drift(filename: str, body: str, stored_hashes: dict[str, str]) -> list[str]:
     warnings: list[str] = []
     for region in agents_md.parse(body):
         prior = stored_hashes.get(region.name)

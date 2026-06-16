@@ -1,16 +1,16 @@
 <p align="center">
   <img src="assets/logo.png" alt="agent-init logo" width="480">
-  <br>
-  <img src="assets/demo.gif" alt="agent-init TUI demo" width="640">
 </p>
-
-# agent-init
 
 A small CLI + TUI for scaffolding agent-engineering projects.
 
 - Generates `AGENTS.md` from a managed template, with mirrors (`CLAUDE.md`, `GEMINI.md`, ...).
 - Manages a library of reusable rule snippets, with a "default" flag so chosen rules auto-seed into every new project.
 - Registers skill source repositories globally; installs, updates, and rolls back skills into projects with per-skill version pinning.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="agent-init TUI demo" width="640">
+</p>
 
 ## Status
 

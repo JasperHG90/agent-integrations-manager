@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 4,
   "template": "default",
   "skills": [
     {
@@ -14,7 +14,9 @@
         "installed_at": "2026-06-15T15:04:43.999496Z"
       },
       "history": [],
-      "content_hash": "a4aea010b6ff9e504a0ff23a1b711d66483beadd1f9aff641451d0d8f25c219a"
+      "content_hash": "a4aea010b6ff9e504a0ff23a1b711d66483beadd1f9aff641451d0d8f25c219a",
+      "pin": null,
+      "track": null
     },
     {
       "qualified_name": "anthropic/skill-creator",
@@ -28,9 +30,13 @@
         "installed_at": "2026-06-15T15:04:59.513936Z"
       },
       "history": [],
-      "content_hash": "4557d54c524c67984e4bab23fa436e90196292ae8df4d2093f0ce0e6951bfc1c"
+      "content_hash": "4557d54c524c67984e4bab23fa436e90196292ae8df4d2093f0ce0e6951bfc1c",
+      "pin": null,
+      "track": null
     }
   ],
+  "agents": [],
+  "mcp_servers": [],
   "rules": [],
   "managed_files": [
     "AGENTS.md",
@@ -40,5 +46,7 @@
   "managed_region_hashes": {
     "header": "02725b679e8cc3249112cb89a8cc03ac7d709174d8b4b098d533f4b4fef71631",
     "rules": "3bd387ee22936d058951607514d65d95035c90e0d2c62bc44c3a6e9fe1e38863"
-  }
+  },
+  "agent_dialect": null,
+  "layout_profile": "claude"
 }

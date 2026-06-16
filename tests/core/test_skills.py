@@ -78,6 +78,83 @@ def test_discover_supports_bare_root_skill_md(home: Path, tmp_path: Path) -> Non
     assert rows[0].description == "A skill at repo root."
 
 
+def test_frontmatter_name_and_description(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/algorithmic-art/SKILL.md": (
+                "---\n"
+                "name: algorithmic-art\n"
+                "description: Generate algorithmic art with structured prompts.\n"
+                "---\n\n"
+                "## Safety\n\n"
+                "Never execute untrusted code.\n\n"
+                "## Usage\n\n"
+                "Use `/algorithmic-art` to start.\n"
+            ),
+            "README.md": "x\n",
+        },
+    )
+    repos.add("anth", f"file://{bare}")
+    rows = skills.list_skills()
+    assert len(rows) == 1
+    assert rows[0].qualified_name == "anth/algorithmic-art"
+    assert rows[0].title == "algorithmic-art"
+    assert rows[0].description == "Generate algorithmic art with structured prompts."
+    assert rows[0].prereqs == ""
+    assert rows[0].provides == ""
+
+
+def test_frontmatter_name_with_body_description(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/custom/SKILL.md": (
+                "---\n"
+                "name: custom-name\n"
+                "---\n\n"
+                "# Body Heading\n\n"
+                "This description comes from the body.\n\n"
+                "More body text.\n"
+            ),
+            "README.md": "x\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    rows = skills.list_skills()
+    assert len(rows) == 1
+    assert rows[0].qualified_name == "a/custom"
+    assert rows[0].title == "custom-name"
+    assert rows[0].description == "This description comes from the body."
+
+
+def test_frontmatter_prereqs_and_provides(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/full/SKILL.md": (
+                "---\n"
+                "name: full-meta\n"
+                "description: Does everything.\n"
+                "prereqs: [other/base, other/util]\n"
+                "provides: code-review\n"
+                "---\n\n"
+                "# Full Meta\n\n"
+                "Body here.\n"
+            ),
+            "README.md": "x\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    rows = skills.list_skills()
+    assert len(rows) == 1
+    assert rows[0].qualified_name == "a/full"
+    assert rows[0].title == "full-meta"
+    assert rows[0].description == "Does everything."
+    assert rows[0].prereqs == "other/base,other/util"
+    assert rows[0].provides == "code-review"
+
+
 def test_precedence_skills_dir_wins(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(
         tmp_path,

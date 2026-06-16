@@ -40,12 +40,12 @@ async def test_main_screen_structure(home: Path) -> None:
         banner = app.screen.query_one("#banner", Static)
         # The ASCII banner contains block glyphs spelling AGENT INIT — checking
         # for one of those characters is enough to detect it's been rendered.
-        assert "█" in str(banner.render())
-        sub = app.screen.query_one("#banner-sub", Static)
-        # Version line — `v0.1.0` or current package version.
+        rendered = str(banner.render())
+        assert "█" in rendered
+        # Version and profile/path metadata are rendered next to the rocket.
         from agent_init import __version__
 
-        assert __version__ in str(sub.render())
+        assert __version__ in rendered
 
 
 @pytest.mark.asyncio

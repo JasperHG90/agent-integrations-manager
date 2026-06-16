@@ -26,7 +26,7 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from agent_init.core import db, git, hashing, manifest, paths, repos
+from agent_init.core import db, git, hashing, layout_profiles, manifest, paths, repos
 from agent_init.core.models import InstalledSkill, Manifest, SkillIndex, SkillVersion
 
 DEFAULT_TARGET_BASE = ".claude/skills"
@@ -84,9 +84,7 @@ def _snapshot_is_complete(snap: Path) -> bool:
     return snap.exists() and (snap / _SNAPSHOT_SENTINEL).exists()
 
 
-def _ensure_snapshot(
-    repo_alias: str, sha: str, source_path: str, skill_name: str
-) -> Path:
+def _ensure_snapshot(repo_alias: str, sha: str, source_path: str, skill_name: str) -> Path:
     snap = _snapshot_dir(repo_alias, sha, skill_name)
     if _snapshot_is_complete(snap):
         return snap
@@ -117,18 +115,21 @@ def resolve_install_version(
     *,
     track: str | None = None,
     pin: str | None = None,
+    artifact_name: str = "SKILL.md",
 ) -> SkillVersion:
-    """Pick the version to install for this skill.
+    """Pick the version to install for this artifact (skill or agent).
 
     Strategy: the actual SHA is the last commit touching `source_path`
     reachable from the resolved ref. The most recent ancestor tag is
     attached IFF (a) the source_path exists at that tag and (b) the
-    skill's last-touching SHA is reachable from the tag.
+    artifact's last-touching SHA is reachable from the tag.
 
     - `track` overrides the registered repo's default_ref (e.g. "main",
       a specific branch, or "latest-tag" for "newest reachable tag").
     - `pin` returns that exact tag/sha verbatim if it resolves — install
       stays put even when upstream advances.
+    - `artifact_name` is the manifest file inside `source_path` (SKILL.md
+      or AGENT.md).
     """
     repo = repos.get(repo_alias)
     repo_dir = repos.clone_dir(repo_alias)
@@ -138,8 +139,11 @@ def resolve_install_version(
         # Resolve `pin` as a ref (tag preferred). If it doesn't resolve we
         # let GitError propagate so the caller surfaces it.
         pin_sha = backend.resolve_ref(repo_dir, pin)
-        return SkillVersion(tag=pin if not pin.startswith("sha:") else None,
-                            sha=pin_sha, installed_at=datetime.now(UTC))
+        return SkillVersion(
+            tag=pin if not pin.startswith("sha:") else None,
+            sha=pin_sha,
+            installed_at=datetime.now(UTC),
+        )
 
     if track == "latest-tag":
         latest = backend.latest_tag(repo_dir, repo.default_ref)
@@ -158,12 +162,9 @@ def resolve_install_version(
         try:
             tag_sha = backend.resolve_ref(repo_dir, tag)
             tag_paths = backend.ls_tree(repo_dir, tag_sha, source_path or "")
-            skill_md_path = f"{source_path}/SKILL.md" if source_path else "SKILL.md"
-            has_skill = any(
-                p == skill_md_path or p.endswith("/SKILL.md")
-                for p in tag_paths
-            )
-            if not has_skill:
+            artifact_path = f"{source_path}/{artifact_name}" if source_path else artifact_name
+            has_artifact = any(p == artifact_path or p.endswith(f"/{artifact_name}") for p in tag_paths)
+            if not has_artifact:
                 tag = None
             else:
                 # Is the install SHA an ancestor of the tag SHA?
@@ -172,9 +173,7 @@ def resolve_install_version(
                 # reachable from tag_sha. If it equals our install sha, tag is
                 # at-or-after the edit; otherwise the edit happened after the tag.
                 try:
-                    tag_last_touching = backend.last_touching_sha(
-                        repo_dir, tag_sha, source_path
-                    )
+                    tag_last_touching = backend.last_touching_sha(repo_dir, tag_sha, source_path)
                     if tag_last_touching != sha:
                         tag = None
                 except git.GitError:
@@ -193,10 +192,9 @@ def _plan(
     pin: str | None = None,
 ) -> InstallPlan:
     row = _skill_index_row(qualified_name)
-    version = resolve_install_version(
-        row.repo_alias, row.source_path, track=track, pin=pin
-    )
-    target_dir = project_root / DEFAULT_TARGET_BASE / row.skill_name
+    version = resolve_install_version(row.repo_alias, row.source_path, track=track, pin=pin)
+    profile = layout_profiles.resolve_active(project_root)
+    target_dir = project_root / profile.skills_dir / row.skill_name
     return InstallPlan(
         qualified_name=qualified_name,
         repo_alias=row.repo_alias,
@@ -286,9 +284,7 @@ def take_install_warnings() -> list[str]:
     return out
 
 
-def _warn_about_prereqs_and_capabilities(
-    project_root: Path, qualified_name: str
-) -> None:
+def _warn_about_prereqs_and_capabilities(project_root: Path, qualified_name: str) -> None:
     """Inspect the SkillIndex row for this skill and the existing manifest
     to surface missing prereqs and capability collisions. Warnings are
     drained via `take_install_warnings()`."""
@@ -440,20 +436,14 @@ def update_many(
     outcomes: list[BulkUpdateOutcome] = []
     for skill in list(m.skills):
         if repo_alias is not None and skill.repo_alias != repo_alias:
-            outcomes.append(
-                BulkUpdateOutcome(skill.qualified_name, "skipped", "repo filter")
-            )
+            outcomes.append(BulkUpdateOutcome(skill.qualified_name, "skipped", "repo filter"))
             continue
         try:
             if only_outdated or dry_run:
-                preview = update(
-                    project_root, skill.qualified_name, dry_run=True
-                )
+                preview = update(project_root, skill.qualified_name, dry_run=True)
                 assert isinstance(preview, UpdatePreview)
                 if not preview.will_change:
-                    outcomes.append(
-                        BulkUpdateOutcome(skill.qualified_name, "noop", "at HEAD")
-                    )
+                    outcomes.append(BulkUpdateOutcome(skill.qualified_name, "noop", "at HEAD"))
                     if dry_run or only_outdated:
                         continue
                 if dry_run:
@@ -486,9 +476,7 @@ def update_many(
             git.GitError,
             RollbackUnavailableError,
         ) as exc:
-            outcomes.append(
-                BulkUpdateOutcome(skill.qualified_name, "error", str(exc))
-            )
+            outcomes.append(BulkUpdateOutcome(skill.qualified_name, "error", str(exc)))
     return outcomes
 
 

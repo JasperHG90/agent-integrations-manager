@@ -9,10 +9,10 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from agent_init.core import init as init_mod
-from agent_init.core import templates
+from agent_init.core import layout_profiles, templates
 
 
 @dataclass(frozen=True)
@@ -23,14 +23,21 @@ class InitConfig:
     seed_default_rules: bool
     force: bool
     agent_dialect: str | None
+    layout_profile: str | None = None
 
 
 class InitModal(ModalScreen[InitConfig | None]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, *, initial_project: Path | None = None) -> None:
+    def __init__(self, *, project_root: Path | None = None) -> None:
         super().__init__()
-        self._initial_project = initial_project or Path.cwd()
+        self._initial_project = (project_root or Path.cwd()).resolve()
+        self._profile_options: list[tuple[str, str]] = []
+
+    @staticmethod
+    def _build_profile_options(project_root: Path) -> list[tuple[str, str]]:
+        profiles = layout_profiles.list_profiles(project_root)
+        return [(p.display_name or p.name, p.name) for p in profiles]
 
     @staticmethod
     def _mirror_id(name: str) -> str:
@@ -45,24 +52,22 @@ class InitModal(ModalScreen[InitConfig | None]):
             if templates.BUILTIN_DEFAULT in templates_avail
             else (templates_avail[0] if templates_avail else templates.BUILTIN_DEFAULT)
         )
+        self._profile_options = self._build_profile_options(self._initial_project)
         yield Vertical(
             Static("Initialize project", classes="modal-title", markup=False),
             Static("Project root:", markup=False),
             Input(value=str(self._initial_project), id="project-root"),
             Static("Template:", markup=False),
             Input(value=default_template, id="template"),
+            Static("Profile:", markup=False),
+            Select(self._profile_options, id="layout-profile", allow_blank=True),
             Static("Mirror files (write a copy of AGENTS.md as):", markup=False),
-            *(
-                Checkbox(name, id=self._mirror_id(name))
-                for name in init_mod.KNOWN_MIRRORS
-            ),
+            *(Checkbox(name, id=self._mirror_id(name)) for name in init_mod.KNOWN_MIRRORS),
             Static("Other mirror (optional, e.g. CURSOR.md):", markup=False),
             Input(value="", placeholder="<name>.md", id="other-mirror"),
             Static("Primary agent dialect (optional, blank = none):", markup=False),
             Input(value="", placeholder="claude / gemini / opencode", id="agent-dialect"),
-            Checkbox(
-                "Seed default-flagged rules", value=True, id="seed-defaults"
-            ),
+            Checkbox("Seed default-flagged rules", value=True, id="seed-defaults"),
             Checkbox("Force overwrite if files exist", id="force"),
             Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
@@ -108,8 +113,7 @@ class InitModal(ModalScreen[InitConfig | None]):
         if other:
             if not init_mod.is_valid_mirror_name(other):
                 self._error(
-                    f"other mirror {other!r} invalid: use <name>.md, "
-                    "letters/numbers/_-/. only",
+                    f"other mirror {other!r} invalid: use <name>.md, letters/numbers/_-/. only",
                     "other-mirror",
                 )
                 return
@@ -118,6 +122,12 @@ class InitModal(ModalScreen[InitConfig | None]):
         seed = self.query_one("#seed-defaults", Checkbox).value
         force = self.query_one("#force", Checkbox).value
         dialect = self.query_one("#agent-dialect", Input).value.strip().lower() or None
+        profile_value = self.query_one("#layout-profile", Select).value
+        layout_profile: str | None = None
+        if isinstance(profile_value, tuple):
+            layout_profile = profile_value[1]
+        elif profile_value is not None and profile_value not in (Select.BLANK, Select.NULL):
+            layout_profile = str(profile_value)
         self.dismiss(
             InitConfig(
                 project_root=Path(project_root_str).expanduser(),
@@ -126,5 +136,6 @@ class InitModal(ModalScreen[InitConfig | None]):
                 seed_default_rules=seed,
                 force=force,
                 agent_dialect=dialect,
+                layout_profile=layout_profile,
             )
         )

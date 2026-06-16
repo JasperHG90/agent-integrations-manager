@@ -19,7 +19,17 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from agent_init.core import agents_md, db, hashing, manifest, paths, repos, roots, rules
+from agent_init.core import (
+    agents_md,
+    db,
+    hashing,
+    manifest,
+    mcp_registry,
+    paths,
+    repos,
+    roots,
+    rules,
+)
 from agent_init.core.install import _SNAPSHOT_SENTINEL
 from agent_init.core.models import RegisteredRepo, RuleEntry
 
@@ -131,6 +141,56 @@ def _audit_project(root: Path, report: DoctorReport) -> None:
                     "warning",
                     root,
                     f"{skill.qualified_name}: {skill.target_dir} edited since install",
+                )
+            )
+
+    # Agent drift.
+    for agent in m.agents:
+        target = root / agent.target_path
+        if not target.exists():
+            report.findings.append(
+                Finding("error", root, f"{agent.qualified_name}: target {agent.target_path} missing")
+            )
+            continue
+        if agent.content_hash is None:
+            report.findings.append(
+                Finding("info", root, f"{agent.qualified_name}: no content_hash (legacy install)")
+            )
+            continue
+        current = hashing.hash_text(target.read_text(encoding="utf-8"))
+        if current != agent.content_hash:
+            report.findings.append(
+                Finding(
+                    "warning",
+                    root,
+                    f"{agent.qualified_name}: {agent.target_path} edited since install",
+                )
+            )
+
+    # MCP server drift.
+    try:
+        mcp_data = mcp_registry.read_mcp_json(root)
+    except mcp_registry.McpRegistryError as exc:
+        report.findings.append(
+            Finding("error", root, f"invalid .mcp.json: {exc}")
+        )
+        mcp_data = {"mcpServers": {}}
+    mcp_servers = mcp_data.get("mcpServers", {})
+    for mcp in m.mcp_servers:
+        if not isinstance(mcp_servers, dict) or mcp.alias not in mcp_servers:
+            report.findings.append(
+                Finding("error", root, f"MCP alias {mcp.alias!r}: missing from .mcp.json")
+            )
+            continue
+        current_hash = hashing.hash_text(
+            mcp_registry._canonical_json(mcp_servers[mcp.alias])
+        )
+        if current_hash != mcp.entry_hash:
+            report.findings.append(
+                Finding(
+                    "warning",
+                    root,
+                    f"MCP alias {mcp.alias!r}: .mcp.json entry edited since install",
                 )
             )
 

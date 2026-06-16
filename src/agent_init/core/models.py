@@ -13,6 +13,7 @@ from sqlmodel import SQLModel
 
 # ---------- DB tables ----------
 
+
 class RegisteredRepo(SQLModel, table=True):
     """A skill source repo registered globally on this machine."""
 
@@ -66,9 +67,41 @@ class RegisteredRuleRepo(SQLModel, table=True):
     last_sha: str | None = None
 
 
+class LayoutProfile(SQLModel, table=True):
+    """Cached global layout profile. Repo-side global profiles are authoritative;
+    the DB is a cache for sharing across projects."""
+
+    name: str = SQLField(primary_key=True)
+    content_hash: str
+    toml_text: str
+    updated_at: datetime
+
+
+class GlobalSetting(SQLModel, table=True):
+    """Single-row key/value settings for machine-wide defaults."""
+
+    key: str = SQLField(primary_key=True)
+    value: str
+
+
+class AgentIndex(SQLModel, table=True):
+    """Discovered sub-agent within a registered repo, used for `agent list/search`."""
+
+    qualified_name: str = SQLField(primary_key=True)  # "<alias>/<agent_name>"
+    repo_alias: str = SQLField(index=True)
+    agent_name: str = SQLField(index=True)
+    source_path: str  # path of the agent DIRECTORY relative to repo root
+    agent_md_path: str | None = None  # path of the AGENT.md file relative to repo root
+    title: str | None = None
+    description: str | None = None
+    indexed_at_sha: str
+    tools: str = ""  # CSV for search only
+    model: str | None = None
+
+
 # ---------- Manifest (per-project JSON, committed) ----------
 
-CURRENT_MANIFEST_VERSION = 2  # v2: per-skill `pin` + `track` fields (additive)
+CURRENT_MANIFEST_VERSION = 4  # v4: mcp_servers and agents lists (additive)
 HISTORY_CAP = 10
 
 
@@ -107,12 +140,79 @@ class InstalledSkill(BaseModel):
             del self.history[HISTORY_CAP:]
 
 
+class McpClaudeEntry(BaseModel):
+    """A single server entry inside Claude Code's `.mcp.json` -> `mcpServers`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str  # "stdio", "http", "sse", "ws"
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class McpServerVersion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    definition_hash: str  # sha256 of canonical registry definition JSON
+    registry_version: str | None = None
+    installed_at: datetime
+    entry: McpClaudeEntry | None = None  # historical .mcp.json entry for rollback
+
+    def identifier(self) -> str:
+        return self.registry_version or self.definition_hash[:7]
+
+
+class InstalledMcpServer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alias: str  # local project alias (user-editable)
+    registry_name: str  # canonical registry server name
+    entry: McpClaudeEntry  # exact .mcp.json entry written
+    entry_hash: str  # sha256 of canonical entry JSON
+    current: McpServerVersion
+    history: list[McpServerVersion] = Field(default_factory=list)
+
+    def push_history(self, new_current: McpServerVersion) -> None:
+        self.history.insert(0, self.current)
+        self.current = new_current
+        if len(self.history) > HISTORY_CAP:
+            del self.history[HISTORY_CAP:]
+
+
+class InstalledAgent(BaseModel):
+    """An installed sub-agent, mirroring InstalledSkill where applicable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<agent_name>" at install time
+    repo_alias: str  # the local alias at install time
+    repo_url: str
+    source_path: str  # path inside the source repo at install time
+    target_path: str  # path inside the project, e.g. ".claude/agents/onboarding.md"
+    current: SkillVersion
+    history: list[SkillVersion] = Field(default_factory=list)
+    content_hash: str | None = None  # sha256 of installed file text (drift detection)
+    pin: str | None = None
+    track: str | None = None
+
+    def push_history(self, new_current: SkillVersion) -> None:
+        self.history.insert(0, self.current)
+        self.current = new_current
+        if len(self.history) > HISTORY_CAP:
+            del self.history[HISTORY_CAP:]
+
+
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = CURRENT_MANIFEST_VERSION
     template: str = "default"
     skills: list[InstalledSkill] = Field(default_factory=list)
+    agents: list[InstalledAgent] = Field(default_factory=list)
+    mcp_servers: list[InstalledMcpServer] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     managed_files: list[str] = Field(default_factory=lambda: ["AGENTS.md"])
     # Hash of the last-written body of each managed region inside AGENTS.md (and
@@ -122,3 +222,6 @@ class Manifest(BaseModel):
     # "opencode", or None). Not used for rendering yet — laid down for future
     # per-agent dialect support without another manifest version bump.
     agent_dialect: str | None = None
+    # Name of the active layout profile. None resolves to the legacy profile
+    # with the original hardcoded paths and no default mirrors.
+    layout_profile: str | None = None

@@ -19,6 +19,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from agent_init.core import agents as agents_mod
 from agent_init.core import repos, rules, skills
 
 
@@ -53,8 +54,7 @@ class PaletteModal(ModalScreen[PaletteEntry | None]):
 
     def _option_widgets(self) -> list[Option]:
         return [
-            Option(f"[{e.kind}] {e.label}", id=f"opt-{i}")
-            for i, e in enumerate(self._filtered)
+            Option(f"[{e.kind}] {e.label}", id=f"opt-{i}") for i, e in enumerate(self._filtered)
         ]
 
     def _re_render(self) -> None:
@@ -69,9 +69,7 @@ class PaletteModal(ModalScreen[PaletteEntry | None]):
         if not q:
             self._filtered = list(self._all)
         else:
-            self._filtered = [
-                e for e in self._all if q in e.label.lower() or q in e.kind
-            ]
+            self._filtered = [e for e in self._all if q in e.label.lower() or q in e.kind]
         self._re_render()
 
     def action_activate(self) -> None:
@@ -89,7 +87,10 @@ class PaletteModal(ModalScreen[PaletteEntry | None]):
 
 def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     """Construct the palette entries for the current global state."""
+    from agent_init.tui.screens.agents_screen import AgentsScreen
     from agent_init.tui.screens.config_screen import ConfigScreen
+    from agent_init.tui.screens.layout_profiles_screen import LayoutProfilesScreen
+    from agent_init.tui.screens.mcp_screen import McpScreen
     from agent_init.tui.screens.project_screen import ProjectScreen
     from agent_init.tui.screens.repos_screen import ReposScreen
     from agent_init.tui.screens.rules_screen import RulesScreen
@@ -98,28 +99,43 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     entries: list[PaletteEntry] = [
         PaletteEntry("action", "Open Repos", lambda: app.push_screen(ReposScreen())),
         PaletteEntry("action", "Open Skills", lambda: app.push_screen(SkillsScreen())),
+        PaletteEntry("action", "Open Agents", lambda: app.push_screen(AgentsScreen())),
+        PaletteEntry("action", "Open MCP servers", lambda: app.push_screen(McpScreen())),
         PaletteEntry("action", "Open Rules", lambda: app.push_screen(RulesScreen())),
         PaletteEntry("action", "Open Project", lambda: app.push_screen(ProjectScreen())),
+        PaletteEntry("action", "Open Profiles", lambda: app.push_screen(LayoutProfilesScreen())),
         PaletteEntry("action", "Open Config", lambda: app.push_screen(ConfigScreen())),
         PaletteEntry("action", "Quit", lambda: app.exit()),
     ]
     for repo in repos.list_repos():
         entries.append(
             PaletteEntry(
-                "repo", repo.alias, lambda: app.push_screen(ReposScreen()),
+                "repo",
+                repo.alias,
+                lambda: app.push_screen(ReposScreen()),
             )
         )
     for skill in skills.list_skills():
         entries.append(
             PaletteEntry(
-                "skill", skill.qualified_name,
+                "skill",
+                skill.qualified_name,
                 lambda: app.push_screen(SkillsScreen()),
+            )
+        )
+    for agent in agents_mod.list_agents():
+        entries.append(
+            PaletteEntry(
+                "agent",
+                agent.qualified_name,
+                lambda: app.push_screen(AgentsScreen()),
             )
         )
     for rule in rules.list_all():
         entries.append(
             PaletteEntry(
-                "rule", rule.name,
+                "rule",
+                rule.name,
                 lambda: app.push_screen(RulesScreen()),
             )
         )

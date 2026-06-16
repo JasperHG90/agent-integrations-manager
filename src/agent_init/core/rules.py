@@ -43,9 +43,7 @@ def _validate_name(name: str) -> None:
     # `fullmatch` (not `match`) so trailing whitespace / newlines from paste
     # accidents are rejected instead of silently accepted.
     if not _NAME_RE.fullmatch(name):
-        raise RuleNameError(
-            f"rule name {name!r} invalid: must be lowercase alphanumeric, _, or -"
-        )
+        raise RuleNameError(f"rule name {name!r} invalid: must be lowercase alphanumeric, _, or -")
 
 
 def body_path(name: str) -> Path:
@@ -173,20 +171,28 @@ def delete(name: str) -> None:
         path.unlink()
 
 
-def apply_to_project(project_root: Path, names: list[str]) -> list[Rule]:
-    """Copy named rule bodies into the project's .agent-init/rules/ dir.
+def apply_to_project(
+    project_root: Path, names: list[str], *, rules_dir: Path | None = None
+) -> list[Rule]:
+    """Copy named rule bodies into the project's rules dir.
     Returns the resolved Rule objects in the order applied.
 
     Low-level primitive: writes files only. For the user-facing "install" flow
     (which also updates the manifest and re-renders AGENTS.md), use
     `install_to_project`.
     """
-    project_rules_dir = paths.project_rules_dir(project_root)
-    project_rules_dir.mkdir(parents=True, exist_ok=True)
+    if rules_dir is None:
+        from agent_init.core.layout_profiles import resolve_active
+
+        profile = resolve_active(project_root)
+        resolved_rules_dir = project_root / profile.rules_dir
+    else:
+        resolved_rules_dir = rules_dir
+    resolved_rules_dir.mkdir(parents=True, exist_ok=True)
     applied: list[Rule] = []
     for name in names:
         rule = get(name)
-        (project_rules_dir / f"{name}.md").write_text(rule.body)
+        (resolved_rules_dir / f"{name}.md").write_text(rule.body)
         applied.append(rule)
     return applied
 

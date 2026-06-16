@@ -38,7 +38,14 @@ def test_tools_list(home: Path, project_root: Path) -> None:
     )
     assert resp is not None
     names = {t["name"] for t in resp["result"]["tools"]}
-    assert names == {"list_skills", "get_skill"}
+    assert names == {
+        "list_skills",
+        "get_skill",
+        "list_agents",
+        "get_agent",
+        "list_mcp_servers",
+        "get_mcp_server",
+    }
 
 
 def test_list_skills_returns_installed(
@@ -141,3 +148,72 @@ def test_notifications_initialized_returns_none(
         project_root,
     )
     assert resp is None
+
+
+def test_get_skill_blocks_path_traversal(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    # Craft a manifest with a target_dir that escapes the project.
+    from datetime import UTC, datetime
+
+    from agent_init.core import manifest as manifest_mod
+    from agent_init.core.models import InstalledSkill, Manifest, SkillVersion
+
+    m = Manifest(
+        skills=[
+            InstalledSkill(
+                qualified_name="evil/evil",
+                repo_alias="evil",
+                repo_url="https://example.com",
+                source_path="skills/evil",
+                target_dir="../../..",
+                current=SkillVersion(sha="abcdef1", installed_at=datetime.now(UTC)),
+            )
+        ]
+    )
+    manifest_mod.save(project_root, m)
+    resp = mcp_server.handle_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "get_skill", "arguments": {"qualified_name": "evil/evil"}},
+        },
+        project_root,
+    )
+    assert resp is not None
+    assert resp["result"]["isError"] is True
+
+
+def test_get_mcp_server_returns_entry(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    (project_root / ".mcp.json").write_text(
+        '{"mcpServers": {"fetch": {"type": "http", "url": "https://example.com"}}}'
+    )
+    resp = mcp_server.handle_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {"name": "get_mcp_server", "arguments": {"alias": "fetch"}},
+        },
+        project_root,
+    )
+    assert resp is not None
+    text = resp["result"]["content"][0]["text"]
+    assert '"type": "http"' in text
+
+
+def test_invalid_mcp_json_returns_error(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    (project_root / ".mcp.json").write_text("not json")
+    resp = mcp_server.handle_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {"name": "list_mcp_servers", "arguments": {}},
+        },
+        project_root,
+    )
+    assert resp is not None
+    assert resp["result"]["isError"] is True
