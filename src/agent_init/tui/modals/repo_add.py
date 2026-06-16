@@ -33,7 +33,7 @@ class RepoAddResult:
 
 class RepoAddModal(ModalScreen[RepoAddResult | None]):
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "submit", "Add", priority=True),
     ]
 

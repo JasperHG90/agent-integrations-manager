@@ -98,11 +98,16 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     from agent_init.tui.screens.rules_screen import RulesScreen
     from agent_init.tui.screens.skills_screen import SkillsScreen
 
+    project_root = getattr(app, "_project_root", None)
     entries: list[PaletteEntry] = [
         PaletteEntry("action", "Open Repos", lambda: app.push_screen(ReposScreen())),
         PaletteEntry("action", "Open Skills", lambda: app.push_screen(SkillsScreen())),
         PaletteEntry("action", "Open Agents", lambda: app.push_screen(AgentsScreen())),
-        PaletteEntry("action", "Open MCP servers", lambda: app.push_screen(McpScreen())),
+        PaletteEntry(
+            "action",
+            "Open MCP servers",
+            lambda: app.push_screen(McpScreen(project_root=project_root)),
+        ),
         PaletteEntry("action", "Open Rules", lambda: app.push_screen(RulesScreen())),
         PaletteEntry("action", "Open Project templates", lambda: app.push_screen(ProjectTemplatesScreen())),
         PaletteEntry("action", "Open Project", lambda: app.push_screen(ProjectScreen())),

@@ -111,6 +111,14 @@ class RuleIndex(SQLModel, table=True):
     indexed_at_sha: str
 
 
+class McpServerCache(SQLModel, table=True):
+    """Cached default MCP registry server definitions for instant TUI startup."""
+
+    name: str = SQLField(primary_key=True)  # canonical registry server name
+    definition_json: str  # raw registry server JSON (by_alias dump)
+    fetched_at: datetime
+
+
 # ---------- Manifest (per-project JSON, committed) ----------
 
 CURRENT_MANIFEST_VERSION = 4  # v4: mcp_servers and agents lists (additive)

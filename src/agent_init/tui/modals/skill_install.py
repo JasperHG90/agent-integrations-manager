@@ -19,7 +19,7 @@ class SkillInstallConfig:
 
 class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "submit", "Install", priority=True),
     ]
 

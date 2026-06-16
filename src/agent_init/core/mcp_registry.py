@@ -1,29 +1,39 @@
 """Public MCP registry client and mapping to Claude Code `.mcp.json` entries.
 
-Uses `stamina` for retries and `cachetools.TTLCache` for short in-memory caching
-so rapid TUI searches and repeated CLI calls don't hammer the registry.
+Uses `stamina` for retries, `cachetools.TTLCache` for search-result caching,
+and `cachetools.LRUCache` for in-session default-server caching. Persisted
+DB cache lets the TUI MCP screen open instantly on startup even when the
+public registry is slow.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from urllib.parse import quote
 
 import httpx
 import stamina
-from cachetools import TTLCache
+from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, ConfigDict, Field
+from sqlmodel import select
 
-from agent_init.core import layout_profiles
+from agent_init.core import db, layout_profiles
 from agent_init.core.hashing import hash_text
-from agent_init.core.models import McpClaudeEntry, McpServerVersion
+from agent_init.core.models import McpClaudeEntry, McpServerCache, McpServerVersion
+
+logger = logging.getLogger(__name__)
 
 _REGISTRY_BASE = "https://registry.modelcontextprotocol.io/v0/servers"
 _SEARCH_TTL_SECONDS = 60
 _SEARCH_CACHE = TTLCache(maxsize=128, ttl=_SEARCH_TTL_SECONDS)
+_DEFAULT_CACHE_MAXSIZE = 64
+_DEFAULT_CACHE = LRUCache(maxsize=_DEFAULT_CACHE_MAXSIZE)
+_DB_CACHE_TTL_DAYS = 7
 _TIMEOUT_SECONDS = 15
 
 
@@ -117,7 +127,7 @@ def search_registry(query: str, cursor: str | None = None) -> tuple[list[McpSear
     cache_key = (query.strip().lower(), cursor)
     cached = _SEARCH_CACHE.get(cache_key)
     if cached is not None:
-        return cached
+        return cast(tuple[list[McpSearchResult], str | None], cached)
 
     params: list[tuple[str, str]] = [("search", query)]
     if cursor:
@@ -154,13 +164,79 @@ def _version_key(server: McpServer) -> tuple[int, ...]:
     return tuple(out)
 
 
-def find_server(query: str, exact_name: str | None = None) -> McpServer:
+def _default_cache_key(name: str) -> str:
+    return name.strip().lower()
+
+
+def _server_from_json(text: str) -> McpServer:
+    return McpServer.model_validate(json.loads(text))
+
+
+def _get_cached_default(name: str) -> McpServer | None:
+    key = _default_cache_key(name)
+    cached = _DEFAULT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        with db.session() as session:
+            row = session.get(McpServerCache, key)
+        if row is not None:
+            cutoff = datetime.now(UTC) - timedelta(days=_DB_CACHE_TTL_DAYS)
+            if row.fetched_at.replace(tzinfo=UTC) >= cutoff:
+                server = _server_from_json(row.definition_json)
+                _DEFAULT_CACHE[key] = server
+                return server
+    except Exception as exc:
+        logger.debug("failed to read default MCP cache for %r: %s", name, exc)
+    return None
+
+
+def _set_cached_default(name: str, server: McpServer) -> None:
+    key = _default_cache_key(name)
+    _DEFAULT_CACHE[key] = server
+    try:
+        definition_json = json.dumps(server.model_dump(by_alias=True), sort_keys=True)
+        with db.session() as session:
+            existing = session.get(McpServerCache, key)
+            if existing is None:
+                session.add(
+                    McpServerCache(
+                        name=key,
+                        definition_json=definition_json,
+                        fetched_at=datetime.now(UTC),
+                    )
+                )
+            else:
+                existing.definition_json = definition_json
+                existing.fetched_at = datetime.now(UTC)
+            session.commit()
+    except Exception as exc:
+        logger.debug("failed to persist default MCP cache for %r: %s", name, exc)
+
+
+def find_server(
+    query: str,
+    exact_name: str | None = None,
+    *,
+    prefer_cache: bool = True,
+) -> McpServer:
     """Search the registry and return the single best-matching server.
 
     If `exact_name` is provided, only results whose `server.name` equals it
     are considered. Prefers the registry-flagged latest version, then the
     highest semantic-looking version.
+
+    For exact-name lookups, checks the in-session LRUCache and the SQLite
+    `McpServerCache` table before hitting the network (unless `prefer_cache`
+    is `False`), and persists the fetched definition to both caches.
     """
+    target = exact_name or query
+    if exact_name and prefer_cache:
+        cached = _get_cached_default(target)
+        if cached is not None:
+            return cached
+
     results, _ = search_registry(query)
     candidates = results
     if exact_name:
@@ -172,7 +248,61 @@ def find_server(query: str, exact_name: str | None = None) -> McpServer:
         )
     latest = [r for r in candidates if _is_latest(r.meta)]
     chosen = latest[0] if latest else max(candidates, key=lambda r: _version_key(r.server))
+    if exact_name:
+        _set_cached_default(target, chosen.server)
     return chosen.server
+
+
+def seed_default_servers(names: list[str]) -> dict[str, McpServer]:
+    """Fetch and cache the given default server names, returning successes.
+
+    Checks the in-session LRUCache and the SQLite `McpServerCache` table before
+    hitting the network. Network failures are swallowed so startup seeding never
+    crashes the TUI.
+    """
+    out: dict[str, McpServer] = {}
+    for name in names:
+        try:
+            out[name] = find_server(name, exact_name=name)
+        except McpRegistryError as exc:
+            logger.debug("default MCP server %r not seeded: %s", name, exc)
+    return out
+
+
+def list_cached_servers() -> list[tuple[str, McpServer, datetime, datetime]]:
+    """Return all non-expired cached server definitions from the DB.
+
+    Each tuple is `(canonical_name, server, fetched_at, valid_until)`, sorted by
+    `fetched_at` descending (most recent first). In-memory-only cache entries
+    are also included and sorted to the top by most-recent use order.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(days=_DB_CACHE_TTL_DAYS)
+    rows: list[tuple[str, McpServer, datetime, datetime]] = []
+    try:
+        with db.session() as session:
+            for row in session.exec(select(McpServerCache)).all():
+                if row.fetched_at.replace(tzinfo=UTC) >= cutoff:
+                    rows.append(
+                        (
+                            row.name,
+                            _server_from_json(row.definition_json),
+                            row.fetched_at,
+                            row.fetched_at + timedelta(days=_DB_CACHE_TTL_DAYS),
+                        )
+                    )
+    except Exception as exc:
+        logger.debug("failed to list cached MCP servers: %s", exc)
+
+    # Merge any in-memory-only entries (e.g. from a recent install in this
+    # process that may not have flushed to DB yet), preserving LRU order.
+    memory_names = {name for name, _, _, _ in rows}
+    for name in _DEFAULT_CACHE:
+        if name not in memory_names:
+            rows.append((name, _DEFAULT_CACHE[name], now, now + timedelta(days=_DB_CACHE_TTL_DAYS)))
+
+    rows.sort(key=lambda item: item[2], reverse=True)
+    return rows
 
 
 def _choose_remote(server: McpServer, preferred_transport: str | None) -> McpRemote | None:

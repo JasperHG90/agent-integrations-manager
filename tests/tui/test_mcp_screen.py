@@ -45,11 +45,13 @@ async def test_mcp_screen_defaults_and_enter_search(home: Path, monkeypatch: pyt
     monkeypatch.setattr(mcp_registry, "find_server", _find_server)
     monkeypatch.setattr(mcp_registry, "search_registry", _search_registry)
 
-    app = AgentInitApp()
+    app = AgentInitApp(project_root=home)
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.press("m")
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert app.screen.__class__.__name__ == "McpScreen"
 
         table = app.screen.query_one(DataTable)
@@ -82,11 +84,13 @@ async def test_mcp_screen_install_binding_opens_modal(home: Path, monkeypatch: p
         lambda name, exact_name=None: _server("playwright-mcp", "1.0.0"),
     )
 
-    app = AgentInitApp()
+    app = AgentInitApp(project_root=home)
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.press("m")
         await pilot.pause()
+        await app.workers.wait_for_complete()
 
         table = app.screen.query_one(DataTable)
         assert table.row_count == 1

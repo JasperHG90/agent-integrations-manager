@@ -206,7 +206,11 @@ def update(
 
     _check_local_edits(project_root, installed, force=force)
 
-    server = mcp_registry.find_server(installed.registry_name, exact_name=installed.registry_name)
+    server = mcp_registry.find_server(
+        installed.registry_name,
+        exact_name=installed.registry_name,
+        prefer_cache=False,
+    )
     new_entry = mcp_registry.map_to_claude_entry(server)
     version = mcp_registry.make_mcp_server_version(server, entry=new_entry)
 

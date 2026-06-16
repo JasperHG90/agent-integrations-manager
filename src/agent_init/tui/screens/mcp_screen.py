@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Input, Static
+from textual.worker import get_current_worker
 
-from agent_init.core import default_mcp_servers, mcp_registry, validation
+from agent_init.core import default_mcp_servers, manifest, mcp_registry, validation
 from agent_init.core import mcp_install as install_mod
 from agent_init.tui.modals.mcp_install import McpInstallConfig, McpInstallModal
 
@@ -22,11 +25,14 @@ class McpScreen(Screen[None]):
         ("q", "app.quit", "Quit"),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, project_root: Path | None = None) -> None:
         super().__init__()
+        self._project_root = (project_root or Path.cwd()).resolve()
         self._results: list[mcp_registry.McpSearchResult] = []
         self._last_query: str = ""
         self._default_results: list[mcp_registry.McpSearchResult] | None = None
+        self._cached_results: list[mcp_registry.McpSearchResult] | None = None
+        self._installed_results: list[mcp_registry.McpSearchResult] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("MCP servers", id="title", markup=False)
@@ -41,24 +47,80 @@ class McpScreen(Screen[None]):
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
-        table.add_columns("name", "version", "description")
-        self._load_defaults()
-        self._populate("")
-        table.focus()
+        table.add_columns("name", "version", "description", "status")
+        self._installed_results = self._load_installed()
+        if self._default_results is None:
+            self._status("loading default MCP servers…")
+            self.run_worker(self._load_defaults, group="mcp_defaults", thread=True)
+        else:
+            self._populate("")
+            table.focus()
+
+    def _load_installed(self) -> list[mcp_registry.McpSearchResult]:
+        try:
+            m = manifest.load_or_default(self._project_root)
+        except Exception:
+            return []
+        out: list[mcp_registry.McpSearchResult] = []
+        for installed in m.mcp_servers:
+            server = mcp_registry.McpServer(
+                name=installed.registry_name,
+                description=None,
+                title=None,
+                version=installed.current.registry_version,
+            )
+            out.append(
+                mcp_registry.McpSearchResult(
+                    server=server,
+                    meta={"installed": True, "alias": installed.alias},
+                )
+            )
+        return out
 
     def _load_defaults(self) -> None:
-        if self._default_results is not None:
+        worker = get_current_worker()
+        if worker.is_cancelled:
             return
-        defaults: list[mcp_registry.McpSearchResult] = []
-        for name in default_mcp_servers.DEFAULT_MCP_SERVER_NAMES:
-            try:
-                server = mcp_registry.find_server(name, exact_name=name)
-            except mcp_registry.McpRegistryError:
-                continue
-            defaults.append(
-                mcp_registry.McpSearchResult(server=server, meta={"isDefault": True})
+        try:
+            servers = mcp_registry.seed_default_servers(
+                default_mcp_servers.DEFAULT_MCP_SERVER_NAMES
             )
+        except Exception:
+            servers = {}
+        defaults = [
+            mcp_registry.McpSearchResult(server=server, meta={"isDefault": True})
+            for server in servers.values()
+        ]
+        cached = self._load_cached_servers()
+        self.app.call_from_thread(self._on_defaults_loaded, defaults, cached)
+
+    def _load_cached_servers(self) -> list[mcp_registry.McpSearchResult]:
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return []
+        out: list[mcp_registry.McpSearchResult] = []
+        for name, server, fetched_at, valid_until in mcp_registry.list_cached_servers():
+            out.append(
+                mcp_registry.McpSearchResult(
+                    server=server,
+                    meta={
+                        "cached": True,
+                        "fetched_at": fetched_at.isoformat(),
+                        "valid_until": valid_until.isoformat(),
+                    },
+                )
+            )
+        return out
+
+    def _on_defaults_loaded(
+        self,
+        defaults: list[mcp_registry.McpSearchResult],
+        cached: list[mcp_registry.McpSearchResult],
+    ) -> None:
         self._default_results = defaults
+        self._cached_results = cached
+        self._populate("")
+        self.query_one("#mcp-table", DataTable).focus()
 
     def _populate(self, query: str) -> None:
         table = self.query_one(DataTable)
@@ -66,30 +128,69 @@ class McpScreen(Screen[None]):
         self._results = []
         q = query.strip()
         if not q:
-            self._show_defaults()
+            self._show_cached()
+            return
+        self._last_query = q
+        self._status(f"searching for {q!r}…")
+        self.run_worker(
+            lambda: self._search_worker(q),
+            name="mcp_search",
+            group="mcp_search",
+            thread=True,
+        )
+
+    def _search_worker(self, q: str) -> None:
+        worker = get_current_worker()
+        if worker.is_cancelled:
             return
         try:
             results, next_cursor = mcp_registry.search_registry(q)
         except mcp_registry.McpRegistryError as exc:
-            self.app.notify(f"registry search failed: {exc}", severity="error")
-            self._status("registry search failed")
+            self.app.call_from_thread(self._on_search_error, str(exc))
             return
+        self.app.call_from_thread(self._on_search_results, results, next_cursor)
+
+    def _on_search_results(
+        self,
+        results: list[mcp_registry.McpSearchResult],
+        next_cursor: str | None,
+    ) -> None:
         self._results = results
+        table = self.query_one(DataTable)
+        table.clear()
         if not results:
-            self._status(f"no MCP servers match {q!r}")
+            self._status(f"no MCP servers match {self._last_query!r}")
             return
         self._add_rows(results)
         tail = " (more available)" if next_cursor else ""
         self._status(f"{len(results)} result(s){tail}")
 
-    def _show_defaults(self) -> None:
+    def _on_search_error(self, message: str) -> None:
+        self.app.notify(f"registry search failed: {message}", severity="error")
+        self._status("registry search failed")
+
+    def _show_cached(self) -> None:
+        installed = self._installed_results or []
+        installed_names = {i.server.name for i in installed}
+        cached = self._cached_results or []
         defaults = self._default_results or []
-        self._results = defaults
-        if not defaults:
+
+        # Start with installed entries, then cached (excluding installed),
+        # then defaults (excluding already shown).
+        combined = list(installed)
+        shown = installed_names.copy()
+        for entry in cached + defaults:
+            if entry.server.name in shown:
+                continue
+            combined.append(entry)
+            shown.add(entry.server.name)
+
+        self._results = combined
+        if not combined:
             self._status("type a search query")
             return
-        self._add_rows(defaults)
-        self._status(f"{len(defaults)} default MCP server(s) (cached)")
+        self._add_rows(combined)
+        self._status(f"{len(installed)} installed · {len(combined) - len(installed)} cached/default")
 
     def _add_rows(self, results: list[mcp_registry.McpSearchResult]) -> None:
         table = self.query_one(DataTable)
@@ -99,10 +200,31 @@ class McpScreen(Screen[None]):
             if s.name in seen:
                 continue
             seen.add(s.name)
+            meta = r.meta
+            if meta.get("installed"):
+                status = f"installed ({meta.get('alias', '')})"
+            elif meta.get("cached"):
+                valid_until = meta.get("valid_until", "")
+                if valid_until:
+                    from datetime import datetime
+
+                    try:
+                        until_dt = datetime.fromisoformat(valid_until)
+                        days = max(0, (until_dt - datetime.now(until_dt.tzinfo)).days)
+                        status = f"cached ({days}d)"
+                    except Exception:
+                        status = "cached"
+                else:
+                    status = "cached"
+            elif meta.get("isDefault"):
+                status = "default"
+            else:
+                status = ""
             table.add_row(
                 s.name,
                 s.version or "?",
                 (s.description or "")[:60],
+                status,
                 key=s.name,
             )
 

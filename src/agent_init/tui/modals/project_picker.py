@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
@@ -18,7 +19,7 @@ class ProjectPick:
 
 
 class ProjectPickerModal(ModalScreen[ProjectPick | None]):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
     def __init__(
         self,

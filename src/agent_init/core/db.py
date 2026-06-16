@@ -21,6 +21,7 @@ from agent_init.core.models import (  # noqa: F401
     AgentIndex,
     GlobalSetting,
     LayoutProfile,
+    McpServerCache,
     RegisteredRepo,
     RuleEntry,
     RuleIndex,

@@ -78,8 +78,10 @@ def _pypi_stdio_server(name: str = "weather") -> dict:
 @pytest.fixture(autouse=True)
 def _clear_registry_cache():
     mcp_registry._SEARCH_CACHE.clear()
+    mcp_registry._DEFAULT_CACHE.clear()
     yield
     mcp_registry._SEARCH_CACHE.clear()
+    mcp_registry._DEFAULT_CACHE.clear()
 
 
 def test_map_http_remote() -> None:

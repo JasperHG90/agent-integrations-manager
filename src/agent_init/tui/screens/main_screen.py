@@ -139,7 +139,7 @@ class MainScreen(Screen[None]):
     def action_open_mcp(self) -> None:
         from agent_init.tui.screens.mcp_screen import McpScreen
 
-        self.app.push_screen(McpScreen())
+        self.app.push_screen(McpScreen(project_root=self._project_root))
 
     def action_open_rules(self) -> None:
         from agent_init.tui.screens.rules_screen import RulesScreen

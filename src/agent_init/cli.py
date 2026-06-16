@@ -15,6 +15,7 @@ from agent_init import __version__
 from agent_init.core import agent_install as agent_install_mod
 from agent_init.core import agents as agents_mod
 from agent_init.core import doctor as doctor_mod
+from agent_init.core import format as format_mod
 from agent_init.core import git
 from agent_init.core import init as init_mod
 from agent_init.core import install as install_mod
@@ -427,19 +428,9 @@ def profile_apply(
 
 mcp_app = typer.Typer(
     no_args_is_help=True,
-    help="MCP servers: `serve` runs the local MCP server; other commands manage .mcp.json entries.",
+    help="MCP servers: manage .mcp.json entries via the public registry.",
 )
 app.add_typer(mcp_app, name="mcp")
-
-
-@mcp_app.command("serve")
-def mcp_serve_cmd(
-    project: Path | None = typer.Argument(None, help="Project root (default: cwd)."),
-) -> None:
-    """Run a stdio MCP server exposing installed skills and agents."""
-    from agent_init import mcp_server
-
-    mcp_server.serve(project)
 
 
 @mcp_app.command("search")

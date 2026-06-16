@@ -30,7 +30,7 @@ class InitConfig:
 
 class InitModal(ModalScreen[InitConfig | None]):
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "submit", "Initialize", priority=True),
     ]
 

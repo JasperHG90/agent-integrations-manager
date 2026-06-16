@@ -19,7 +19,7 @@ class AgentInstallConfig:
 
 class AgentInstallModal(ModalScreen[AgentInstallConfig | None]):
     BINDINGS = [
-        ("escape", "action_cancel", "Cancel"),
+        Binding("escape", "action_cancel", "Cancel", priority=True),
         Binding("enter", "submit", "Install", priority=True),
     ]
 

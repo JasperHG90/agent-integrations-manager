@@ -201,38 +201,74 @@ Checkbox:focus > .toggle--button {
     color: $background;
 }
 
-Button {
+Button,
+Button:ansi.-style-flat,
+Button:ansi.-style-default,
+Button.-style-flat,
+Button.-style-default {
     background: $surface;
     color: $text;
-    border: heavy $rule-color;
+    border: solid $rule-color;
     min-width: 12;
+    width: auto;
+    height: auto;
+    min-height: 3;
+    max-height: 3;
     padding: 0 2;
+    content-align: center middle;
     text-style: bold;
+    border-top: solid $rule-color;
+    border-bottom: solid $rule-color;
 }
 
-Button:hover {
+Button > .label,
+Button.-style-default > .label,
+Button.-style-flat > .label {
+    content-align: center middle;
+}
+
+Button:hover,
+Button.-style-default:hover,
+Button.-style-flat:hover {
     background: $coal;
     color: $primary;
 }
 
-Button:focus {
-    border: heavy $primary;
+Button:focus,
+Button.-style-default:focus,
+Button.-style-flat:focus {
+    border: solid $primary;
+    border-top: solid $primary;
+    border-bottom: solid $primary;
 }
 
-Button.-primary {
+Button.-primary,
+Button.-style-default.-primary,
+Button.-style-flat.-primary {
     background: $primary;
     color: $background;
-    border: heavy $primary;
+    border: solid $primary;
+    border-top: solid $primary;
+    border-bottom: solid $primary;
 }
 
-Button.-primary:hover {
+Button.-primary:hover,
+Button.-style-default.-primary:hover,
+Button.-style-flat.-primary:hover {
     background: $ember;
+    border: solid $ember;
+    border-top: solid $ember;
+    border-bottom: solid $ember;
 }
 
-Button.-error {
+Button.-error,
+Button.-style-default.-error,
+Button.-style-flat.-error {
     background: $error;
     color: $bone;
-    border: heavy $error;
+    border: solid $error;
+    border-top: solid $error;
+    border-bottom: solid $error;
 }
 
 ModalScreen {
@@ -269,7 +305,8 @@ ModalScreen {
 }
 
 .modal-buttons {
-    height: 3;
+    height: auto;
+    min-height: 4;
     padding-top: 1;
     align-horizontal: right;
 }

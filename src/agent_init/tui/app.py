@@ -9,7 +9,7 @@ from pathlib import Path
 from textual.app import App
 from textual.binding import Binding
 
-from agent_init.core import layout_profiles
+from agent_init.core import default_mcp_servers, layout_profiles, mcp_registry
 from agent_init.tui.modals.layout_profile_picker_modal import (
     LayoutProfilePickerModal,
 )
@@ -49,6 +49,12 @@ class AgentInitApp(App[None]):
         for warning in report.warnings:
             self.app.notify(warning, severity="warning")
 
+        # Pre-seed default MCP registry entries in the background so the MCP
+        # screen opens instantly from cache instead of blocking on the network.
+        self.run_worker(
+            self._seed_default_mcp_servers, group="mcp_seed", thread=True
+        )
+
         active = self._resolve_active()
         if active is None:
             self.push_screen(
@@ -57,6 +63,15 @@ class AgentInitApp(App[None]):
             )
         else:
             self.push_screen(MainScreen(project_root=self._project_root))
+
+    def _seed_default_mcp_servers(self) -> None:
+        try:
+            mcp_registry.seed_default_servers(
+                default_mcp_servers.DEFAULT_MCP_SERVER_NAMES
+            )
+        except Exception:
+            # Best-effort startup seeding; the MCP screen retries on open.
+            pass
 
     def _resolve_active(self) -> str | None:
         candidates: list[str | None] = [

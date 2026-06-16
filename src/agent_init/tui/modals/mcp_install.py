@@ -30,7 +30,7 @@ class McpInstallConfig:
 
 class McpInstallModal(ModalScreen[McpInstallConfig | None]):
     BINDINGS = [
-        ("escape", "action_cancel", "Cancel"),
+        Binding("escape", "action_cancel", "Cancel", priority=True),
         ("b", "action_cancel", "Back"),
         Binding("enter", "submit", "Install", priority=True),
     ]
