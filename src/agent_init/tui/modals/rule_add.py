@@ -9,7 +9,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
+
+from agent_init.tui.widgets import ToggleRow
 
 
 def sanitize_rule_name(raw: str) -> str:
@@ -55,7 +57,7 @@ class RuleAddModal(ModalScreen[RuleAddResult | None]):
             Input(value=self._initial_description, placeholder="short reminder", id="description"),
             Static("Body (Ctrl+S to save):", markup=False),
             TextArea(text=self._initial_body, id="body", classes="rule-body"),
-            Checkbox("Default — auto-seed into `init`", value=self._initial_default, id="default"),
+            ToggleRow("Default — auto-seed into `init`", value=self._initial_default, id="default"),
             Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
                 Button("Save", id="save", variant="primary"),
@@ -90,7 +92,7 @@ class RuleAddModal(ModalScreen[RuleAddResult | None]):
         raw_name = self.query_one("#name", Input).value
         body = self.query_one("#body", TextArea).text
         description = self.query_one("#description", Input).value.strip() or None
-        is_default = self.query_one("#default", Checkbox).value
+        is_default = self.query_one("#default", ToggleRow).value
         name = sanitize_rule_name(raw_name)
         # Reflect the sanitized name back into the field so user sees the change.
         name_input = self.query_one("#name", Input)

@@ -352,7 +352,10 @@ def rule_repo_remove(alias: str) -> None:
     typer.echo(f"removed rule-repo {alias}")
 
 
-profile_app = typer.Typer(no_args_is_help=True, help="Manage and apply project profiles.")
+profile_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage and apply reusable project templates (profiles).",
+)
 app.add_typer(profile_app, name="profile")
 
 
@@ -360,11 +363,11 @@ app.add_typer(profile_app, name="profile")
 @_friendly
 def profile_save(
     name: str,
-    project: Path | None = typer.Argument(None, help="Project to snapshot."),
+    project: Path | None = typer.Argument(None, help="Project to snapshot as a reusable template."),
 ) -> None:
     profile = profiles_mod.from_project(name, _here(project))
     path = profiles_mod.save(profile)
-    typer.echo(f"saved profile {name} to {path}")
+    typer.echo(f"saved project template {name} to {path}")
 
 
 @profile_app.command("list")
@@ -377,9 +380,12 @@ def profile_list() -> None:
     for p in entries:
         mirrors = ",".join(p.mirrors) if p.mirrors else "-"
         skills_n = len(p.skills)
+        agents_n = len(p.agents)
+        mcp_n = len(p.mcp_servers)
         rules_n = len(p.rules)
         typer.echo(
-            f"{p.name}\ttemplate={p.template}\tmirrors={mirrors}\tskills={skills_n}\trules={rules_n}"
+            f"{p.name}\ttemplate={p.template}\tmirrors={mirrors}\t"
+            f"skills={skills_n}\tagents={agents_n}\tmcp={mcp_n}\trules={rules_n}"
         )
 
 
@@ -404,11 +410,19 @@ def profile_apply(
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
     result = profiles_mod.apply(name, _here(project))
-    typer.echo(f"applied profile {name} to {result.project_root}")
+    typer.echo(f"applied project template {name} to {result.project_root}")
     for qn in result.installed_skills:
-        typer.echo(f"  installed: {qn}")
+        typer.echo(f"  installed skill: {qn}")
     for qn in result.skipped_skills:
-        typer.echo(f"  skipped (not indexed locally): {qn}", err=True)
+        typer.echo(f"  skipped skill (not indexed locally): {qn}", err=True)
+    for qn in result.installed_agents:
+        typer.echo(f"  installed agent: {qn}")
+    for qn in result.skipped_agents:
+        typer.echo(f"  skipped agent (not indexed locally): {qn}", err=True)
+    for alias in result.installed_mcp:
+        typer.echo(f"  installed MCP server: {alias}")
+    for alias in result.skipped_mcp:
+        typer.echo(f"  skipped MCP server (unavailable): {alias}", err=True)
 
 
 mcp_app = typer.Typer(

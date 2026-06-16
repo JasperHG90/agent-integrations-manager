@@ -20,6 +20,7 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from agent_init.core import agents as agents_mod
+from agent_init.core import profiles as profiles_mod
 from agent_init.core import repos, rules, skills
 
 
@@ -92,6 +93,7 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     from agent_init.tui.screens.layout_profiles_screen import LayoutProfilesScreen
     from agent_init.tui.screens.mcp_screen import McpScreen
     from agent_init.tui.screens.project_screen import ProjectScreen
+    from agent_init.tui.screens.project_templates_screen import ProjectTemplatesScreen
     from agent_init.tui.screens.repos_screen import ReposScreen
     from agent_init.tui.screens.rules_screen import RulesScreen
     from agent_init.tui.screens.skills_screen import SkillsScreen
@@ -102,11 +104,20 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
         PaletteEntry("action", "Open Agents", lambda: app.push_screen(AgentsScreen())),
         PaletteEntry("action", "Open MCP servers", lambda: app.push_screen(McpScreen())),
         PaletteEntry("action", "Open Rules", lambda: app.push_screen(RulesScreen())),
+        PaletteEntry("action", "Open Project templates", lambda: app.push_screen(ProjectTemplatesScreen())),
         PaletteEntry("action", "Open Project", lambda: app.push_screen(ProjectScreen())),
         PaletteEntry("action", "Open Profiles", lambda: app.push_screen(LayoutProfilesScreen())),
         PaletteEntry("action", "Open Config", lambda: app.push_screen(ConfigScreen())),
         PaletteEntry("action", "Quit", lambda: app.exit()),
     ]
+    for template in profiles_mod.list_profiles():
+        entries.append(
+            PaletteEntry(
+                "template",
+                template.name,
+                lambda: app.push_screen(ProjectTemplatesScreen()),
+            )
+        )
     for repo in repos.list_repos():
         entries.append(
             PaletteEntry(

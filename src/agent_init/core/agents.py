@@ -1,13 +1,17 @@
 """Sub-agent discovery + search.
 
-A sub-agent lives inside a registered repo at one of two fixed paths
-(precedence: highest first):
+A sub-agent lives inside a registered repo at any depth under one of these
+prefixes (precedence: highest first):
 
-    1. agents/<name>/AGENT.md
-    2. .claude/agents/<name>/AGENT.md
+    1. agents/.../<name>/AGENT.md or agents/.../<name>.md
+    2. .claude/agents/.../<name>/AGENT.md or .claude/agents/.../<name>.md
 
-If the same agent name appears at both locations, the higher-precedence one
-wins and the other is ignored.
+Intermediate directories under `agents/` and `.claude/agents/` are allowed
+to support repos that group agents by category. The agent `name` is the
+parent directory name (nested form) or the filename stem (flat form).
+
+If the same agent name appears at multiple locations, the higher-precedence
+one wins (ties broken by shallower path); the other is ignored.
 
 Discovery results are persisted in the SQLite `AgentIndex` table. The index
 is rebuilt from the cached bare clone's default ref on refresh.
@@ -36,7 +40,8 @@ def split_csv(value: str) -> list[str]:
 
 
 _AGENT_RE = re.compile(
-    r"^(?:(?P<prefix>agents/|\.claude/agents/)(?P<name>[^/]+)(?:/AGENT\.md|\.md))$"
+    r"^(?P<prefix>agents/|\.claude/agents/)(?:[^/]+/)*?"
+    r"(?:(?P<name_dir>[^/]+)/AGENT\.md|(?P<name_flat>[^/]+)\.md)$"
 )
 
 
@@ -60,24 +65,28 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    by_name: dict[str, list[tuple[int, DiscoveredAgent]]] = {}
+    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredAgent]]] = {}
     for p in paths:
         match = _AGENT_RE.match(p)
         if not match:
             continue
         prefix = match.group("prefix") or ""
-        name = match.group("name")
+        name = match.group("name_dir") or match.group("name_flat")
         if not validation.is_valid_agent_name(name):
             continue
-        rank = 0 if prefix == "agents/" else 1
-        # Flat file: agents/<name>.md  -> source_path is the file itself.
-        # Nested dir: agents/<name>/AGENT.md -> source_path is the directory.
+        prefix_rank = 0 if prefix == "agents/" else 1
+        depth = p.count("/")
+        # Flat file: agents/.../<name>.md  -> source_path is the file itself.
+        # Nested dir: agents/.../<name>/AGENT.md -> source_path is the directory.
         if p.endswith(f"/{name}.md") and not p.endswith(f"/{name}/AGENT.md"):
             source_dir = p
         else:
             source_dir = p[: -len("/AGENT.md")]
         by_name.setdefault(name, []).append(
-            (rank, DiscoveredAgent(name=name, source_path=source_dir, agent_md_path=p))
+            (
+                (prefix_rank, depth, p),
+                DiscoveredAgent(name=name, source_path=source_dir, agent_md_path=p),
+            )
         )
 
     indexed: list[DiscoveredAgent] = []

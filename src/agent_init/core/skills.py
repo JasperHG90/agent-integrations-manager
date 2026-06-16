@@ -1,15 +1,21 @@
 """Skill discovery + search.
 
-A skill lives inside a registered repo at one of three fixed paths
-(precedence: highest first):
+A skill lives inside a registered repo at any depth under one of these
+prefixes (precedence: highest first):
 
-    1. skills/<name>/SKILL.md
-    2. .claude/skills/<name>/SKILL.md
-    3. <name>/SKILL.md   (at repo root)
+    1. skills/.../<name>/SKILL.md
+    2. .claude/skills/.../<name>/SKILL.md
+    3. <name>/SKILL.md   (at repo root, no prefix)
+    4. SKILL.md          (at repo root, bare)
+
+Intermediate directories under `skills/` and `.claude/skills/` are allowed
+to support repos that group skills by category (e.g.
+`skills/cloud/<name>/SKILL.md` in google/skills). The skill `name` is the
+directory containing SKILL.md.
 
 If the same skill name appears at multiple locations, the higher-precedence
-one wins and the others are ignored (a warning is logged via the returned
-result list).
+one wins (ties broken by shallower path); the others are ignored (recorded
+as shadowed on the returned result).
 
 Discovery results are persisted in the SQLite `SkillIndex` table. The index
 is a cache only — it is rebuilt on demand from the cached bare clone's HEAD
@@ -40,12 +46,12 @@ PRECEDENCE = (
 )
 
 # Matches:
-#   skills/<name>/SKILL.md          (rank 0)
-#   .claude/skills/<name>/SKILL.md  (rank 1)
-#   <name>/SKILL.md                 (rank 2)
-#   SKILL.md at repo root           (rank 3)
+#   skills/.../<name>/SKILL.md          (rank 0; any depth ≥ 1)
+#   .claude/skills/.../<name>/SKILL.md  (rank 1; any depth ≥ 1)
+#   <name>/SKILL.md                     (rank 2; root-level dir)
+#   SKILL.md at repo root               (rank 3)
 _SKILL_RE = re.compile(
-    r"^(?:(?P<prefix>skills/|\.claude/skills/)(?P<name1>[^/]+)/SKILL\.md|"
+    r"^(?:(?P<prefix>skills/|\.claude/skills/)(?:[^/]+/)*(?P<name1>[^/]+)/SKILL\.md|"
     r"(?P<name2>[^/]+)/SKILL\.md|"
     r"^SKILL\.md)$"
 )
@@ -71,8 +77,9 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    # Group candidates by skill name with precedence-rank ordering.
-    by_name: dict[str, list[tuple[int, DiscoveredSkill]]] = {}
+    # Group candidates by skill name with precedence-rank ordering. Ties on
+    # prefix are broken by shallower path, then by lexicographic path.
+    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredSkill]]] = {}
     for p in paths:
         match = _SKILL_RE.match(p)
         if not match:
@@ -80,18 +87,22 @@ def discover(repo_alias: str) -> IndexResult:
         prefix = match.group("prefix") or ""
         name = match.group("name1") or match.group("name2")
         if prefix == "skills/":
-            rank = 0
+            prefix_rank = 0
         elif prefix == ".claude/skills/":
-            rank = 1
+            prefix_rank = 1
         elif name:
-            rank = 2
+            prefix_rank = 2
         else:
-            rank = 3
+            prefix_rank = 3
         source_dir = p[: -len("/SKILL.md")] if p != "SKILL.md" else ""
         if not name:
             name = repo_alias
+        depth = p.count("/")
         by_name.setdefault(name, []).append(
-            (rank, DiscoveredSkill(name=name, source_path=source_dir, skill_md_path=p))
+            (
+                (prefix_rank, depth, p),
+                DiscoveredSkill(name=name, source_path=source_dir, skill_md_path=p),
+            )
         )
 
     indexed: list[DiscoveredSkill] = []

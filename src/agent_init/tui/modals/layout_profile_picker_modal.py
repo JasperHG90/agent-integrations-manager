@@ -10,9 +10,10 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 from agent_init.core import layout_profiles
+from agent_init.tui.widgets import ToggleRow
 
 
 class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
@@ -39,7 +40,7 @@ class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
                 markup=False,
             ),
             DataTable(id="profiles-table", cursor_type="row"),
-            Checkbox("Remember as global default", id="remember"),
+            ToggleRow("Remember as global default", id="remember"),
             Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
                 Button("Select", id="select", variant="primary"),
@@ -103,7 +104,7 @@ class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
         if name is None:
             self.query_one("#error", Static).update("select a profile first")
             return
-        remember = self.query_one("#remember", Checkbox).value
+        remember = self.query_one("#remember", ToggleRow).value
         self.dismiss((name, remember))
 
 

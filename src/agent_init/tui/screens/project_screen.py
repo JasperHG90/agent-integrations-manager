@@ -12,8 +12,17 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Static, TabbedContent, TabPane
 
-from agent_init.core import agent_install, hashing, manifest, mcp_install, mcp_registry, paths
+from agent_init.core import (
+    agent_install,
+    hashing,
+    layout_profiles,
+    manifest,
+    mcp_install,
+    mcp_registry,
+    paths,
+)
 from agent_init.core import install as skill_install
+from agent_init.core import rules as rules_mod
 from agent_init.core.models import InstalledAgent, InstalledMcpServer, InstalledSkill
 from agent_init.tui.modals.confirm import ConfirmModal
 
@@ -48,6 +57,8 @@ class ProjectScreen(Screen[None]):
                 yield DataTable(id="agents-table", cursor_type="row")
             with TabPane("MCP servers", id="mcp"):
                 yield DataTable(id="mcp-table", cursor_type="row")
+            with TabPane("Rules", id="rules"):
+                yield DataTable(id="rules-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
             "[u] Update  [r] Rollback  [x] Delete  [b] Back  [q] Quit",
@@ -56,14 +67,16 @@ class ProjectScreen(Screen[None]):
         )
 
     def on_mount(self) -> None:
-        for table_id in ("skills-table", "agents-table", "mcp-table"):
+        for table_id in ("skills-table", "agents-table", "mcp-table", "rules-table"):
             table = self.query_one(f"#{table_id}", DataTable)
             if table_id == "skills-table":
                 table.add_columns("skill", "version", "target", "drift")
             elif table_id == "agents-table":
                 table.add_columns("agent", "version", "target", "drift")
-            else:
+            elif table_id == "mcp-table":
                 table.add_columns("alias", "registry", "version", "drift")
+            else:
+                table.add_columns("rule", "source", "drift")
         self._populate()
         self.query_one("#skills-table", DataTable).focus()
 
@@ -130,10 +143,21 @@ class ProjectScreen(Screen[None]):
                 key=mc.alias,
             )
 
+        rules_table = self.query_one("#rules-table", DataTable)
+        rules_table.clear()
+        for rule_name in m.rules:
+            drift, source = self._rule_drift(rule_name)
+            rules_table.add_row(
+                rule_name,
+                source,
+                drift,
+                key=rule_name,
+            )
+
         dialect = f" · agent: {m.agent_dialect}" if m.agent_dialect else ""
         self._status(
             f"{len(m.skills)} skill(s), {len(m.agents)} agent(s), "
-            f"{len(m.mcp_servers)} MCP server(s){dialect}"
+            f"{len(m.mcp_servers)} MCP server(s), {len(m.rules)} rule(s){dialect}"
         )
 
     def _skill_drift(self, s: InstalledSkill, target: Path | None) -> str:
@@ -162,12 +186,29 @@ class ProjectScreen(Screen[None]):
         )
         return "clean" if current_hash == mc.entry_hash else "edited"
 
+    def _rule_drift(self, rule_name: str) -> tuple[str, str]:
+        profile = layout_profiles.resolve_active(self._project_root)
+        target = paths.safe_project_path(
+            self._project_root, f"{profile.rules_dir}/{rule_name}.md"
+        )
+        if target is None or not target.exists():
+            return "missing", "—"
+        try:
+            expected = rules_mod.get(rule_name)
+        except rules_mod.RuleNotFoundError:
+            return "unknown source", "—"
+        current = target.read_text(encoding="utf-8")
+        drift = "clean" if current == expected.body else "edited"
+        return drift, expected.source
+
     def _active_table(self) -> DataTable:
         active = self.query_one(TabbedContent).active
         if active == "agents":
             return self.query_one("#agents-table", DataTable)
         if active == "mcp":
             return self.query_one("#mcp-table", DataTable)
+        if active == "rules":
+            return self.query_one("#rules-table", DataTable)
         return self.query_one("#skills-table", DataTable)
 
     def _selected(self) -> str | None:
@@ -199,6 +240,9 @@ class ProjectScreen(Screen[None]):
         if key is None:
             return
         kind = self._active_kind()
+        if kind == "rules":
+            self.app.notify("rules are updated by re-running init or editing rules", severity="information")
+            return
         if kind == "skills":
             self._update_skill(key)
         elif kind == "agents":
@@ -286,6 +330,9 @@ class ProjectScreen(Screen[None]):
         if key is None:
             return
         kind = self._active_kind()
+        if kind == "rules":
+            self.app.notify("rules have no rollback; re-run init to refresh them", severity="information")
+            return
         try:
             if kind == "skills":
                 result = skill_install.rollback(self._project_root, key)
@@ -306,6 +353,9 @@ class ProjectScreen(Screen[None]):
         if key is None:
             return
         kind = self._active_kind()
+        if kind == "rules":
+            self.app.notify("remove rules from the manifest via init/config, not here", severity="information")
+            return
 
         def _on_confirm(yes: bool | None) -> None:
             if yes is not True:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
@@ -44,49 +44,52 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
                 classes="modal-title",
                 markup=False,
             ),
-            Static("Name:", markup=False),
-            Input(value=(p.name if p else ""), id="name"),
-            Static("Display name:", markup=False),
-            Input(value=(p.display_name or "" if p else ""), id="display-name"),
-            Static("Description:", markup=False),
-            Input(value=(p.description or "" if p else ""), id="description"),
-            Static("Scope:", markup=False),
-            RadioSet(
-                RadioButton("project", id="scope-project", value=True),
-                RadioButton("global", id="scope-global"),
-                id="scope",
+            VerticalScroll(
+                Static("Name:", markup=False),
+                Input(value=(p.name if p else ""), id="name"),
+                Static("Display name:", markup=False),
+                Input(value=(p.display_name or "" if p else ""), id="display-name"),
+                Static("Description:", markup=False),
+                Input(value=(p.description or "" if p else ""), id="description"),
+                Static("Scope:", markup=False),
+                RadioSet(
+                    RadioButton("project", id="scope-project", value=True),
+                    RadioButton("global", id="scope-global"),
+                    id="scope",
+                ),
+                Static(
+                    "project: saved only in this repo. global: cached in DB for all projects, "
+                    "with a read-only copy here.",
+                    id="scope-help",
+                    markup=False,
+                ),
+                Static("Agent dialect (optional):", markup=False),
+                Input(
+                    value=(p.agent_dialect or "" if p else ""),
+                    placeholder="claude / gemini / opencode",
+                    id="agent-dialect",
+                ),
+                Static("Rules directory:", markup=False),
+                Input(
+                    value=(p.rules_dir if p else ".agent-init/rules"),
+                    id="rules-dir",
+                ),
+                Static("Skills directory:", markup=False),
+                Input(
+                    value=(p.skills_dir if p else ".claude/skills"),
+                    id="skills-dir",
+                ),
+                Static("Agents file:", markup=False),
+                Input(value=(p.agents_md if p else "AGENTS.md"), id="agents-md"),
+                Static("Mirrors (comma-separated):", markup=False),
+                Input(
+                    value=(",".join(p.mirrors) if p else ""),
+                    placeholder="CLAUDE.md, GEMINI.md",
+                    id="mirrors",
+                ),
+                Static("", id="error", markup=False, classes="modal-error"),
+                classes="modal-scroll",
             ),
-            Static(
-                "project: saved only in this repo. global: cached in DB for all projects, "
-                "with a read-only copy here.",
-                id="scope-help",
-                markup=False,
-            ),
-            Static("Agent dialect (optional):", markup=False),
-            Input(
-                value=(p.agent_dialect or "" if p else ""),
-                placeholder="claude / gemini / opencode",
-                id="agent-dialect",
-            ),
-            Static("Rules directory:", markup=False),
-            Input(
-                value=(p.rules_dir if p else ".agent-init/rules"),
-                id="rules-dir",
-            ),
-            Static("Skills directory:", markup=False),
-            Input(
-                value=(p.skills_dir if p else ".claude/skills"),
-                id="skills-dir",
-            ),
-            Static("Agents file:", markup=False),
-            Input(value=(p.agents_md if p else "AGENTS.md"), id="agents-md"),
-            Static("Mirrors (comma-separated):", markup=False),
-            Input(
-                value=(",".join(p.mirrors) if p else ""),
-                placeholder="CLAUDE.md, GEMINI.md",
-                id="mirrors",
-            ),
-            Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
                 Button("Save", id="save", variant="primary"),
                 Button("Cancel", id="cancel"),

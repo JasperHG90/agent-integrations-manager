@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -19,7 +20,7 @@ class SkillInstallConfig:
 class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
-        ("enter", "submit", "Install"),
+        Binding("enter", "submit", "Install", priority=True),
     ]
 
     def __init__(self, qualified_name: str, *, initial_project: Path | None = None) -> None:
@@ -30,9 +31,12 @@ class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static(f"Install {self._qualified_name}", classes="modal-title", markup=False),
-            Static("Project root (will be created if missing):", markup=False),
-            Input(value=str(self._initial_project), id="project-root"),
-            Static("", id="error", markup=False, classes="modal-error"),
+            VerticalScroll(
+                Static("Project root (will be created if missing):", markup=False),
+                Input(value=str(self._initial_project), id="project-root"),
+                Static("", id="error", markup=False, classes="modal-error"),
+                classes="modal-scroll",
+            ),
             Horizontal(
                 Button("Install", id="go", variant="primary"),
                 Button("Cancel", id="cancel"),
@@ -49,6 +53,10 @@ class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
             self._submit()
         else:
             self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "project-root":
+            self._submit()
 
     def action_submit(self) -> None:
         self._submit()

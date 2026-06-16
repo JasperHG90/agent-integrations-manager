@@ -155,6 +155,33 @@ def test_frontmatter_prereqs_and_provides(home: Path, tmp_path: Path) -> None:
     assert rows[0].provides == "code-review"
 
 
+def test_discover_supports_nested_skills_dir(home: Path, tmp_path: Path) -> None:
+    """Repos like google/skills group skills under sub-categories: skills/cloud/<name>/SKILL.md."""
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/cloud/bigquery-basics/SKILL.md": "# BigQuery\n\nBigQuery primer.\n",
+            "skills/cloud/cloud-run-basics/SKILL.md": "# Cloud Run\n",
+            "skills/data/dataform/SKILL.md": "# Dataform\n",
+            "README.md": "x\n",
+        },
+    )
+    repos.add("google", f"file://{bare}")
+    rows = skills.list_skills()
+    names = {r.qualified_name for r in rows}
+    assert names == {
+        "google/bigquery-basics",
+        "google/cloud-run-basics",
+        "google/dataform",
+    }
+    paths = {r.source_path for r in rows}
+    assert paths == {
+        "skills/cloud/bigquery-basics",
+        "skills/cloud/cloud-run-basics",
+        "skills/data/dataform",
+    }
+
+
 def test_precedence_skills_dir_wins(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(
         tmp_path,

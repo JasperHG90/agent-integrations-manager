@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from agent_init.core import init as init_mod
 from agent_init.core import layout_profiles, templates
+from agent_init.tui.widgets import ToggleRow
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,10 @@ class InitConfig:
 
 
 class InitModal(ModalScreen[InitConfig | None]):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        Binding("enter", "submit", "Initialize", priority=True),
+    ]
 
     def __init__(self, *, project_root: Path | None = None) -> None:
         super().__init__()
@@ -55,21 +60,24 @@ class InitModal(ModalScreen[InitConfig | None]):
         self._profile_options = self._build_profile_options(self._initial_project)
         yield Vertical(
             Static("Initialize project", classes="modal-title", markup=False),
-            Static("Project root:", markup=False),
-            Input(value=str(self._initial_project), id="project-root"),
-            Static("Template:", markup=False),
-            Input(value=default_template, id="template"),
-            Static("Profile:", markup=False),
-            Select(self._profile_options, id="layout-profile", allow_blank=True),
-            Static("Mirror files (write a copy of AGENTS.md as):", markup=False),
-            *(Checkbox(name, id=self._mirror_id(name)) for name in init_mod.KNOWN_MIRRORS),
-            Static("Other mirror (optional, e.g. CURSOR.md):", markup=False),
-            Input(value="", placeholder="<name>.md", id="other-mirror"),
-            Static("Primary agent dialect (optional, blank = none):", markup=False),
-            Input(value="", placeholder="claude / gemini / opencode", id="agent-dialect"),
-            Checkbox("Seed default-flagged rules", value=True, id="seed-defaults"),
-            Checkbox("Force overwrite if files exist", id="force"),
-            Static("", id="error", markup=False, classes="modal-error"),
+            VerticalScroll(
+                Static("Project root:", markup=False),
+                Input(value=str(self._initial_project), id="project-root"),
+                Static("Template:", markup=False),
+                Input(value=default_template, id="template"),
+                Static("Profile:", markup=False),
+                Select(self._profile_options, id="layout-profile", allow_blank=True),
+                Static("Mirror files (write a copy of AGENTS.md as):", markup=False),
+                *(ToggleRow(name, id=self._mirror_id(name)) for name in init_mod.KNOWN_MIRRORS),
+                Static("Other mirror (optional, e.g. CURSOR.md):", markup=False),
+                Input(value="", placeholder="<name>.md", id="other-mirror"),
+                Static("Primary agent dialect (optional, blank = none):", markup=False),
+                Input(value="", placeholder="claude / gemini / opencode", id="agent-dialect"),
+                ToggleRow("Seed default-flagged rules", value=True, id="seed-defaults"),
+                ToggleRow("Force overwrite if files exist", id="force"),
+                Static("", id="error", markup=False, classes="modal-error"),
+                classes="modal-scroll",
+            ),
             Horizontal(
                 Button("Initialize", id="go", variant="primary"),
                 Button("Cancel", id="cancel"),
@@ -86,6 +94,13 @@ class InitModal(ModalScreen[InitConfig | None]):
             self._submit()
         else:
             self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id in ("project-root", "template", "other-mirror", "agent-dialect"):
+            self._submit()
+
+    def action_submit(self) -> None:
+        self._submit()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -107,7 +122,7 @@ class InitModal(ModalScreen[InitConfig | None]):
         mirrors_list: list[str] = [
             name
             for name in init_mod.KNOWN_MIRRORS
-            if self.query_one(f"#{self._mirror_id(name)}", Checkbox).value
+            if self.query_one(f"#{self._mirror_id(name)}", ToggleRow).value
         ]
         other = self.query_one("#other-mirror", Input).value.strip()
         if other:
@@ -119,8 +134,8 @@ class InitModal(ModalScreen[InitConfig | None]):
                 return
             if other not in mirrors_list:
                 mirrors_list.append(other)
-        seed = self.query_one("#seed-defaults", Checkbox).value
-        force = self.query_one("#force", Checkbox).value
+        seed = self.query_one("#seed-defaults", ToggleRow).value
+        force = self.query_one("#force", ToggleRow).value
         dialect = self.query_one("#agent-dialect", Input).value.strip().lower() or None
         profile_value = self.query_one("#layout-profile", Select).value
         layout_profile: str | None = None

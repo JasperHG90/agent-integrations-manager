@@ -31,7 +31,8 @@ async def test_project_tab_shows_current_manifest(
 
         assert app.screen.query_one("#proj-root", Input).value == str(project_root.resolve())
         assert app.screen.query_one("#proj-template", Input).value == "default"
-        assert app.screen.query_one("#proj-dialect", Input).value == "claude"
+        # Agent dialect is managed by the active layout profile, not the Config screen.
+        assert not app.screen.query("#proj-dialect")
         # Active layout profile summary is shown.
         assert "layout profile" in str(app.screen.query_one("#active-profile", Static).content).lower()
 

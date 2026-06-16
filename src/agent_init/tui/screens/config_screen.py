@@ -19,18 +19,18 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Input, Static
 
 from agent_init.core import init as init_mod
 from agent_init.core import layout_profiles, manifest, paths
+from agent_init.tui.widgets import ToggleRow
 
 _HELP_TEXT = (
     "Fields:\n"
-    "  Template      — which AGENTS.md scaffold to use.\n"
-    "  Agent dialect — target agent: claude, gemini, opencode, etc.\n"
+    "  Template      — which AGENTS.md scaffold to use (stored in the project manifest).\n"
     "  Applied rules — managed on the Rules [u] screen.\n"
-    "  Layout profile — controls skills/rules/agents/mcp paths AND which\n"
-    "    per-agent AGENTS.md copies/symlinks are created.\n"
+    "  Layout profile — controls skills/rules/agents/mcp paths, agent dialect, AND\n"
+    "    per-agent AGENTS.md copies/symlinks.\n"
     "Shortcuts work from the main menu: [l] PROFILES, [u] RULES."
 )
 
@@ -77,22 +77,6 @@ class ConfigScreen(Screen[None]):
             Static("Template:", classes="config-heading", markup=False),
             Input(value=m.template if m else "default", id="proj-template"),
             Static(
-                "Profile per-agent files:",
-                classes="config-heading",
-                markup=False,
-            ),
-            Static(
-                self._per_agent_summary(),
-                classes="config-paths",
-                markup=False,
-            ),
-            Static(
-                "Agent dialect (claude / gemini / opencode / blank):",
-                classes="config-heading",
-                markup=False,
-            ),
-            Input(value=(m.agent_dialect or "") if m else "", id="proj-dialect"),
-            Static(
                 f"Applied rules ({len(m.rules) if m else 0}):",
                 classes="config-heading",
                 markup=False,
@@ -103,7 +87,7 @@ class ConfigScreen(Screen[None]):
                 classes="config-paths",
                 markup=False,
             ),
-            Checkbox("Force overwrite existing files on save", id="proj-force"),
+            ToggleRow("Force overwrite existing files on save", id="proj-force"),
             Button("Save (re-runs init)", id="proj-save", variant="primary"),
             Static(_HELP_TEXT, classes="config-help", markup=True),
             id="project-pane",
@@ -122,20 +106,6 @@ class ConfigScreen(Screen[None]):
             return "—"
         return f"{profile.name}  ·  skills:{profile.skills_dir}  rules:{profile.rules_dir}  agents:{profile.agents_dir}  mcp:{profile.mcp_json}"
 
-    def _per_agent_summary(self) -> str:
-        try:
-            profile = layout_profiles.resolve_active(self._project_root)
-        except Exception:
-            return "—"
-        parts: list[str] = []
-        if profile.mirrors:
-            parts.append("copies: " + ", ".join(profile.mirrors))
-        if profile.symlinks:
-            parts.append("symlinks: " + ", ".join(profile.symlinks))
-        if not parts:
-            return "none"
-        return "  ·  ".join(parts)
-
     def on_mount(self) -> None:
         self._status("edit project settings and save, or press [b] to go back")
 
@@ -144,15 +114,13 @@ class ConfigScreen(Screen[None]):
             return
         project = Path(self.query_one("#proj-root", Input).value).expanduser()
         template = self.query_one("#proj-template", Input).value.strip() or "default"
-        dialect = self.query_one("#proj-dialect", Input).value.strip().lower() or None
-        force = self.query_one("#proj-force", Checkbox).value
+        force = self.query_one("#proj-force", ToggleRow).value
         try:
             result = init_mod.run(
                 init_mod.InitOptions(
                     project_root=project,
                     template=template,
                     clear_mirrors=True,
-                    agent_dialect=dialect,
                     force=force,
                 )
             )

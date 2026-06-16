@@ -6,9 +6,12 @@ import re
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Input, Static
+
+from agent_init.tui.widgets import ToggleRow
 
 
 def sanitize_repo_alias(raw: str) -> str:
@@ -29,7 +32,10 @@ class RepoAddResult:
 
 
 class RepoAddModal(ModalScreen[RepoAddResult | None]):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        Binding("enter", "submit", "Add", priority=True),
+    ]
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -40,7 +46,7 @@ class RepoAddModal(ModalScreen[RepoAddResult | None]):
             Input(placeholder="https://github.com/anthropics/skills", id="url"),
             Static("Default ref (branch or tag):", markup=False),
             Input(value="HEAD", id="default-ref"),
-            Checkbox("Allow registering even if no skills or agents found", id="allow-empty"),
+            ToggleRow("Allow registering even if no skills or agents found", id="allow-empty"),
             Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
                 Button("Add", id="add", variant="primary"),
@@ -59,6 +65,13 @@ class RepoAddModal(ModalScreen[RepoAddResult | None]):
         else:
             self.dismiss(None)
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id in ("alias", "url", "default-ref"):
+            self._submit()
+
+    def action_submit(self) -> None:
+        self._submit()
+
     def action_cancel(self) -> None:
         self.dismiss(None)
 
@@ -71,7 +84,7 @@ class RepoAddModal(ModalScreen[RepoAddResult | None]):
         raw_alias = self.query_one("#alias", Input).value
         url = self.query_one("#url", Input).value.strip()
         default_ref = self.query_one("#default-ref", Input).value.strip() or "HEAD"
-        allow_empty = self.query_one("#allow-empty", Checkbox).value
+        allow_empty = self.query_one("#allow-empty", ToggleRow).value
         alias = sanitize_repo_alias(raw_alias)
         if not alias:
             alias_input = self.query_one("#alias", Input)

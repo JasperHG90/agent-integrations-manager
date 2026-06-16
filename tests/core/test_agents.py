@@ -45,6 +45,25 @@ def test_discover_supports_claude_path(home: Path, tmp_path: Path) -> None:
     assert rows[0].source_path == ".claude/agents/foo"
 
 
+def test_discover_supports_nested_agents_dir(home: Path, tmp_path: Path) -> None:
+    """Agents may be grouped under sub-categories: agents/<category>/<name>/AGENT.md."""
+    bare = _build_repo_with(
+        tmp_path,
+        {
+            "agents/review/code/AGENT.md": "---\nname: code-review\n---\n# CR\n",
+            "agents/data/scout.md": "---\nname: scout\n---\n# scout\n",
+            "README.md": "x\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    rows = agents.list_agents()
+    names = {r.qualified_name for r in rows}
+    assert names == {"a/code", "a/scout"}
+    paths = {r.qualified_name: r.source_path for r in rows}
+    assert paths["a/code"] == "agents/review/code"
+    assert paths["a/scout"] == "agents/data/scout.md"
+
+
 def test_precedence_agents_dir_wins(home: Path, tmp_path: Path) -> None:
     bare = _build_repo_with(
         tmp_path,

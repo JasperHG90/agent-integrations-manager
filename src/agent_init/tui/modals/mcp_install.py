@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from agent_init.core import mcp_registry
+from agent_init.tui.widgets import ToggleRow
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
     BINDINGS = [
         ("escape", "action_cancel", "Cancel"),
         ("b", "action_cancel", "Back"),
-        ("enter", "submit", "Install"),
+        Binding("enter", "submit", "Install", priority=True),
     ]
 
     def __init__(
@@ -63,31 +65,34 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
 
         yield Vertical(
             Static(f"MCP server: {self._server.name}", classes="modal-title", markup=False),
-            Static(
-                f"version: {self._server.version or '?'}    transport: {(self._server.remotes[0].type if self._server.remotes else 'stdio')}",
-                markup=False,
+            VerticalScroll(
+                Static(
+                    f"version: {self._server.version or '?'}    transport: {(self._server.remotes[0].type if self._server.remotes else 'stdio')}",
+                    markup=False,
+                ),
+                Static("Mapped .mcp.json entry:", markup=False),
+                Static(entry_json, id="entry-preview", markup=False),
+                Static("Project root:", markup=False),
+                Input(value=str(self._initial_project), id="project-root"),
+                Static("Local alias:", markup=False),
+                Input(value=self._initial_alias, id="alias"),
+                Static("Preferred transport (optional):", markup=False),
+                Select(
+                    [(t, t) for t in ("stdio", "http", "sse", "ws")],
+                    allow_blank=True,
+                    id="transport",
+                ),
+                Static("Override command (optional):", markup=False),
+                Input(placeholder="npx", id="command"),
+                Static("Override URL (optional):", markup=False),
+                Input(placeholder="https://…", id="url"),
+                Horizontal(
+                    ToggleRow("Force overwrite", id="force"),
+                    classes="modal-checkbox",
+                ),
+                Static("", id="error", markup=False, classes="modal-error"),
+                classes="modal-scroll",
             ),
-            Static("Mapped .mcp.json entry:", markup=False),
-            Static(entry_json, id="entry-preview", markup=False),
-            Static("Project root:", markup=False),
-            Input(value=str(self._initial_project), id="project-root"),
-            Static("Local alias:", markup=False),
-            Input(value=self._initial_alias, id="alias"),
-            Static("Preferred transport (optional):", markup=False),
-            Select(
-                [(t, t) for t in ("stdio", "http", "sse", "ws")],
-                allow_blank=True,
-                id="transport",
-            ),
-            Static("Override command (optional):", markup=False),
-            Input(placeholder="npx", id="command"),
-            Static("Override URL (optional):", markup=False),
-            Input(placeholder="https://…", id="url"),
-            Horizontal(
-                Checkbox("Force overwrite", id="force"),
-                classes="modal-checkbox",
-            ),
-            Static("", id="error", markup=False, classes="modal-error"),
             Horizontal(
                 Button("Install", id="go", variant="primary") if self._editable else Button("Close", id="go"),
                 Button("Cancel", id="cancel"),
@@ -107,6 +112,10 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
             self.dismiss(None)
             return
         self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id in ("project-root", "alias", "command", "url"):
+            self._submit()
 
     def action_submit(self) -> None:
         if not self._editable:
@@ -133,7 +142,7 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
             transport = transport.strip() or None
         command = self.query_one("#command", Input).value.strip() or None
         url = self.query_one("#url", Input).value.strip() or None
-        force = self.query_one("#force", Checkbox).value
+        force = self.query_one("#force", ToggleRow).value
         overrides: dict[str, object] = {}
         if command:
             overrides["command"] = command

@@ -1,13 +1,17 @@
 """Rule discovery from registered source repos.
 
-Rules live inside a registered repo at one of two fixed paths
-(precedence: highest first):
+Rules live inside a registered repo at any depth under one of these
+prefixes (precedence: highest first):
 
-    1. rules/<name>.md
-    2. .claude/rules/<name>.md
+    1. rules/.../<name>.md
+    2. .claude/rules/.../<name>.md
 
-If the same rule name appears at both locations, the higher-precedence one
-wins and the other is ignored.
+Intermediate directories under `rules/` and `.claude/rules/` are allowed
+to support repos that group rules by category. The rule `name` is the
+file stem (no directory components).
+
+If the same rule name appears at multiple locations, the higher-precedence
+one wins (ties broken by shallower path); the other is ignored.
 
 Discovery results are persisted in the SQLite `RuleIndex` table. The index
 is rebuilt from the cached bare clone's default ref on refresh.
@@ -31,7 +35,7 @@ except Exception:  # pragma: no cover - pyyaml is required but be defensive
 
 
 _RULE_RE = re.compile(
-    r"^(?:(?P<prefix>rules/|\.claude/rules/)(?P<name>[^/]+)\.md)$"
+    r"^(?:(?P<prefix>rules/|\.claude/rules/)(?:[^/]+/)*(?P<name>[^/]+)\.md)$"
 )
 
 
@@ -54,7 +58,7 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    by_name: dict[str, list[tuple[int, DiscoveredRule]]] = {}
+    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredRule]]] = {}
     for p in paths:
         match = _RULE_RE.match(p)
         if not match:
@@ -63,9 +67,10 @@ def discover(repo_alias: str) -> IndexResult:
         name = match.group("name")
         if not validation.is_valid_rule_name(name):
             continue
-        rank = 0 if prefix == "rules/" else 1
+        prefix_rank = 0 if prefix == "rules/" else 1
+        depth = p.count("/")
         by_name.setdefault(name, []).append(
-            (rank, DiscoveredRule(name=name, rule_md_path=p))
+            ((prefix_rank, depth, p), DiscoveredRule(name=name, rule_md_path=p))
         )
 
     indexed: list[DiscoveredRule] = []
