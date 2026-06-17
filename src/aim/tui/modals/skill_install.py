@@ -15,6 +15,8 @@ from textual.widgets import Button, Input, Static
 @dataclass(frozen=True)
 class SkillInstallConfig:
     project_root: Path
+    pin: str | None = None
+    track: str | None = None
 
 
 class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
@@ -34,6 +36,10 @@ class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
             VerticalScroll(
                 Static("Project root (will be created if missing):", markup=False),
                 Input(value=str(self._initial_project), id="project-root"),
+                Static("Pin to ref (tag/sha/branch) — optional:", markup=False),
+                Input(value="", id="pin", placeholder="e.g. v1.2.3"),
+                Static("Track ref (branch or 'latest-tag') — optional:", markup=False),
+                Input(value="", id="track", placeholder="e.g. main or latest-tag"),
                 Static("", id="error", markup=False, classes="modal-error"),
                 classes="modal-scroll",
             ),
@@ -68,7 +74,15 @@ class SkillInstallModal(ModalScreen[SkillInstallConfig | None]):
             self.app.notify("project root is required", severity="error", title="Install")
             self.query_one("#project-root", Input).focus()
             return
-        self.dismiss(SkillInstallConfig(project_root=Path(value).expanduser()))
+        pin = self.query_one("#pin", Input).value.strip() or None
+        track = self.query_one("#track", Input).value.strip() or None
+        self.dismiss(
+            SkillInstallConfig(
+                project_root=Path(value).expanduser(),
+                pin=pin,
+                track=track,
+            )
+        )
 
     def action_cancel(self) -> None:
         self.dismiss(None)

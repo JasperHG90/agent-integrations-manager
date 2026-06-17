@@ -378,3 +378,77 @@ async def test_project_picker_modal_esc_dismisses(home: Path) -> None:
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ProjectPickerModal)
+
+
+@pytest.mark.asyncio
+async def test_skill_install_modal_passes_pin_and_track(
+    home: Path, project_root: Path
+) -> None:
+    from aim.tui.modals.skill_install import SkillInstallConfig
+
+    app = AimApp()
+    result: SkillInstallConfig | None = None
+
+    def capture(cfg: SkillInstallConfig | None) -> None:
+        nonlocal result
+        result = cfg
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SkillInstallModal("anth/foo"), capture)
+        await pilot.pause()
+        modal = app.screen
+        from textual.widgets import Button, Input
+
+        assert isinstance(modal, SkillInstallModal)
+        modal.query_one("#project-root", Input).value = str(project_root)
+        modal.query_one("#pin", Input).value = "v1.0.0"
+        modal.query_one("#track", Input).value = "latest-tag"
+        for btn in modal.query(Button):
+            if btn.id == "go":
+                btn.press()
+                break
+        await pilot.pause()
+        await pilot.pause()
+
+    assert result is not None
+    assert result.project_root == project_root
+    assert result.pin == "v1.0.0"
+    assert result.track == "latest-tag"
+
+
+@pytest.mark.asyncio
+async def test_agent_install_modal_passes_pin_and_track(
+    home: Path, project_root: Path
+) -> None:
+    from aim.tui.modals.agent_install import AgentInstallConfig
+
+    app = AimApp()
+    result: AgentInstallConfig | None = None
+
+    def capture(cfg: AgentInstallConfig | None) -> None:
+        nonlocal result
+        result = cfg
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(AgentInstallModal("anth/bar"), capture)
+        await pilot.pause()
+        modal = app.screen
+        from textual.widgets import Button, Input
+
+        assert isinstance(modal, AgentInstallModal)
+        modal.query_one("#project-root", Input).value = str(project_root)
+        modal.query_one("#pin", Input).value = "sha:abc123"
+        modal.query_one("#track", Input).value = ""
+        for btn in modal.query(Button):
+            if btn.id == "go":
+                btn.press()
+                break
+        await pilot.pause()
+        await pilot.pause()
+
+    assert result is not None
+    assert result.project_root == project_root
+    assert result.pin == "sha:abc123"
+    assert result.track is None

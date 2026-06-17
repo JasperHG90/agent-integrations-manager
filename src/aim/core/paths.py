@@ -74,7 +74,7 @@ def project_declarations_path(project_root: Path) -> Path:
 
 
 def project_lock_path(project_root: Path) -> Path:
-    return project_root / "aim.lock"
+    return project_root / "aim.lock.toml"
 
 
 def project_manifest_path(project_root: Path) -> Path:

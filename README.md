@@ -15,7 +15,7 @@ Every AI coding assistant works better with the right context: project conventio
 - **Generate Karpathy-style `AGENTS.md`** — `init` writes a minimal, opinionated agent instruction file. Project-specific guidance lives in reusable rules, not in `AGENTS.md`.
 - **Install skills, agents, and rules from any repo** — register a git URL, browse the index, and install with per-artifact version pinning.
 - **Install MCP servers from the community registry** — search the public MCP registry and add servers to `.mcp.json` without hand-editing JSON.
-- **A manifest that tells you what you installed** — `aim.lock` is committed to your repo and tracks every skill, agent, MCP server, and rule.
+- **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, and rule.
 - **Skills that let your agent manage itself** — bundled `repo-add` and `agent-installer` skills let your assistant add sources and install skills/agents/rules straight from a project chat.
 - **Hackable profiles** — layout profiles control where skills, rules, and agent files land (e.g. `.claude/`, `.gemini/`, or your own paths).
 - **Project templates for common stacks** — save a combo of skills, agents, MCP servers, and rules as a reusable template and bootstrap new projects in seconds.
@@ -141,7 +141,7 @@ uv run aim --version
 
 ## How it works
 
-Per-project state lives in `aim.lock` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
+Per-project state lives in `aim.lock.toml` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
 
 Global, machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):
 

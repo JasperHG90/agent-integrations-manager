@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from rich.console import Console
 
 from aim import __version__
 from aim.core import agent_install as agent_install_mod
@@ -711,7 +712,7 @@ def init_cmd(
     typer.echo(f"{verb} {result.declarations_path}")
     if result.applied_rules:
         typer.echo(f"  rules:  {', '.join(result.applied_rules)}")
-    typer.echo("Run `aim lock` to resolve declarations into aim.lock, then `aim sync` to apply them.")
+    typer.echo("Run `aim lock` to resolve declarations into aim.lock.toml, then `aim sync` to apply them.")
 
 
 @app.command("lock")
@@ -720,16 +721,24 @@ def lock_cmd(
     ctx: typer.Context,
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
 ) -> None:
-    """Resolve aim.toml declarations into an exact aim.lock."""
+    """Resolve aim.toml declarations into an exact aim.lock.toml."""
+    console = Console()
 
-    async def _run() -> lock_mod.LockResult:
+    async def _run(status: Any) -> lock_mod.LockResult:
+        def _progress(kind: str, name: str, state: str) -> None:
+            status.update(f"{kind} {name}: {state}")
+
         return await lock_mod.run(
             lock_mod.LockOptions(
-                project_root=_here(project), allow_insecure=_get_allow_insecure(ctx)
+                project_root=_here(project),
+                allow_insecure=_get_allow_insecure(ctx),
+                progress_callback=_progress,
             )
         )
 
-    result = asyncio.run(_run())
+    with console.status("Locking dependencies...", spinner="dots") as status:
+        result = asyncio.run(_run(status))
+
     for qn in result.locked_skills:
         typer.echo(f"locked skill {qn}")
     for qn in result.locked_agents:
@@ -753,7 +762,7 @@ def sync_cmd(
         None, "--profile", help="Layout profile override (overrides manifest)."
     ),
 ) -> None:
-    """Reproduce the committed project state from aim.lock."""
+    """Reproduce the committed project state from aim.lock.toml."""
 
     async def _run() -> sync_mod.SyncResult:
         return await sync_mod.run(
@@ -786,7 +795,7 @@ def prune_cmd(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),
 ) -> None:
-    """Remove skills/agents/rules/MCP servers not listed in aim.lock."""
+    """Remove skills/agents/rules/MCP servers not listed in aim.lock.toml."""
     result = prune_mod.run(
         prune_mod.PruneOptions(
             project_root=_here(project),

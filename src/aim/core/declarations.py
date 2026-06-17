@@ -1,6 +1,6 @@
 """User-editable project declarations stored in `aim.toml`.
 
-`aim init` creates this file; `aim lock` resolves it into `aim.lock`.
+`aim init` creates this file; `aim lock` resolves it into `aim.lock.toml`.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Per-project manifest read/write. The manifest is the source of truth for
 installed-skill state and history; the global DB is a cache only.
 
-The committed manifest is a TOML lockfile named `aim.lock` at the project root.
+The committed manifest is a TOML lockfile named `aim.lock.toml` at the project root.
 Older `.atm/manifest.json` files are still readable as a one-time migration.
 """
 

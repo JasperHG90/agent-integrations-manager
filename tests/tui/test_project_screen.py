@@ -21,7 +21,7 @@ async def test_project_screen_empty_when_no_manifest(home: Path, project_root: P
         screen = ProjectScreen(project_root)
         app.push_screen(screen)
         await pilot.pause()
-        assert "no aim.lock" in screen.last_status
+        assert "no aim.lock.toml" in screen.last_status
 
 
 @pytest.mark.asyncio

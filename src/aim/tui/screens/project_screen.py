@@ -107,7 +107,7 @@ class ProjectScreen(Screen[None]):
     def _populate(self) -> None:
         m = self._load_manifest()
         if m is None:
-            self._status("no aim.lock — run init or sync from the main menu")
+            self._status("no aim.lock.toml — run init or sync from the main menu")
             return
 
         skills_table = self.query_one("#skills-table", DataTable)
@@ -272,7 +272,7 @@ class ProjectScreen(Screen[None]):
 
     def action_sync_project(self) -> None:
         if not self._has_manifest:
-            self.app.notify("no aim.lock in this project — run init first", severity="warning")
+            self.app.notify("no aim.lock.toml in this project — run init first", severity="warning")
             return
         self.run_worker(self._do_sync_thread, exclusive=True, thread=True)
 
@@ -308,7 +308,7 @@ class ProjectScreen(Screen[None]):
 
     def action_prune_project(self) -> None:
         if not self._has_manifest:
-            self.app.notify("no aim.lock in this project — run init first", severity="warning")
+            self.app.notify("no aim.lock.toml in this project — run init first", severity="warning")
             return
         self.run_worker(self._do_prune_thread, exclusive=True, thread=True)
 

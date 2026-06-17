@@ -78,6 +78,47 @@ def test_update_when_upstream_unchanged_is_noop(
     assert m.skills[0].history == []
 
 
+def _add_binary_file_commit(working: Path, rel_path: str, content: bytes, message: str) -> None:
+    path = working / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    import subprocess
+
+    subprocess.run(["git", "add", "."], cwd=working, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=working, check=True, capture_output=True)
+
+
+def test_lock_handles_binary_skill_files(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """Skills may contain binary assets; hashing them must not assume UTF-8."""
+    import asyncio
+
+    from aim.core.lock import LockOptions
+    from aim.core.lock import run as lock_run
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={"skills/foo/SKILL.md": "# foo\n"},
+    )
+    # Add a binary asset containing a Windows-1252 smart quote byte (0x93).
+    _add_binary_file_commit(
+        working,
+        "skills/foo/asset.bin",
+        b"\x00\x01\x02\x93\xff",
+        "add binary asset",
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    install.install(project_root, "a/foo")
+
+    # Lock re-hashes skill contents and must tolerate the binary file.
+    asyncio.run(lock_run(LockOptions(project_root=project_root)))
+    m = manifest.load(project_root)
+    assert m.skills[0].qualified_name == "a/foo"
+    assert m.skills[0].content_hash
+
+
 def test_update_after_upstream_change_pushes_history(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:

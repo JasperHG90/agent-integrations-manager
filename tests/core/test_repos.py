@@ -39,6 +39,10 @@ class _AuthFailingBackend:
         _ = (repo_dir, sha, path)
         raise git.GitError("not found")
 
+    def cat_file_bytes(self, repo_dir: Path, sha: str, path: str) -> bytes:
+        _ = (repo_dir, sha, path)
+        raise git.GitError("not found")
+
     def archive(self, repo_dir: Path, sha: str, source_path: str, dest_dir: Path) -> None:
         _ = (repo_dir, sha, source_path, dest_dir)
         raise git.GitError("archive failed")
@@ -266,6 +270,10 @@ def test_refresh_auth_failure_has_helpful_message(
             return []
 
         def cat_file(self, repo_dir: Path, sha: str, path: str) -> str:
+            _ = (repo_dir, sha, path)
+            raise git.GitError("not found")
+
+        def cat_file_bytes(self, repo_dir: Path, sha: str, path: str) -> bytes:
             _ = (repo_dir, sha, path)
             raise git.GitError("not found")
 

@@ -105,9 +105,9 @@ class MainScreen(Screen[None]):
             Static(
                 "\n"
                 "    I   INIT      create / edit aim.toml declarations\n"
-                "    K   LOCK      resolve aim.toml into aim.lock\n"
-                "    Y   SYNC      apply aim.lock to the project\n"
-                "    X   PRUNE     remove artifacts not listed in aim.lock\n"
+                "    K   LOCK      resolve aim.toml into aim.lock.toml\n"
+                "    Y   SYNC      apply aim.lock.toml to the project\n"
+                "    X   PRUNE     remove artifacts not listed in aim.lock.toml\n"
                 "    R   REPOS     registered skill source repositories\n"
                 "    S   SKILLS    browse, search, install\n"
                 "    A   SUBAGENTS browse, search, install sub-agents\n"

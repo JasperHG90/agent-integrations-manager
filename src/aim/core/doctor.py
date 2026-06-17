@@ -92,7 +92,7 @@ def _audit_project(root: Path, report: DoctorReport) -> None:
     try:
         m = manifest.load(root)
     except manifest.ManifestNotFoundError:
-        report.findings.append(Finding("warning", root, "no aim.lock (not initialized)"))
+        report.findings.append(Finding("warning", root, "no aim.lock.toml (not initialized)"))
         return
 
     # Region drift in AGENTS.md and symlinks.

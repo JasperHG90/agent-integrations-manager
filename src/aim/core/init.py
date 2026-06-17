@@ -1,6 +1,6 @@
 """`aim init` orchestration: create or update the user-editable `aim.toml`.
 
-`init` does NOT write AGENTS.md, symlinks, or `aim.lock`. Those are produced by
+`init` does NOT write AGENTS.md, symlinks, or `aim.lock.toml`. Those are produced by
 `aim lock` and `aim sync` respectively.
 """
 

@@ -145,7 +145,9 @@ class AgentsScreen(Screen[None]):
         if cfg is None:
             return
         try:
-            result = install_mod.install(cfg.project_root, qualified_name)
+            result = install_mod.install(
+                cfg.project_root, qualified_name, pin=cfg.pin, track=cfg.track
+            )
         except (
             install_mod.AgentNotIndexedError,
             manifest.ManifestNotFoundError,

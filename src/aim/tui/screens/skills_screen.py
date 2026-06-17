@@ -143,7 +143,9 @@ class SkillsScreen(Screen[None]):
         if cfg is None:
             return
         try:
-            result = install.install(cfg.project_root, qualified_name)
+            result = install.install(
+                cfg.project_root, qualified_name, pin=cfg.pin, track=cfg.track
+            )
         except (
             install.SkillNotIndexedError,
             install.RollbackUnavailableError,

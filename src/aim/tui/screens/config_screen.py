@@ -21,12 +21,12 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Input, Static, TextArea
 
+from aim.core import declarations, layout_profiles, manifest, paths, templates
 from aim.core import init as init_mod
-from aim.core import layout_profiles, manifest, paths, templates
 
 _HELP_TEXT = (
     "Fields:\n"
-    "  Instruction template — which AGENTS.md scaffold to use (stored in aim.lock).\n"
+    "  Instruction template — which AGENTS.md scaffold to use (stored in aim.toml).\n"
     "  Applied rules — managed on the Rules [u] screen.\n"
     "  Layout profile — controls skills/rules/subagents/mcp paths, rules mode, AND\n"
     "    per-agent AGENTS.md symlinks.\n"
@@ -60,7 +60,14 @@ class ConfigScreen(Screen[None]):
             m = None
             has_manifest = False
 
+        try:
+            decl = declarations.load(self._project_root)
+        except declarations.DeclarationsNotFoundError:
+            decl = declarations.load_or_default(self._project_root)
+
         active_profile = self._active_profile_label()
+        instruction_template = decl.instruction_template or "default"
+        applied_rules = list(m.rules) if m else list(decl.rules)
 
         yield Vertical(
             Static(f"Project: {self._project_root}", classes="config-paths", markup=False),
@@ -80,14 +87,14 @@ class ConfigScreen(Screen[None]):
             Static("Project root:", classes="config-heading", markup=False),
             Input(value=str(self._project_root), id="proj-root"),
             Static("Instruction template:", classes="config-heading", markup=False),
-            Input(value=m.instruction_template if m else "default", id="proj-template"),
+            Input(value=instruction_template, id="proj-template"),
             Static(
-                f"Applied rules ({len(m.rules) if m else 0}):",
+                f"Applied rules ({len(applied_rules)}):",
                 classes="config-heading",
                 markup=False,
             ),
             Static(
-                ", ".join(m.rules) if (m and m.rules) else "(none — manage on the Rules screen)",
+                ", ".join(applied_rules) if applied_rules else "(none — manage on the Rules screen)",
                 id="proj-rules-display",
                 classes="config-paths",
                 markup=False,
@@ -139,7 +146,6 @@ class ConfigScreen(Screen[None]):
                 init_mod.InitOptions(
                     project_root=project,
                     instruction_template=instruction_template,
-                    clear_symlinks=True,
                 )
             )
         except Exception as exc:

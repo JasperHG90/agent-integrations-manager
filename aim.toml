@@ -12,6 +12,7 @@ anthropic = "https://github.com/anthropics/skills"
 balukosuri = "https://github.com/balukosuri/Andrej-Karpathy-s-Autoresearch-As-a-Universal-Skill"
 bencium-marketplace = "https://github.com/bencium/bencium-marketplace"
 0xfurai = "https://github.com/0xfurai/claude-code-subagents"
+aim = "https://github.com/JasperHG90/agent-integrations-manager"
 
 [[skill]]
 qualified_name = "anthropic/skill-creator"
@@ -42,6 +43,18 @@ qualified_name = "bencium-marketplace/typography"
 repo_alias = "bencium-marketplace"
 source_path = "typography/skills/typography"
 target_dir = ".claude/skills/typography"
+
+[[skill]]
+qualified_name = "aim/agent-installer"
+repo_alias = "aim"
+source_path = "skills/agent-installer"
+target_dir = ".claude/skills/agent-installer"
+
+[[skill]]
+qualified_name = "aim/readme-creator"
+repo_alias = "aim"
+source_path = "skills/readme-creator"
+target_dir = ".claude/skills/readme-creator"
 
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"

@@ -1,4 +1,4 @@
-"""`aim sync` — reproduce the committed project state from `aim.lock`.
+"""`aim sync` — reproduce the committed project state from `aim.lock.toml`.
 
 This is the package-manager-style reconciliation engine: read the lockfile,
 ensure source repos are registered and indexed, then restore rules, skills,
@@ -85,7 +85,7 @@ def _load_lock(project_root: Path) -> Manifest:
         return manifest.load(project_root)
     except manifest.ManifestNotFoundError as exc:
         raise SyncError(
-            f"no aim.lock in {project_root}; run `aim init` first"
+            f"no aim.lock.toml in {project_root}; run `aim init` first"
         ) from exc
 
 

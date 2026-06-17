@@ -1,7 +1,7 @@
 """MCP server install / update / delete / rollback.
 
 Manages named entries in the project's `.mcp.json` file and records them in
-`aim.lock`. Merge semantics preserve unmanaged servers and
+`aim.lock.toml`. Merge semantics preserve unmanaged servers and
 top-level keys.
 """
 

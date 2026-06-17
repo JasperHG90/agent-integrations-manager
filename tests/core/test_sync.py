@@ -68,7 +68,7 @@ def _mcp_payload(name: str, version: str = "1.0.0") -> dict:
 
 
 def test_sync_requires_lockfile(project_root: Path) -> None:
-    with pytest.raises(sync.SyncError, match=r"no aim.lock"):
+    with pytest.raises(sync.SyncError, match=r"no aim.lock.toml"):
         asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
 
 

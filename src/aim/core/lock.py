@@ -1,4 +1,4 @@
-"""`aim lock` — resolve `aim.toml` declarations into an exact `aim.lock`.
+"""`aim lock` — resolve `aim.toml` declarations into an exact `aim.lock.toml`.
 
 The resolver:
 1. Reads `aim.toml`.
@@ -6,9 +6,9 @@ The resolver:
 3. Resolves each declared skill/agent to a concrete SHA/version.
 4. Fetches each declared MCP server's registry entry.
 5. Computes content hashes and managed-region hashes for drift detection.
-6. Writes `aim.lock`.
+6. Writes `aim.lock.toml`.
 
-This is the only command that mutates `aim.lock` based on `aim.toml`.
+This is the only command that mutates `aim.lock.toml` based on `aim.toml`.
 """
 
 from __future__ import annotations
@@ -137,11 +137,11 @@ def _hash_skill_at_sha(skill: DeclaredSkill, sha: str) -> str:
     paths_in_tree = git.get_backend().ls_tree(repo_dir, sha, skill.source_path)
     h = hashlib.sha256()
     for rel_path in sorted(paths_in_tree):
-        content = git.get_backend().cat_file(repo_dir, sha, rel_path)
+        content = git.get_backend().cat_file_bytes(repo_dir, sha, rel_path)
         rel_under_source = rel_path[len(skill.source_path) + 1 :] if skill.source_path else rel_path
         h.update(rel_under_source.encode("utf-8"))
         h.update(b"\0")
-        h.update(content.encode("utf-8"))
+        h.update(content)
         h.update(b"\0")
     return h.hexdigest()
 
@@ -326,26 +326,28 @@ async def run(options: LockOptions) -> LockResult:
     result.errors = await _ensure_repos(decl, options.allow_insecure)
     _notify(options.progress_callback, "repos", "all", "ok")
 
-    skills_locked, skill_errors = await _lock_skills(
-        decl.skills, options.progress_callback
-    )
+    # Skills, agents, MCPs, and region hashes only depend on repos being
+    # available, so lock them concurrently instead of sequentially.
+    skills_task = _lock_skills(decl.skills, options.progress_callback)
+    agents_task = _lock_agents(decl.agents, options.progress_callback)
+    mcps_task = _lock_mcps(decl.mcp_servers, options.progress_callback)
+    regions_task = asyncio.to_thread(_compute_region_hashes, decl, profile)
+
+    (
+        (skills_locked, skill_errors),
+        (agents_locked, agent_errors),
+        (mcps_locked, mcp_errors),
+        region_hashes,
+    ) = await asyncio.gather(skills_task, agents_task, mcps_task, regions_task)
+
     result.locked_skills = [s.qualified_name for s in skills_locked]
-
-    agents_locked, agent_errors = await _lock_agents(
-        decl.agents, options.progress_callback
-    )
     result.locked_agents = [a.qualified_name for a in agents_locked]
-
-    mcps_locked, mcp_errors = await _lock_mcps(
-        decl.mcp_servers, options.progress_callback
-    )
     result.locked_mcp = [m.alias for m in mcps_locked]
 
     managed_files = [
         profile.agents_md,
         *decl.symlinks,
     ]
-    region_hashes = await asyncio.to_thread(_compute_region_hashes, decl, profile)
 
     lock = Manifest(
         instruction_template=decl.instruction_template,

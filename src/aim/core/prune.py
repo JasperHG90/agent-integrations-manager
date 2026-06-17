@@ -1,4 +1,4 @@
-"""`aim prune` — remove artifacts on disk that are no longer in `aim.lock`.
+"""`aim prune` — remove artifacts on disk that are no longer in `aim.lock.toml`.
 
 Scans the active layout profile's skills, agents, and rules directories,
 plus `.mcp.json` managed aliases, and removes anything not listed in the
@@ -59,7 +59,7 @@ def _run(options: PruneOptions) -> PruneResult:
     try:
         m = manifest.load(project_root)
     except manifest.ManifestNotFoundError as exc:
-        raise PruneError(f"no aim.lock in {project_root}; run `aim init` first") from exc
+        raise PruneError(f"no aim.lock.toml in {project_root}; run `aim init` first") from exc
 
     active_name = options.layout_profile or m.layout_profile
     if active_name:

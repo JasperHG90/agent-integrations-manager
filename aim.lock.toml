@@ -1,0 +1,133 @@
+manifest_version = 7
+instruction_template = "default"
+mcp_servers = []
+rules = []
+managed_files = [
+    "AGENTS.md",
+    "CLAUDE.md",
+]
+layout_profile = "claude"
+symlinks = [
+    "CLAUDE.md",
+]
+
+[[skill]]
+qualified_name = "anthropic/skill-creator"
+repo_alias = "anthropic"
+repo_url = "https://github.com/anthropics/skills"
+source_path = "skills/skill-creator"
+target_dir = ".claude/skills/skill-creator"
+history = []
+content_hash = "4557d54c524c67984e4bab23fa436e90196292ae8df4d2093f0ce0e6951bfc1c"
+
+[skill.current]
+sha = "57546260929473d4e0d1c1bb75297be2fdfa1949"
+installed_at = "2026-06-17T20:19:40.485413Z"
+
+[[skill]]
+qualified_name = "anthropic/theme-factory"
+repo_alias = "anthropic"
+repo_url = "https://github.com/anthropics/skills"
+source_path = "skills/theme-factory"
+target_dir = ".claude/skills/theme-factory"
+history = []
+content_hash = "50bc5c8d91691c22c80aa3a77d437243398121a724531737530f4ed30cddf879"
+
+[skill.current]
+sha = "57546260929473d4e0d1c1bb75297be2fdfa1949"
+installed_at = "2026-06-17T20:19:40.491390Z"
+
+[[skill]]
+qualified_name = "balukosuri/balukosuri"
+repo_alias = "balukosuri"
+repo_url = "https://github.com/balukosuri/Andrej-Karpathy-s-Autoresearch-As-a-Universal-Skill"
+source_path = ""
+target_dir = ".claude/skills/balukosuri"
+history = []
+content_hash = "63a08efbda66c5bd752f2b5219b25af327cc87d9f229c6d1735fd8c2526ca81a"
+
+[skill.current]
+sha = "48708643faae8047ab280ac67b3c35357a62d74c"
+installed_at = "2026-06-17T20:19:40.497186Z"
+
+[[skill]]
+qualified_name = "bencium-marketplace/design-audit"
+repo_alias = "bencium-marketplace"
+repo_url = "https://github.com/bencium/bencium-marketplace"
+source_path = "design-audit/skills/design-audit"
+target_dir = ".claude/skills/design-audit"
+history = []
+content_hash = "7a62554bb7317e1bdda7430cf477e8944b1f2ea8dbed16dbe5856fbfc5ba7845"
+
+[skill.current]
+sha = "c6f5a718d43ba5a5d540bf74efbd4dba81400c72"
+installed_at = "2026-06-17T20:19:40.503277Z"
+
+[[skill]]
+qualified_name = "bencium-marketplace/typography"
+repo_alias = "bencium-marketplace"
+repo_url = "https://github.com/bencium/bencium-marketplace"
+source_path = "typography/skills/typography"
+target_dir = ".claude/skills/typography"
+history = []
+content_hash = "f77a95514c45c55bb0d9bad72b3f0e6cee36aa3f436fff1f43b24c92b7d81746"
+
+[skill.current]
+sha = "c6f5a718d43ba5a5d540bf74efbd4dba81400c72"
+installed_at = "2026-06-17T20:19:40.509289Z"
+
+[[skill]]
+qualified_name = "aim/agent-installer"
+repo_alias = "aim"
+repo_url = "https://github.com/JasperHG90/agent-integrations-manager"
+source_path = "skills/agent-installer"
+target_dir = ".claude/skills/agent-installer"
+history = []
+content_hash = "eaadec5e35463f496629c390646e5fc7323ae8169212242eb22e65fba3710e58"
+
+[skill.current]
+sha = "e977d80ab455c8c89bf3935220bfe566ef8c9e18"
+installed_at = "2026-06-17T20:19:40.570676Z"
+
+[[skill]]
+qualified_name = "aim/readme-creator"
+repo_alias = "aim"
+repo_url = "https://github.com/JasperHG90/agent-integrations-manager"
+source_path = "skills/readme-creator"
+target_dir = ".claude/skills/readme-creator"
+history = []
+content_hash = "0f0e60a8a5455b0306292b0c86f692de0033f327f3aec3e3def7491ade256cb6"
+
+[skill.current]
+sha = "e977d80ab455c8c89bf3935220bfe566ef8c9e18"
+installed_at = "2026-06-17T20:19:40.533822Z"
+
+[[subagent]]
+qualified_name = "0xfurai/github-actions-expert"
+repo_alias = "0xfurai"
+repo_url = "https://github.com/0xfurai/claude-code-subagents"
+source_path = "agents/github-actions-expert.md"
+target_path = ".claude/agents/github-actions-expert.md"
+history = []
+content_hash = "3c9ba9fdae19715f1245d61f69592263feac5bfec35fa3f3eb4808c626447b3f"
+
+[subagent.current]
+sha = "9236d10702cdbba37eaa34515f1e1dbff8452506"
+installed_at = "2026-06-17T20:19:40.521409Z"
+
+[[subagent]]
+qualified_name = "0xfurai/python-expert"
+repo_alias = "0xfurai"
+repo_url = "https://github.com/0xfurai/claude-code-subagents"
+source_path = "agents/python-expert.md"
+target_path = ".claude/agents/python-expert.md"
+history = []
+content_hash = "a57656516e369867ec8365e83c987d1696ec07ee2bbcbe0257318fdd4d4cd794"
+
+[subagent.current]
+sha = "9236d10702cdbba37eaa34515f1e1dbff8452506"
+installed_at = "2026-06-17T20:19:40.515184Z"
+
+[managed_region_hashes]
+header = "7d9b230f12d3321fbe95b65112214bedf880cf3fa2e5b9a4d71da8644353d017"
+rules = "e2397e51688dc7dbf5fc9dbeec8ec0d6e0d1dcc368e1fbbcd0d0135e39aa1afe"
