@@ -19,7 +19,7 @@ def kind_tag(kinds: set[str]) -> str:
     if "skill" in kinds:
         parts.append("skills")
     if "agent" in kinds:
-        parts.append("agents")
+        parts.append("subagents")
     if "rules" in kinds:
         parts.append("rules")
     return " + ".join(parts) if parts else "—"
@@ -111,7 +111,7 @@ class ReposScreen(Screen[None]):
         except (
             repos.RepoAliasError,
             repos.RepoExistsError,
-            repos.RepoHasNoSkillsError,
+            repos.RepoHasNoArtifactsError,
             git.GitError,
         ) as exc:
             self.app.call_from_thread(self.app.notify, f"add failed: {exc}", severity="error")
@@ -119,20 +119,25 @@ class ReposScreen(Screen[None]):
             return
         self.app.call_from_thread(self.app.notify, f"added {result.alias}", title="Repo added")
         self.app.call_from_thread(self._status, f"added {result.alias}")
-        self.app.call_from_thread(self._populate)
 
     def on_worker_state_changed(self, event) -> None:  # type: ignore[no-untyped-def]
         adding = getattr(self, "_adding", None)
         if adding is not None:
             if event.state == WorkerState.RUNNING:
                 self._status(f"adding {adding.alias}…")
-            elif event.state in (WorkerState.SUCCESS, WorkerState.CANCELLED, WorkerState.ERROR):
+            elif event.state == WorkerState.SUCCESS:
+                self._adding = None
+                self._populate()
+            elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._adding = None
         refreshing = getattr(self, "_refreshing", None)
         if refreshing is not None:
             if event.state == WorkerState.RUNNING:
                 self._status(f"refreshing {refreshing}…")
-            elif event.state in (WorkerState.SUCCESS, WorkerState.CANCELLED, WorkerState.ERROR):
+            elif event.state == WorkerState.SUCCESS:
+                self._refreshing = None
+                self._populate()
+            elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._refreshing = None
 
     def action_refresh_current(self) -> None:

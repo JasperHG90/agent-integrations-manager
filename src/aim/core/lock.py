@@ -1,14 +1,14 @@
-"""`aim lock` — resolve `aim.yml` declarations into an exact `aim.lock`.
+"""`aim lock` — resolve `aim.toml` declarations into an exact `aim.lock`.
 
 The resolver:
-1. Reads `aim.yml`.
+1. Reads `aim.toml`.
 2. Ensures declared repos are registered (auto-register missing ones).
 3. Resolves each declared skill/agent to a concrete SHA/version.
 4. Fetches each declared MCP server's registry entry.
 5. Computes content hashes and managed-region hashes for drift detection.
 6. Writes `aim.lock`.
 
-This is the only command that mutates `aim.lock` based on `aim.yml`.
+This is the only command that mutates `aim.lock` based on `aim.toml`.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ from aim.core.models import (
 
 
 class LockError(RuntimeError):
-    """Top-level lock failure (missing aim.yml, unreachable repo, etc.)."""
+    """Top-level lock failure (missing aim.toml, unreachable repo, etc.)."""
 
 
 @dataclass
@@ -81,7 +81,7 @@ def _load_declarations(project_root: Path) -> ProjectDeclarations:
         return declarations.load(project_root)
     except declarations.DeclarationsNotFoundError as exc:
         raise LockError(
-            f"no aim.yml in {project_root}; run `aim init` first"
+            f"no aim.toml in {project_root}; run `aim init` first"
         ) from exc
 
 
@@ -90,8 +90,8 @@ def _resolve_profile(project_root: Path, decl: ProjectDeclarations) -> layout_pr
         try:
             return layout_profiles.get_profile(project_root, decl.layout_profile)
         except layout_profiles.LayoutProfileNotFoundError:
-            return layout_profiles.LEGACY_PROFILE
-    return layout_profiles.LEGACY_PROFILE
+            return layout_profiles.BUILTIN_CLAUDE
+    return layout_profiles.BUILTIN_CLAUDE
 
 
 def _ensure_repo(alias: str, url: str) -> str | None:
@@ -299,7 +299,7 @@ def _compute_region_hashes(decl: ProjectDeclarations) -> dict[str, str]:
     applied = [rules.get(name) for name in decl.rules]
 
     def _render_for_agent(agent: str | None) -> str:
-        return templates.render(decl.template, {"rules": applied, "agent": agent})
+        return templates.render(decl.instruction_template, {"rules": applied, "agent": agent})
 
     canonical = _render_for_agent(None)
     regions = {r.name: r.body for r in agents_md.parse(canonical)}
@@ -334,17 +334,15 @@ async def run(options: LockOptions) -> LockResult:
 
     managed_files = [
         profile.agents_md,
-        *decl.mirrors,
         *decl.symlinks,
     ]
     region_hashes = await asyncio.to_thread(_compute_region_hashes, decl)
 
     lock = Manifest(
-        template=decl.template,
+        instruction_template=decl.instruction_template,
         layout_profile=decl.layout_profile or profile.name,
         agent_dialect=decl.agent_dialect,
         rules=decl.rules,
-        mirrors=decl.mirrors,
         symlinks=decl.symlinks,
         managed_files=list(dict.fromkeys(managed_files)),
         managed_region_hashes=region_hashes,

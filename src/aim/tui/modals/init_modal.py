@@ -1,5 +1,5 @@
 """Modal: configure `init` for a project. Pick project root, template, and
-which mirror files to write."""
+which symlink files to write."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from aim.tui.widgets import ToggleRow
 @dataclass(frozen=True)
 class InitConfig:
     project_root: Path
-    template: str
-    mirrors: tuple[str, ...]
+    instruction_template: str
+    symlinks: tuple[str, ...]
     seed_default_rules: bool
     force: bool
     agent_dialect: str | None
@@ -47,10 +47,10 @@ class InitModal(ModalScreen[InitConfig | None]):
         return [(p.display_name or p.name, p.name) for p in profiles]
 
     @staticmethod
-    def _mirror_id(name: str) -> str:
+    def _symlink_id(name: str) -> str:
         # Textual ids must match [A-Za-z][A-Za-z0-9_-]* — filenames have dots,
         # so replace them. Used for both compose and read.
-        return "mirror-" + name.replace(".", "-")
+        return "symlink-" + name.replace(".", "-")
 
     def compose(self) -> ComposeResult:
         templates_avail = [t.name for t in templates.list_templates()]
@@ -62,12 +62,12 @@ class InitModal(ModalScreen[InitConfig | None]):
         self._profile_options = self._build_profile_options(self._initial_project)
 
         init_widgets = [
-            Static("Template:", markup=False),
+            Static("Instruction template:", markup=False),
             Input(value=default_template, id="template"),
-            Static("Mirror files (write a copy of AGENTS.md as):", markup=False),
-            *(ToggleRow(name, id=self._mirror_id(name)) for name in init_mod.KNOWN_MIRRORS),
-            Static("Other mirror (optional, e.g. CURSOR.md):", markup=False),
-            Input(value="", placeholder="<name>.md", id="other-mirror"),
+            Static("Symlink files (point at AGENTS.md):", markup=False),
+            *(ToggleRow(name, id=self._symlink_id(name)) for name in init_mod.KNOWN_SYMLINKS),
+            Static("Other symlink (optional, e.g. CURSOR.md):", markup=False),
+            Input(value="", placeholder="<name>.md", id="other-symlink"),
             Static("Primary agent dialect (optional, blank = none):", markup=False),
             Input(value="", placeholder="claude / gemini / opencode", id="agent-dialect"),
             ToggleRow("Seed default-flagged rules", value=True, id="seed-defaults"),
@@ -78,7 +78,7 @@ class InitModal(ModalScreen[InitConfig | None]):
             Input(value=str(self._initial_project), id="project-root"),
             Static("Profile:", markup=False),
             Select(self._profile_options, id="layout-profile", allow_blank=True),
-            ToggleRow("Sync agent files (AGENTS.md / mirrors)", value=True, id="sync-agents"),
+            ToggleRow("Sync agent files (AGENTS.md / symlinks)", value=True, id="sync-agents"),
             ToggleRow("Force overwrite if files exist", id="force"),
         ]
 
@@ -109,7 +109,7 @@ class InitModal(ModalScreen[InitConfig | None]):
             self.dismiss(None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id in ("project-root", "template", "other-mirror", "agent-dialect"):
+        if event.input.id in ("project-root", "template", "other-symlink", "agent-dialect"):
             self._submit()
 
     def action_submit(self) -> None:
@@ -147,8 +147,8 @@ class InitModal(ModalScreen[InitConfig | None]):
             self.dismiss(
                 InitConfig(
                     project_root=Path(project_root_str).expanduser(),
-                    template="",
-                    mirrors=(),
+                    instruction_template="",
+                    symlinks=(),
                     seed_default_rules=False,
                     force=force,
                     agent_dialect=None,
@@ -158,32 +158,32 @@ class InitModal(ModalScreen[InitConfig | None]):
             )
             return
 
-        template = self.query_one("#template", Input).value.strip()
-        if not template:
-            self._error("template name is required", "template")
+        instruction_template = self.query_one("#template", Input).value.strip()
+        if not instruction_template:
+            self._error("instruction template name is required", "template")
             return
-        mirrors_list: list[str] = [
+        symlinks_list: list[str] = [
             name
-            for name in init_mod.KNOWN_MIRRORS
-            if self.query_one(f"#{self._mirror_id(name)}", ToggleRow).value
+            for name in init_mod.KNOWN_SYMLINKS
+            if self.query_one(f"#{self._symlink_id(name)}", ToggleRow).value
         ]
-        other = self.query_one("#other-mirror", Input).value.strip()
+        other = self.query_one("#other-symlink", Input).value.strip()
         if other:
             if not init_mod.is_valid_mirror_name(other):
                 self._error(
-                    f"other mirror {other!r} invalid: use <name>.md, letters/numbers/_-/. only",
-                    "other-mirror",
+                    f"other symlink {other!r} invalid: use <name>.md, letters/numbers/_-/. only",
+                    "other-symlink",
                 )
                 return
-            if other not in mirrors_list:
-                mirrors_list.append(other)
+            if other not in symlinks_list:
+                symlinks_list.append(other)
         seed = self.query_one("#seed-defaults", ToggleRow).value
         dialect = self.query_one("#agent-dialect", Input).value.strip().lower() or None
         self.dismiss(
             InitConfig(
                 project_root=Path(project_root_str).expanduser(),
-                template=template,
-                mirrors=tuple(mirrors_list),
+                instruction_template=instruction_template,
+                symlinks=tuple(symlinks_list),
                 seed_default_rules=seed,
                 force=force,
                 agent_dialect=dialect,

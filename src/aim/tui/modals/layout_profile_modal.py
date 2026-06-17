@@ -79,13 +79,13 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
                     value=(p.skills_dir if p else ".claude/skills"),
                     id="skills-dir",
                 ),
-                Static("Agents file:", markup=False),
+                Static("Subagents file:", markup=False),
                 Input(value=(p.agents_md if p else "AGENTS.md"), id="agents-md"),
-                Static("Mirrors (comma-separated):", markup=False),
+                Static("Symlinks (comma-separated):", markup=False),
                 Input(
-                    value=(",".join(p.mirrors) if p else ""),
+                    value=(",".join(p.symlinks) if p else ""),
                     placeholder="CLAUDE.md, GEMINI.md",
-                    id="mirrors",
+                    id="symlinks",
                 ),
                 Static("", id="error", markup=False, classes="modal-error"),
                 classes="modal-scroll",
@@ -138,8 +138,8 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
         rules_dir = self.query_one("#rules-dir", Input).value.strip()
         skills_dir = self.query_one("#skills-dir", Input).value.strip()
         agents_md = self.query_one("#agents-md", Input).value.strip()
-        mirrors_raw = self.query_one("#mirrors", Input).value.strip()
-        mirrors = [m.strip() for m in mirrors_raw.split(",") if m.strip()]
+        symlinks_raw = self.query_one("#symlinks", Input).value.strip()
+        symlinks = [s.strip() for s in symlinks_raw.split(",") if s.strip()]
 
         try:
             profile = layout_profiles.LayoutProfile(
@@ -151,7 +151,7 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
                 rules_dir=rules_dir,
                 skills_dir=skills_dir,
                 agents_md=agents_md,
-                mirrors=mirrors,
+                symlinks=symlinks,
             )
         except Exception as exc:
             self._error(f"invalid profile: {exc}", "name")

@@ -82,7 +82,7 @@ class MainScreen(Screen[None]):
         ("x", "open_prune", "Prune project"),
         ("r", "open_repos", "Repos"),
         ("s", "open_skills", "Skills"),
-        ("a", "open_agents", "Agents"),
+        ("a", "open_agents", "Subagents"),
         ("m", "open_mcp", "MCP servers"),
         ("u", "open_rules", "Rules"),
         ("t", "open_templates", "Templates"),
@@ -104,13 +104,13 @@ class MainScreen(Screen[None]):
         yield Vertical(
             Static(
                 "\n"
-                "    I   INIT      create / edit aim.yml declarations\n"
-                "    K   LOCK      resolve aim.yml into aim.lock\n"
+                "    I   INIT      create / edit aim.toml declarations\n"
+                "    K   LOCK      resolve aim.toml into aim.lock\n"
                 "    Y   SYNC      apply aim.lock to the project\n"
                 "    X   PRUNE     remove artifacts not listed in aim.lock\n"
                 "    R   REPOS     registered skill source repositories\n"
                 "    S   SKILLS    browse, search, install\n"
-                "    A   AGENTS    browse, search, install sub-agents\n"
+                "    A   SUBAGENTS browse, search, install sub-agents\n"
                 "    M   MCP       search registry, install MCP servers\n"
                 "    U   RULES     global rules library\n"
                 "    T   TEMPLATES reusable project setups\n"
@@ -237,8 +237,8 @@ class MainScreen(Screen[None]):
             result = init_mod.run(
                 init_mod.InitOptions(
                     project_root=config.project_root,
-                    template=config.template,
-                    mirrors=config.mirrors,
+                    instruction_template=config.instruction_template,
+                    symlinks=config.symlinks,
                     seed_default_rules=config.seed_default_rules,
                     agent_dialect=config.agent_dialect,
                     layout_profile=config.layout_profile,

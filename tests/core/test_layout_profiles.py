@@ -21,7 +21,7 @@ def test_parse_round_trip() -> None:
     parsed = layout_profiles.parse_toml(text)
     assert parsed.name == "claude"
     assert parsed.skills_dir == ".claude/skills"
-    assert parsed.mirrors == ["CLAUDE.md"]
+    assert parsed.symlinks == ["CLAUDE.md"]
 
 
 def test_rejects_invalid_name() -> None:
@@ -39,14 +39,14 @@ def test_rejects_absolute_path() -> None:
         layout_profiles.LayoutProfile(name="bad", skills_dir="/skills")
 
 
-def test_rejects_invalid_mirror() -> None:
+def test_rejects_invalid_symlink() -> None:
     with pytest.raises(ValueError):
-        layout_profiles.LayoutProfile(name="bad", mirrors=["no_extension"])
+        layout_profiles.LayoutProfile(name="bad", symlinks=["no_extension"])
 
 
-def test_rejects_agents_md_in_mirrors() -> None:
+def test_rejects_agents_md_in_symlinks() -> None:
     with pytest.raises(ValueError):
-        layout_profiles.LayoutProfile(name="bad", agents_md="AGENTS.md", mirrors=["AGENTS.md"])
+        layout_profiles.LayoutProfile(name="bad", agents_md="AGENTS.md", symlinks=["AGENTS.md"])
 
 
 def test_list_profiles_includes_builtins(project_root: Path) -> None:
@@ -61,13 +61,8 @@ def test_get_profile_builtin(project_root: Path) -> None:
     assert p.skills_dir == ".gemini/skills"
 
 
-def test_get_profile_legacy(project_root: Path) -> None:
-    p = layout_profiles.get_profile(project_root, "legacy")
-    assert p == layout_profiles.LEGACY_PROFILE
-
-
-def test_resolve_active_returns_legacy_when_no_manifest(project_root: Path) -> None:
-    assert layout_profiles.resolve_active(project_root) == layout_profiles.LEGACY_PROFILE
+def test_resolve_active_returns_claude_when_no_manifest(project_root: Path) -> None:
+    assert layout_profiles.resolve_active(project_root) == layout_profiles.BUILTIN_CLAUDE
 
 
 def test_resolve_active_reads_manifest(project_root: Path, layout_dir: Path) -> None:

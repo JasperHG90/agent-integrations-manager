@@ -8,6 +8,7 @@ Older `.atm/manifest.json` files are still readable as a one-time migration.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -16,6 +17,30 @@ import tomli_w
 from aim.core import paths
 from aim.core.manifest_migrate import migrate
 from aim.core.models import Manifest
+
+# TOML uses singular array-of-table headers; the models use plural field names.
+_TOML_READ_MAP = {
+    "skill": "skills",
+    "subagent": "agents",
+    "mcp_server": "mcp_servers",
+}
+_TOML_WRITE_MAP = {v: k for k, v in _TOML_READ_MAP.items()}
+
+# Match TOML table headers like [[skills]], [skills.current], [[skills.history]], etc.
+_TABLE_HEADER_RE = re.compile(r"^(\[\[?)(\w+)((?:\.\w+)*)?(\]\]?)$")
+
+
+def _singularize_table_headers(text: str) -> str:
+    out: list[str] = []
+    for line in text.splitlines():
+        match = _TABLE_HEADER_RE.match(line.strip())
+        if match:
+            prefix, base, suffix, suffix_bracket = match.groups()
+            singular = _TOML_WRITE_MAP.get(base)
+            if singular is not None:
+                line = f"{prefix}{singular}{suffix or ''}{suffix_bracket}"
+        out.append(line)
+    return "\n".join(out)
 
 
 class ManifestNotFoundError(FileNotFoundError):
@@ -26,6 +51,9 @@ def load(project_root: Path) -> Manifest:
     lock_path = paths.project_lock_path(project_root)
     if lock_path.exists():
         raw = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+        for singular, plural in _TOML_READ_MAP.items():
+            if singular in raw:
+                raw[plural] = raw.pop(singular)
         migrated = migrate(raw)
         return Manifest.model_validate(migrated)
 
@@ -50,10 +78,10 @@ def load_or_default(project_root: Path) -> Manifest:
 
 
 def load_or_create(project_root: Path) -> Manifest:
-    """Load the existing lockfile, or seed a new Manifest from aim.yml metadata.
+    """Load the existing lockfile, or seed a new Manifest from aim.toml metadata.
 
     Used by install/update/delete paths so that the first artifact written to
-    a project still produces a lockfile with template, mirrors, symlinks, rules,
+    a project still produces a lockfile with instruction_template, symlinks, rules,
     and layout profile copied from the user's declarations.
     """
     try:
@@ -63,11 +91,10 @@ def load_or_create(project_root: Path) -> Manifest:
 
         decl = declarations_mod.load_or_default(project_root)
         m = Manifest(
-            template=decl.template,
+            instruction_template=decl.instruction_template,
             layout_profile=decl.layout_profile,
             agent_dialect=decl.agent_dialect,
             rules=list(decl.rules),
-            mirrors=list(decl.mirrors),
             symlinks=list(decl.symlinks),
         )
         return m
@@ -77,4 +104,5 @@ def save(project_root: Path, manifest: Manifest) -> None:
     path = paths.project_lock_path(project_root)
     data = manifest.model_dump(mode="json", exclude_none=True)
     text = tomli_w.dumps(data)
+    text = _singularize_table_headers(text)
     path.write_text(text + "\n", encoding="utf-8")

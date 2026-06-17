@@ -2,7 +2,7 @@
 
 Reports:
 - skill content_hash drift (target dir edited)
-- managed region hash drift (AGENTS.md / mirrors edited inside markers)
+- managed region hash drift (AGENTS.md / symlinks edited inside markers)
 - skill target dir missing entirely
 - snapshot dirs missing the `.complete` sentinel (cache health)
 - registered repos that haven't been refreshed in `stale_repo_days` days
@@ -95,7 +95,7 @@ def _audit_project(root: Path, report: DoctorReport) -> None:
         report.findings.append(Finding("warning", root, "no aim.lock (not initialized)"))
         return
 
-    # Region drift in AGENTS.md and mirrors.
+    # Region drift in AGENTS.md and symlinks.
     for managed in m.managed_files:
         target = _safe_project_path(root, managed)
         if target is None:

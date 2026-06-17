@@ -1,6 +1,6 @@
 """Tests for the user-requested round of changes:
 
-1. Mirror union on re-init (existing mirrors don't silently disappear).
+1. Symlink union on re-init (existing symlinks don't silently disappear).
 2. `rules.install_to_project` adds rule to manifest + re-renders AGENTS.md.
 3. Per-project `agent_dialect` round-trips through the manifest.
 4. `re.fullmatch` rejects trailing-newline names (adversarial finding #15).
@@ -25,45 +25,45 @@ def _lock_and_sync(project_root: Path) -> None:
     asyncio.run(sync_mod.run(sync_mod.SyncOptions(project_root=project_root)))
 
 
-# ---------- 1. Mirror union ----------
+# ---------- 1. Symlink union ----------
 
 
-def test_re_init_preserves_existing_mirrors_when_none_specified(
+def test_re_init_preserves_existing_symlinks_when_none_specified(
     home: Path, project_root: Path
 ) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
     _lock_and_sync(project_root)
     assert (project_root / "CLAUDE.md").exists()
 
-    # Re-init with no mirror flag — CLAUDE.md must still be declared and rendered.
+    # Re-init with no symlink flag — CLAUDE.md must still be declared and rendered.
     init_mod.run(init_mod.InitOptions(project_root=project_root))
     _lock_and_sync(project_root)
     assert (project_root / "CLAUDE.md").exists()
     m = manifest.load(project_root)
-    assert "CLAUDE.md" in m.mirrors
+    assert "CLAUDE.md" in m.symlinks
 
 
 def test_re_init_unions_new_with_existing(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("GEMINI.md",)))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("GEMINI.md",)))
     _lock_and_sync(project_root)
     decl = declarations.load(project_root)
     m = manifest.load(project_root)
-    assert "CLAUDE.md" in decl.mirrors
-    assert "GEMINI.md" in decl.mirrors
-    assert "CLAUDE.md" in m.mirrors
-    assert "GEMINI.md" in m.mirrors
+    assert "CLAUDE.md" in decl.symlinks
+    assert "GEMINI.md" in decl.symlinks
+    assert "CLAUDE.md" in m.symlinks
+    assert "GEMINI.md" in m.symlinks
 
 
-def test_re_init_clear_mirrors_wipes(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
+def test_re_init_clear_symlinks_wipes(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
     _lock_and_sync(project_root)
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=(), clear_mirrors=True))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=(), clear_symlinks=True))
     _lock_and_sync(project_root)
     decl = declarations.load(project_root)
     m = manifest.load(project_root)
-    assert decl.mirrors == []
-    assert m.mirrors == []
+    assert decl.symlinks == []
+    assert m.symlinks == []
 
 
 # ---------- 2. Rule install flow ----------
@@ -81,8 +81,8 @@ def test_rule_install_adds_to_manifest_and_renders(home: Path, project_root: Pat
     assert "Be concise." in agents_md
 
 
-def test_rule_install_preserves_mirrors(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
+def test_rule_install_preserves_symlinks(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
     rules.add("focus", "Focus.")
     rules.install_to_project(project_root, "focus")
     _lock_and_sync(project_root)

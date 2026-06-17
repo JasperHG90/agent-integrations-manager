@@ -64,7 +64,7 @@ def test_history_push_caps_at_limit() -> None:
 
 
 def test_migrate_from_v0() -> None:
-    raw = {"template": "default", "skills": [], "rules": []}
+    raw = {"instruction_template": "default", "skills": [], "rules": []}
     out = migrate(raw)
     assert out["manifest_version"] == CURRENT_MANIFEST_VERSION
 

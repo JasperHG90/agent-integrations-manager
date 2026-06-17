@@ -1,10 +1,10 @@
 """Project profiles — named bundles of init settings.
 
-A profile snapshots a project's `(template, mirrors, rules, skills, agents,
-mcp_servers, agent_dialect, layout_profile)` so you can stamp out new projects
-from it. Stored as JSON under `user_config_dir/profiles/<name>.json`. Skills,
-agents and MCP servers reference upstream by qualified_name/registry_name +
-pin/track, not by frozen bytes — so applying a profile always picks up the
+A profile snapshots a project's `(instruction_template, symlinks, rules, skills,
+agents, mcp_servers, agent_dialect, layout_profile)` so you can stamp out new
+projects from it. Stored as JSON under `user_config_dir/profiles/<name>.json`.
+Skills, agents and MCP servers reference upstream by qualified_name/registry_name
++ pin/track, not by frozen bytes — so applying a profile always picks up the
 latest version unless pinned.
 
 Profiles can also be imported/exported as TOML for easy sharing and editing.
@@ -77,9 +77,8 @@ class Profile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    template: str = "default"
+    instruction_template: str = "default"
     layout_profile: str | None = None
-    mirrors: list[str] = Field(default_factory=list)
     symlinks: list[str] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     skills: list[ProfileSkill] = Field(default_factory=list)
@@ -96,9 +95,9 @@ class Profile(BaseModel):
             )
         return value
 
-    @field_validator("mirrors", "symlinks")
+    @field_validator("symlinks")
     @classmethod
-    def _validate_mirror_like(cls, values: list[str]) -> list[str]:
+    def _validate_symlink_names(cls, values: list[str]) -> list[str]:
         for value in values:
             if not is_valid_mirror_name(value):
                 raise ValueError(f"filename {value!r} invalid")
@@ -167,7 +166,7 @@ def delete(name: str) -> bool:
 
 _TOML_KEY_MAP = {
     "skill": "skills",
-    "agent": "agents",
+    "subagent": "agents",
     "mcp_server": "mcp_servers",
 }
 
@@ -176,7 +175,7 @@ def parse_toml(text: str, *, source: str | None = None) -> Profile:
     """Parse a project profile from a TOML string.
 
     TOML uses singular array-of-table headers per item:
-        [[skill]], [[agent]], [[mcp_server]]
+        [[skill]], [[subagent]], [[mcp_server]]
     These are mapped to the plural field names on the Profile model.
     """
     try:
@@ -196,12 +195,11 @@ def render_toml(profile: Profile) -> str:
     """Serialize a project profile to TOML."""
     lines: list[str] = []
     lines.append(f'name = "{_escape_toml_string(profile.name)}"')
-    lines.append(f'template = "{_escape_toml_string(profile.template)}"')
+    lines.append(f'instruction_template = "{_escape_toml_string(profile.instruction_template)}"')
     if profile.layout_profile:
         lines.append(f'layout_profile = "{_escape_toml_string(profile.layout_profile)}"')
     if profile.agent_dialect:
         lines.append(f'agent_dialect = "{_escape_toml_string(profile.agent_dialect)}"')
-    lines.append(f"mirrors = {_render_string_list(profile.mirrors)}")
     lines.append(f"symlinks = {_render_string_list(profile.symlinks)}")
     lines.append(f"rules = {_render_string_list(profile.rules)}")
     lines.append("")
@@ -214,7 +212,7 @@ def render_toml(profile: Profile) -> str:
             lines.append(f'track = "{_escape_toml_string(skill.track)}"')
         lines.append("")
     for agent in profile.agents:
-        lines.append("[[agent]]")
+        lines.append("[[subagent]]")
         lines.append(f'qualified_name = "{_escape_toml_string(agent.qualified_name)}"')
         if agent.pin:
             lines.append(f'pin = "{_escape_toml_string(agent.pin)}"')
@@ -295,9 +293,8 @@ def from_project(name: str, project_root: Path) -> Profile:
 
     return Profile(
         name=name,
-        template=decl.template,
+        instruction_template=decl.instruction_template,
         layout_profile=decl.layout_profile,
-        mirrors=list(decl.mirrors),
         symlinks=list(decl.symlinks),
         rules=list(decl.rules),
         skills=[
@@ -343,16 +340,15 @@ def apply(name: str, project_root: Path) -> ProfileApplyResult:
     init_result = init_mod.run(
         init_mod.InitOptions(
             project_root=project_root,
-            template=profile.template,
+            instruction_template=profile.instruction_template,
             layout_profile=profile.layout_profile,
-            mirrors=tuple(profile.mirrors),
             symlinks=tuple(profile.symlinks),
             extra_rules=list(profile.rules),
             agent_dialect=profile.agent_dialect,
         )
     )
 
-    # Resolve declarations into a lock so subsequent installs preserve mirrors/symlinks.
+    # Resolve declarations into a lock so subsequent installs preserve symlinks.
     asyncio.run(lock_mod.run(lock_mod.LockOptions(project_root=project_root)))
 
     installed_skills: list[str] = []
@@ -394,8 +390,8 @@ def apply(name: str, project_root: Path) -> ProfileApplyResult:
         ):
             skipped_mcp.append(pm.alias)
 
-    # Reconcile agent instruction files so mirrors/symlinks promised by the
-    # profile are actually written to disk.
+    # Reconcile agent instruction files so symlinks promised by the profile are
+    # actually written to disk.
     asyncio.run(
         sync_mod.run(
             sync_mod.SyncOptions(

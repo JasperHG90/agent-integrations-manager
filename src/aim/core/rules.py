@@ -203,7 +203,7 @@ class RuleInstallResult:
 
 
 def install_to_project(project_root: Path, name: str) -> RuleInstallResult:
-    """Add a rule to a project's declarations (`aim.yml`).
+    """Add a rule to a project's declarations (`aim.toml`).
 
     The caller must run `aim lock` and `aim sync` to apply the change to disk.
     """

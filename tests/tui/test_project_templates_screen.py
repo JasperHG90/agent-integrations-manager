@@ -69,7 +69,7 @@ async def test_template_edit_checkbox_toggles_uncheck_all(home: Path, project_ro
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
-        template="default",
+        instruction_template="default",
         rules=["rule-one"],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill")],
         agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
@@ -125,7 +125,7 @@ async def test_template_edit_togglerow_space_toggles(home: Path, project_root: P
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
-        template="default",
+        instruction_template="default",
         rules=["rule-one"],
     )
     profiles.save(profile)
@@ -157,7 +157,7 @@ async def test_template_edit_togglerow_reaches_by_tab(home: Path, project_root: 
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
-        template="default",
+        instruction_template="default",
         rules=["rule-tab"],
     )
     profiles.save(profile)

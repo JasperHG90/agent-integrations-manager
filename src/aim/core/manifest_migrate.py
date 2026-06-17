@@ -46,8 +46,7 @@ def _v3_to_v4(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v4_to_v5(raw: dict[str, Any]) -> dict[str, Any]:
-    """v5 adds explicit `mirrors` and `symlinks` lists. Additive only."""
-    raw.setdefault("mirrors", [])
+    """v5 adds explicit `symlinks` list. Additive only."""
     raw.setdefault("symlinks", [])
     raw["manifest_version"] = 5
     return raw

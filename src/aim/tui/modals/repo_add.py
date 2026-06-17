@@ -39,7 +39,7 @@ class RepoAddModal(ModalScreen[RepoAddResult | None]):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static("Add skill / agent repository", classes="modal-title", markup=False),
+            Static("Add skill / subagent repository", classes="modal-title", markup=False),
             Static("Alias (lowercase, [a-z0-9_-]):", markup=False),
             Input(placeholder="anthropic", id="alias"),
             Static("Git URL (https / ssh / file://):", markup=False),

@@ -42,11 +42,11 @@ app = typer.Typer(
 rule_app = typer.Typer(no_args_is_help=True, help="Manage the global rule library.")
 repo_app = typer.Typer(no_args_is_help=True, help="Manage skill source repositories.")
 skill_app = typer.Typer(no_args_is_help=True, help="Discover and manage skills.")
-agent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
+subagent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
 app.add_typer(rule_app, name="rule")
 app.add_typer(repo_app, name="repo")
 app.add_typer(skill_app, name="skill")
-app.add_typer(agent_app, name="agent")
+app.add_typer(subagent_app, name="subagent")
 
 
 from aim.core import manifest as manifest_mod  # noqa: E402
@@ -434,10 +434,10 @@ def profile_list(ctx: typer.Context) -> None:
     rows = [
         {
             "name": p.name,
-            "template": p.template,
-            "mirrors": ",".join(p.mirrors) or "-",
+            "instruction_template": p.instruction_template,
+            "symlinks": ",".join(p.symlinks) or "-",
             "skills": len(p.skills),
-            "agents": len(p.agents),
+            "subagents": len(p.agents),
             "mcp": len(p.mcp_servers),
             "rules": len(p.rules),
         }
@@ -447,8 +447,8 @@ def profile_list(ctx: typer.Context) -> None:
         rows,
         _get_format(ctx),
         title="profiles saved",
-        columns=["name", "template", "mirrors", "skills", "agents", "mcp", "rules"],
-        compact_columns=["name", "template", "skills", "agents", "mcp", "rules"],
+        columns=["name", "instruction_template", "symlinks", "skills", "subagents", "mcp", "rules"],
+        compact_columns=["name", "instruction_template", "skills", "subagents", "mcp", "rules"],
     )
 
 
@@ -629,14 +629,8 @@ def tui_cmd(
 @_friendly
 def init_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
-    template: str = typer.Option(
-        templates_mod.BUILTIN_DEFAULT, "--template", "-t", help="Template name."
-    ),
-    mirror: list[str] = typer.Option(
-        [],
-        "--mirror",
-        "-m",
-        help="Mirror file to declare alongside AGENTS.md (repeatable, e.g. CLAUDE.md). Opt-in.",
+    instruction_template: str = typer.Option(
+        templates_mod.BUILTIN_DEFAULT, "--template", "-t", help="Instruction template name."
     ),
     symlink: list[str] = typer.Option(
         [],
@@ -658,7 +652,7 @@ def init_cmd(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),
 ) -> None:
-    """Create or update the user-editable aim.yml declarations file."""
+    """Create or update the user-editable aim.toml declarations file."""
     extra_rule_files: dict[str, Path] = {}
     for rf in rule_file:
         if "=" in rf:
@@ -675,8 +669,7 @@ def init_cmd(
 
     options = init_mod.InitOptions(
         project_root=_here(project),
-        template=template,
-        mirrors=tuple(mirror),
+        instruction_template=instruction_template,
         symlinks=tuple(symlink),
         seed_default_rules=not no_default_rules,
         extra_rules=list(rule),
@@ -696,7 +689,7 @@ def init_cmd(
 def lock_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
 ) -> None:
-    """Resolve aim.yml declarations into an exact aim.lock."""
+    """Resolve aim.toml declarations into an exact aim.lock."""
 
     async def _run() -> lock_mod.LockResult:
         return await lock_mod.run(lock_mod.LockOptions(project_root=_here(project)))
@@ -718,7 +711,7 @@ def sync_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
     no_sync_agents: bool = typer.Option(
-        False, "--no-sync-agents", help="Skip re-rendering AGENTS.md / mirrors / symlinks."
+        False, "--no-sync-agents", help="Skip re-rendering AGENTS.md / symlinks."
     ),
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile override (overrides manifest)."
@@ -881,9 +874,9 @@ def rule_install(
     name: str,
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
-    """Add a rule to a project's aim.yml declarations."""
+    """Add a rule to a project's aim.toml declarations."""
     result = rules_mod.install_to_project(_here(project), name)
-    typer.echo(f"added rule {name} to {result.project_root}/aim.yml")
+    typer.echo(f"added rule {name} to {result.project_root}/aim.toml")
     typer.echo("Run `aim lock` and `aim sync` to apply the change to disk.")
 
 
@@ -1097,7 +1090,7 @@ def skill_rollback(
 # ---------- agent ----------
 
 
-@agent_app.command("list")
+@subagent_app.command("list")
 @_friendly
 def agent_list(
     ctx: typer.Context,
@@ -1108,13 +1101,13 @@ def agent_list(
     format_mod.render(
         rows,
         _get_format(ctx),
-        title="agents indexed",
+        title="subagents indexed",
         columns=["qualified_name", "repo_alias", "title", "description"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
 
-@agent_app.command("search")
+@subagent_app.command("search")
 @_friendly
 def agent_search(
     ctx: typer.Context,
@@ -1125,13 +1118,13 @@ def agent_search(
     format_mod.render(
         rows,
         _get_format(ctx),
-        title=f"agents matching {query!r}",
+        title=f"subagents matching {query!r}",
         columns=["qualified_name", "repo_alias", "title", "description"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
 
-@agent_app.command("install")
+@subagent_app.command("install")
 @_friendly
 def agent_install_cmd(
     qualified_name: str = typer.Argument(..., help="<repo_alias>/<agent_name>"),
@@ -1153,7 +1146,7 @@ def agent_install_cmd(
         typer.echo(f"  warning: {warn}", err=True)
 
 
-@agent_app.command("update")
+@subagent_app.command("update")
 @_friendly
 def agent_update(
     qualified_name: str = typer.Argument(...),
@@ -1164,7 +1157,7 @@ def agent_update(
     typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
 
 
-@agent_app.command("update-many")
+@subagent_app.command("update-many")
 @_friendly
 def agent_update_many(
     project: Path | None = typer.Argument(None),
@@ -1173,7 +1166,7 @@ def agent_update_many(
     only_outdated: bool = typer.Option(False, "--outdated", help="Skip agents already at HEAD."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
-    """Update installed agents in bulk."""
+    """Update installed sub-agents in bulk."""
     if not all_agents and repo is None:
         raise typer.BadParameter("pass --all or --repo <alias>")
     outcomes = agent_install_mod.update_many(
@@ -1189,7 +1182,7 @@ def agent_update_many(
         raise typer.Exit(code=1)
 
 
-@agent_app.command("uninstall")
+@subagent_app.command("uninstall")
 @_friendly
 def agent_uninstall(
     qualified_name: str = typer.Argument(...),
@@ -1200,7 +1193,7 @@ def agent_uninstall(
     typer.echo(f"uninstalled {qualified_name}")
 
 
-@agent_app.command("delete", hidden=True)
+@subagent_app.command("delete", hidden=True)
 @_friendly
 def agent_delete(
     qualified_name: str = typer.Argument(...),
@@ -1210,7 +1203,7 @@ def agent_delete(
     agent_uninstall(qualified_name, project)
 
 
-@agent_app.command("rollback")
+@subagent_app.command("rollback")
 @_friendly
 def agent_rollback(
     qualified_name: str = typer.Argument(...),

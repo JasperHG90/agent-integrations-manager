@@ -1,8 +1,8 @@
 """Project templates screen — save, list, apply, and delete reusable project bundles.
 
-A project template captures a project's rules, skills, agents, MCP servers,
-mirrors, symlinks, AGENTS.md template, and layout profile. It is stored as a
-`Profile` JSON under `user_config_dir/profiles/`.
+A project template captures a project's rules, skills, subagents, MCP servers,
+symlinks, instruction template, and layout profile. It is stored as a `Profile`
+JSON under `user_config_dir/profiles/`.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class ProjectTemplatesScreen(Screen[None]):
 
     def on_mount(self) -> None:
         table = self.query_one("#templates-table", DataTable)
-        table.add_columns("name", "template", "profile", "skills", "agents", "mcp", "rules")
+        table.add_columns("name", "instruction_template", "profile", "skills", "subagents", "mcp", "rules")
         self._populate()
         table.focus()
 
@@ -80,7 +80,7 @@ class ProjectTemplatesScreen(Screen[None]):
         for p in profiles:
             table.add_row(
                 p.name,
-                p.template,
+                p.instruction_template,
                 p.layout_profile or "—",
                 str(len(p.skills)),
                 str(len(p.agents)),
@@ -146,7 +146,7 @@ class ProjectTemplatesScreen(Screen[None]):
         new_profile = profile.model_copy(
             update={
                 "name": result.name,
-                "template": result.template,
+                "instruction_template": result.instruction_template,
                 "layout_profile": result.layout_profile,
                 "agent_dialect": result.agent_dialect,
                 "rules": list(result.rules),
@@ -212,10 +212,9 @@ class ProjectTemplatesScreen(Screen[None]):
             return
         lines = [
             f"name: {profile.name}",
-            f"template: {profile.template}",
+            f"instruction_template: {profile.instruction_template}",
             f"layout_profile: {profile.layout_profile or '—'}",
             f"agent_dialect: {profile.agent_dialect or '—'}",
-            f"mirrors: {', '.join(profile.mirrors) if profile.mirrors else '—'}",
             f"symlinks: {', '.join(profile.symlinks) if profile.symlinks else '—'}",
             f"rules: {', '.join(profile.rules) if profile.rules else '—'}",
         ]
@@ -226,7 +225,7 @@ class ProjectTemplatesScreen(Screen[None]):
                 track = f" track={s.track}" if s.track else ""
                 lines.append(f"  - {s.qualified_name}{pin}{track}")
         if profile.agents:
-            lines.append("agents:")
+            lines.append("subagents:")
             for a in profile.agents:
                 pin = f" pin={a.pin}" if a.pin else ""
                 track = f" track={a.track}" if a.track else ""

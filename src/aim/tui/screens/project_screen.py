@@ -65,7 +65,7 @@ class ProjectScreen(Screen[None]):
         with TabbedContent(initial="skills"):
             with TabPane("Skills", id="skills"):
                 yield DataTable(id="skills-table", cursor_type="row")
-            with TabPane("Agents", id="agents"):
+            with TabPane("Subagents", id="agents"):
                 yield DataTable(id="agents-table", cursor_type="row")
             with TabPane("MCP servers", id="mcp"):
                 yield DataTable(id="mcp-table", cursor_type="row")
@@ -84,7 +84,7 @@ class ProjectScreen(Screen[None]):
             if table_id == "skills-table":
                 table.add_columns("skill", "version", "target", "drift")
             elif table_id == "agents-table":
-                table.add_columns("agent", "version", "target", "drift")
+                table.add_columns("subagent", "version", "target", "drift")
             elif table_id == "mcp-table":
                 table.add_columns("alias", "registry", "version", "drift")
             else:
@@ -185,7 +185,7 @@ class ProjectScreen(Screen[None]):
 
         dialect = f" · agent: {m.agent_dialect}" if m.agent_dialect else ""
         self._status(
-            f"{len(m.skills)} skill(s), {len(m.agents)} agent(s), "
+            f"{len(m.skills)} skill(s), {len(m.agents)} subagent(s), "
             f"{len(m.mcp_servers)} MCP server(s), {len(m.rules)} rule(s){dialect}"
         )
 

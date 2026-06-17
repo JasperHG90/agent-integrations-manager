@@ -128,8 +128,8 @@ async def test_skills_screen_install_opens_modal(home: Path, tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_init_modal_submits_with_selected_mirrors(home: Path, project_root: Path) -> None:
-    """End-to-end: open init modal, tick a mirror checkbox, submit, verify file."""
+async def test_init_modal_submits_with_selected_symlinks(home: Path, project_root: Path) -> None:
+    """End-to-end: open init modal, tick a symlink checkbox, submit, verify file."""
     rules.add("focus", "Focus.", is_default=True)
     app = AimApp()
     async with app.run_test() as pilot:
@@ -142,7 +142,7 @@ async def test_init_modal_submits_with_selected_mirrors(home: Path, project_root
         from textual.widgets import Input
 
         modal.query_one("#project-root", Input).value = str(project_root)
-        modal.query_one(f"#{InitModal._mirror_id('CLAUDE.md')}", ToggleRow).value = True
+        modal.query_one(f"#{InitModal._symlink_id('CLAUDE.md')}", ToggleRow).value = True
         await pilot.pause()
         # Click the Initialize button.
         from textual.widgets import Button
@@ -154,14 +154,14 @@ async def test_init_modal_submits_with_selected_mirrors(home: Path, project_root
         await pilot.pause()
         await pilot.pause()
 
-    # init now writes the aim.yml declarations file only.
-    decl_path = project_root / "aim.yml"
+    # init now writes the aim.toml declarations file only.
+    decl_path = project_root / "aim.toml"
     assert decl_path.exists()
     from aim.core import declarations
 
     decl = declarations.load(project_root)
-    assert "CLAUDE.md" in decl.mirrors
-    assert "GEMINI.md" not in decl.mirrors
+    assert "CLAUDE.md" in decl.symlinks
+    assert "GEMINI.md" not in decl.symlinks
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_init_modal_submits_on_enter_from_input(home: Path, project_root: 
         await pilot.press("enter")
         await pilot.pause()
 
-    assert (project_root / "aim.yml").exists()
+    assert (project_root / "aim.toml").exists()
 
 
 @pytest.mark.asyncio
@@ -274,13 +274,13 @@ async def test_init_modal_submits_on_enter_from_checkbox(home: Path, project_roo
         modal = app.screen
         assert isinstance(modal, InitModal)
         modal.query_one("#project-root", Input).value = str(project_root)
-        # Move focus to a mirror checkbox.
-        cb = modal.query_one(f"#{InitModal._mirror_id('CLAUDE.md')}", ToggleRow)
+        # Move focus to a symlink checkbox.
+        cb = modal.query_one(f"#{InitModal._symlink_id('CLAUDE.md')}", ToggleRow)
         cb.focus()
         await pilot.press("enter")
         await pilot.pause()
 
-    assert (project_root / "aim.yml").exists()
+    assert (project_root / "aim.toml").exists()
 
 
 @pytest.mark.asyncio

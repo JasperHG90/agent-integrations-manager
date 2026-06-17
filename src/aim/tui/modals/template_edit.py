@@ -1,8 +1,8 @@
 """Modal: edit a saved project template's editable fields.
 
 Every selectable item is a checkbox. Checked = keep in template. Unchecked = drop.
-This covers rules, skills, agents, and MCP servers. The modal also edits the
-AGENTS.md template name, layout profile, and agent dialect.
+This covers rules, skills, subagents, and MCP servers. The modal also edits the
+instruction template name, layout profile, and agent dialect.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from aim.tui.widgets import ToggleRow
 @dataclass(frozen=True)
 class TemplateEditResult:
     name: str
-    template: str
+    instruction_template: str
     layout_profile: str | None
     agent_dialect: str | None
     rules: tuple[str, ...] = ()
@@ -89,8 +89,8 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
             VerticalScroll(
                 Static("Template name:", markup=False),
                 Input(value=self._profile.name, id="name"),
-                Static("AGENTS.md template:", markup=False),
-                Input(value=self._profile.template, id="template"),
+                Static("Instruction template:", markup=False),
+                Input(value=self._profile.instruction_template, id="instruction-template"),
                 Static("Layout profile:", markup=False),
                 Input(value=self._profile.layout_profile or "", id="layout-profile"),
                 Static("Agent dialect:", markup=False),
@@ -99,7 +99,7 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
                 *rule_toggles,
                 Static("Included skills:", markup=False),
                 *skill_toggles,
-                Static("Included agents:", markup=False),
+                Static("Included subagents:", markup=False),
                 *agent_toggles,
                 Static("Included MCP servers:", markup=False),
                 *mcp_toggles,
@@ -124,7 +124,7 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
             self.dismiss(None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id in ("name", "template", "layout-profile", "agent-dialect"):
+        if event.input.id in ("name", "instruction-template", "layout-profile", "agent-dialect"):
             self._submit()
 
     def action_cancel(self) -> None:
@@ -144,12 +144,12 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
 
     def _submit(self) -> None:
         name = self.query_one("#name", Input).value.strip()
-        template = self.query_one("#template", Input).value.strip()
+        instruction_template = self.query_one("#instruction-template", Input).value.strip()
         if not name:
             self._error("template name is required")
             return
-        if not template:
-            self._error("AGENTS.md template name is required")
+        if not instruction_template:
+            self._error("instruction template name is required")
             return
         layout_profile = self.query_one("#layout-profile", Input).value.strip() or None
         dialect = self.query_one("#agent-dialect", Input).value.strip().lower() or None
@@ -161,7 +161,7 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
         self.dismiss(
             TemplateEditResult(
                 name=name,
-                template=template,
+                instruction_template=instruction_template,
                 layout_profile=layout_profile,
                 agent_dialect=dialect,
                 rules=tuple(self._checked_keys("rule", self._rule_names)),

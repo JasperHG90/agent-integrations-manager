@@ -21,7 +21,7 @@ from tests.fixtures import git_fixtures
 
 
 def test_save_and_load_round_trip(home: Path) -> None:
-    p = profiles.Profile(name="x", template="default", mirrors=["CLAUDE.md"], rules=["a"])
+    p = profiles.Profile(name="x", instruction_template="default", symlinks=["CLAUDE.md"], rules=["a"])
     profiles.save(p)
     loaded = profiles.load("x")
     assert loaded == p
@@ -81,7 +81,7 @@ def test_from_project_snapshots(home: Path, project_root: Path, tmp_path: Path) 
     init_mod.run(
         init_mod.InitOptions(
             project_root=project_root,
-            mirrors=("CLAUDE.md",),
+            symlinks=("CLAUDE.md",),
             agent_dialect="claude",
         )
     )
@@ -89,7 +89,7 @@ def test_from_project_snapshots(home: Path, project_root: Path, tmp_path: Path) 
 
     snap = profiles.from_project("python-tui", project_root)
     assert snap.name == "python-tui"
-    assert "CLAUDE.md" in snap.mirrors
+    assert "CLAUDE.md" in snap.symlinks
     assert "be-concise" in snap.rules
     assert snap.agent_dialect == "claude"
     assert [s.qualified_name for s in snap.skills] == ["anth/foo"]
@@ -130,7 +130,7 @@ def test_apply_reproduces_state(home: Path, project_root: Path, tmp_path: Path) 
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("anth", f"file://{bare}")
     rules.add("be-concise", "Be concise.", is_default=True)
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
     install.install(project_root, "anth/foo")
 
     profiles.save(profiles.from_project("source", project_root))
@@ -201,9 +201,8 @@ def test_rename_profile(home: Path) -> None:
 def test_toml_round_trip(home: Path) -> None:
     p = profiles.Profile(
         name="my-template",
-        template="default",
-        mirrors=["CLAUDE.md"],
-        symlinks=[],
+        instruction_template="default",
+        symlinks=["CLAUDE.md"],
         rules=["be-concise"],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill", pin="v1.0.0")],
         agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
@@ -224,7 +223,7 @@ def test_toml_round_trip(home: Path) -> None:
 def test_toml_multiple_items(home: Path) -> None:
     text = """
 name = "multi"
-template = "default"
+instruction_template = "default"
 rules = ["a", "b"]
 
 [[skill]]
@@ -234,7 +233,7 @@ qualified_name = "repo/one"
 qualified_name = "repo/two"
 pin = "v2"
 
-[[agent]]
+[[subagent]]
 qualified_name = "repo/agent"
 
 [[mcp_server]]
@@ -255,24 +254,24 @@ transport = "http"
 
 
 def test_toml_invalid_name(home: Path) -> None:
-    text = 'name = "Bad Name"\ntemplate = "default"\n'
+    text = 'name = "Bad Name"\ninstruction_template = "default"\n'
     with pytest.raises(profiles.ProfileTomlError):
         profiles.parse_toml(text)
 
 
 def test_toml_rejects_yaml(home: Path) -> None:
-    text = "name: bad\ntemplate: default\n"
+    text = "name: bad\ninstruction_template: default\n"
     with pytest.raises(profiles.ProfileTomlError):
         profiles.parse_toml(text)
 
 
 def test_toml_rejects_unknown_key(home: Path) -> None:
-    text = 'name = "x"\ntemplate = "default"\nbad_key = "nope"\n'
+    text = 'name = "x"\ninstruction_template = "default"\nbad_key = "nope"\n'
     with pytest.raises(profiles.ProfileTomlError):
         profiles.parse_toml(text)
 
 
-def test_toml_rejects_invalid_mirror(home: Path) -> None:
-    text = 'name = "x"\ntemplate = "default"\nmirrors = ["../escape.md"]\n'
+def test_toml_rejects_invalid_symlink(home: Path) -> None:
+    text = 'name = "x"\ninstruction_template = "default"\nsymlinks = ["../escape.md"]\n'
     with pytest.raises(profiles.ProfileTomlError):
         profiles.parse_toml(text)

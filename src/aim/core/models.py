@@ -119,7 +119,7 @@ class McpServerCache(SQLModel, table=True):
     fetched_at: datetime
 
 
-# ---------- Project declarations (aim.yml) ----------
+# ---------- Project declarations (aim.toml) ----------
 
 CURRENT_DECLARATIONS_VERSION = 1
 
@@ -164,15 +164,14 @@ class DeclaredMcpServer(BaseModel):
 
 
 class ProjectDeclarations(BaseModel):
-    """User-editable project state stored in `aim.yml`."""
+    """User-editable project state stored in `aim.toml`."""
 
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = CURRENT_DECLARATIONS_VERSION
-    template: str = "default"
+    instruction_template: str = "default"
     layout_profile: str | None = None
     agent_dialect: str | None = None
-    mirrors: list[str] = Field(default_factory=list)
     symlinks: list[str] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     repos: dict[str, str] = Field(default_factory=dict)
@@ -293,22 +292,20 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = CURRENT_MANIFEST_VERSION
-    template: str = "default"
+    instruction_template: str = "default"
     skills: list[InstalledSkill] = Field(default_factory=list)
     agents: list[InstalledAgent] = Field(default_factory=list)
     mcp_servers: list[InstalledMcpServer] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     managed_files: list[str] = Field(default_factory=list)
     # Hash of the last-written body of each managed region inside AGENTS.md (and
-    # mirrors). Drift means the user edited inside markers — warn before rewrite.
+    # symlinks). Drift means the user edited inside markers — warn before rewrite.
     managed_region_hashes: dict[str, str] = Field(default_factory=dict)
     # Per-project preference for the primary agent dialect ("claude", "gemini",
     # "opencode", or None). Not used for rendering yet — laid down for future
     # per-agent dialect support without another manifest version bump.
     agent_dialect: str | None = None
-    # Name of the active layout profile. None resolves to the legacy profile
-    # with the original hardcoded paths and no default mirrors.
+    # Name of the active layout profile. None resolves to no profile.
     layout_profile: str | None = None
-    # Explicit lists for mirrors and symlinks so sync can reproduce them.
-    mirrors: list[str] = Field(default_factory=list)
+    # Explicit list of symlinks so sync can recreate them.
     symlinks: list[str] = Field(default_factory=list)

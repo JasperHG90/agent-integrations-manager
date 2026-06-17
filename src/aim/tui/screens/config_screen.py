@@ -1,9 +1,9 @@
 """Config screen — project-level settings plus the global default template.
 
 Provides a single, focused pane for the *current* project's manifest:
-- where aim keeps its manifest
-- active layout profile (skills/rules/agents/mcp paths)
-- template, mirrors, agent dialect
+- where aim keeps its lockfile
+- active layout profile (skills/rules/subagents/mcp paths)
+- instruction template, symlinks, agent dialect
 - applied rules (read-only pointer to the Rules screen)
 - save re-runs `init` against the project
 
@@ -26,10 +26,10 @@ from aim.core import layout_profiles, manifest, paths, templates
 
 _HELP_TEXT = (
     "Fields:\n"
-    "  Template      — which AGENTS.md scaffold to use (stored in the project manifest).\n"
+    "  Instruction template — which AGENTS.md scaffold to use (stored in aim.lock).\n"
     "  Applied rules — managed on the Rules [u] screen.\n"
-    "  Layout profile — controls skills/rules/agents/mcp paths, agent dialect, AND\n"
-    "    per-agent AGENTS.md copies/symlinks.\n"
+    "  Layout profile — controls skills/rules/subagents/mcp paths, agent dialect, AND\n"
+    "    per-agent AGENTS.md symlinks.\n"
     "Shortcuts work from the main menu: [l] PROFILES, [u] RULES."
 )
 
@@ -79,8 +79,8 @@ class ConfigScreen(Screen[None]):
             ),
             Static("Project root:", classes="config-heading", markup=False),
             Input(value=str(self._project_root), id="proj-root"),
-            Static("Template:", classes="config-heading", markup=False),
-            Input(value=m.template if m else "default", id="proj-template"),
+            Static("Instruction template:", classes="config-heading", markup=False),
+            Input(value=m.instruction_template if m else "default", id="proj-template"),
             Static(
                 f"Applied rules ({len(m.rules) if m else 0}):",
                 classes="config-heading",
@@ -92,7 +92,7 @@ class ConfigScreen(Screen[None]):
                 classes="config-paths",
                 markup=False,
             ),
-            Button("Save project settings (updates aim.yml)", id="proj-save", variant="primary"),
+            Button("Save project settings (updates aim.toml)", id="proj-save", variant="primary"),
             Static(_HELP_TEXT, classes="config-help", markup=True),
             id="project-pane",
         )
@@ -120,7 +120,7 @@ class ConfigScreen(Screen[None]):
             profile = layout_profiles.resolve_active(self._project_root)
         except Exception:
             return "—"
-        return f"{profile.name}  ·  skills:{profile.skills_dir}  rules:{profile.rules_dir}  agents:{profile.agents_dir}  mcp:{profile.mcp_json}"
+        return f"{profile.name}  ·  skills:{profile.skills_dir}  rules:{profile.rules_dir}  subagents:{profile.agents_dir}  mcp:{profile.mcp_json}"
 
     def on_mount(self) -> None:
         self._status("edit project settings or the global template, then save")
@@ -133,13 +133,13 @@ class ConfigScreen(Screen[None]):
 
     def _save_project(self) -> None:
         project = Path(self.query_one("#proj-root", Input).value).expanduser()
-        template = self.query_one("#proj-template", Input).value.strip() or "default"
+        instruction_template = self.query_one("#proj-template", Input).value.strip() or "default"
         try:
             result = init_mod.run(
                 init_mod.InitOptions(
                     project_root=project,
-                    template=template,
-                    clear_mirrors=True,
+                    instruction_template=instruction_template,
+                    clear_symlinks=True,
                 )
             )
         except Exception as exc:

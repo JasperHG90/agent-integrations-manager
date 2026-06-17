@@ -141,7 +141,7 @@ uv run aim --version
 
 ## How it works
 
-Per-project state lives in `aim.lock` (resolved state) and `aim.yml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
+Per-project state lives in `aim.lock` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
 
 Global, machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):
 

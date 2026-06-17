@@ -9,31 +9,25 @@ from aim.core import init as init_mod
 from aim.core import rules
 
 
-def test_first_init_creates_atm_yml(home: Path, project_root: Path) -> None:
+def test_first_init_creates_aim_toml(home: Path, project_root: Path) -> None:
     rules.add("focus", "Focus on simplicity.", is_default=True)
     result = init_mod.run(init_mod.InitOptions(project_root=project_root))
     assert result.re_init is False
     assert result.declarations_path.exists()
     decl = declarations_mod.load(project_root)
     assert decl.rules == ["focus"]
-    assert decl.template == "default"
+    assert decl.instruction_template == "default"
     assert "AGENTS.md" not in result.declarations_path.read_text()
 
 
-def test_first_init_no_mirrors_by_default(home: Path, project_root: Path) -> None:
-    """Default is opt-in: no mirror declarations unless requested."""
+def test_first_init_inherits_profile_symlinks_by_default(home: Path, project_root: Path) -> None:
+    """Default layout profile (claude) declares its symlinks in aim.toml."""
     init_mod.run(init_mod.InitOptions(project_root=project_root))
     decl = declarations_mod.load(project_root)
-    assert decl.mirrors == []
+    assert decl.symlinks == ["CLAUDE.md"]
+    # init writes declarations only; sync creates the actual symlink files.
     assert not (project_root / "CLAUDE.md").exists()
     assert not (project_root / "GEMINI.md").exists()
-
-
-def test_first_init_records_only_selected_mirrors(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
-    decl = declarations_mod.load(project_root)
-    assert decl.mirrors == ["CLAUDE.md"]
-    assert decl.symlinks == []
 
 
 def test_first_init_records_symlinks(home: Path, project_root: Path) -> None:
@@ -44,19 +38,19 @@ def test_first_init_records_symlinks(home: Path, project_root: Path) -> None:
     assert decl.symlinks == ["CLAUDE.md", "GEMINI.md"]
 
 
-def test_re_init_preserves_existing_declarations(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md",)))
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("GEMINI.md",)))
+def test_re_init_preserves_existing_symlinks(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("GEMINI.md",)))
     decl = declarations_mod.load(project_root)
-    assert "CLAUDE.md" in decl.mirrors
-    assert "GEMINI.md" in decl.mirrors
+    assert "CLAUDE.md" in decl.symlinks
+    assert "GEMINI.md" in decl.symlinks
 
 
-def test_re_init_clear_mirrors_replaces_them(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("CLAUDE.md", "GEMINI.md")))
-    init_mod.run(init_mod.InitOptions(project_root=project_root, mirrors=("OPENCODE.md",), clear_mirrors=True))
+def test_re_init_clear_symlinks_replaces_them(home: Path, project_root: Path) -> None:
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md", "GEMINI.md")))
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("OPENCODE.md",), clear_symlinks=True))
     decl = declarations_mod.load(project_root)
-    assert decl.mirrors == ["OPENCODE.md"]
+    assert decl.symlinks == ["OPENCODE.md"]
 
 
 def test_re_init_updates_rules_in_declarations(home: Path, project_root: Path) -> None:

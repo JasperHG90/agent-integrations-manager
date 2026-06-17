@@ -55,8 +55,8 @@ async def test_project_save_writes_manifest(home: Path, project_root: Path) -> N
 
     decl = declarations.load(project_root)
     profile = layout_profiles.resolve_active(project_root)
-    for mirror in profile.mirrors:
-        assert mirror in decl.mirrors
-    # init now writes aim.yml only; the lockfile is produced by `aim lock`.
+    for symlink in profile.symlinks:
+        assert symlink in decl.symlinks
+    # init now writes aim.toml only; the lockfile is produced by `aim lock`.
     lock_path = project_root / "aim.lock"
     assert not lock_path.exists()

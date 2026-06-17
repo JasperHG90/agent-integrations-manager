@@ -70,7 +70,6 @@ class LayoutProfile(BaseModel):
     agents_dir: str = ".claude/agents"
     agents_md: str = "AGENTS.md"
     mcp_json: str = ".mcp.json"
-    mirrors: list[str] = Field(default_factory=list)
     symlinks: list[str] = Field(default_factory=list)
 
     @field_validator("name")
@@ -96,23 +95,18 @@ class LayoutProfile(BaseModel):
                 raise ValueError(f"path {value!r} invalid: {segment!r} is a reserved directory")
         return value
 
-    @field_validator("mirrors", "symlinks")
+    @field_validator("symlinks")
     @classmethod
-    def _validate_mirror_like(cls, values: list[str]) -> list[str]:
+    def _validate_symlink_names(cls, values: list[str]) -> list[str]:
         for value in values:
             if not is_valid_mirror_name(value):
                 raise ValueError(f"filename {value!r} invalid")
         return values
 
     @model_validator(mode="after")
-    def _agents_md_not_in_mirror_like(self) -> LayoutProfile:
-        if self.agents_md in self.mirrors:
-            raise ValueError(f"agents_md {self.agents_md!r} must not also be listed in mirrors")
+    def _agents_md_not_in_symlinks(self) -> LayoutProfile:
         if self.agents_md in self.symlinks:
             raise ValueError(f"agents_md {self.agents_md!r} must not also be listed in symlinks")
-        overlap = set(self.mirrors) & set(self.symlinks)
-        if overlap:
-            raise ValueError(f"filename {overlap.pop()!r} cannot be both a mirror and a symlink")
         return self
 
 
@@ -122,7 +116,6 @@ def _builtin(
     description: str,
     skills_dir: str,
     agents_dir: str,
-    mirrors: list[str],
     symlinks: list[str] | None = None,
 ) -> LayoutProfile:
     return LayoutProfile(
@@ -136,7 +129,6 @@ def _builtin(
         agents_dir=agents_dir,
         agents_md="AGENTS.md",
         mcp_json=".mcp.json",
-        mirrors=mirrors,
         symlinks=symlinks or [],
     )
 
@@ -144,33 +136,19 @@ def _builtin(
 BUILTIN_CLAUDE = _builtin(
     name="claude",
     display_name="Claude Code",
-    description="Install skills under .claude/skills and mirror AGENTS.md as CLAUDE.md.",
+    description="Install skills under .claude/skills and symlink AGENTS.md as CLAUDE.md.",
     skills_dir=".claude/skills",
     agents_dir=".claude/agents",
-    mirrors=["CLAUDE.md"],
+    symlinks=["CLAUDE.md"],
 )
 
 BUILTIN_GEMINI = _builtin(
     name="gemini",
     display_name="Gemini CLI",
-    description="Install skills under .gemini/skills and mirror AGENTS.md as GEMINI.md.",
+    description="Install skills under .gemini/skills and symlink AGENTS.md as GEMINI.md.",
     skills_dir=".gemini/skills",
     agents_dir=".gemini/agents",
-    mirrors=["GEMINI.md"],
-)
-
-LEGACY_PROFILE = LayoutProfile(
-    name="legacy",
-    display_name="Legacy hardcoded layout",
-    description="Original aim layout with no default mirrors.",
-    scope=LayoutProfileScope.PROJECT,
-    agent_dialect=None,
-    rules_dir=".claude/rules",
-    skills_dir=".claude/skills",
-    agents_dir=".claude/agents",
-    agents_md="AGENTS.md",
-    mcp_json=".mcp.json",
-    mirrors=[],
+    symlinks=["GEMINI.md"],
 )
 
 _BUILTINS: dict[str, LayoutProfile] = {
@@ -178,7 +156,7 @@ _BUILTINS: dict[str, LayoutProfile] = {
     BUILTIN_GEMINI.name: BUILTIN_GEMINI,
 }
 
-_RESERVED_NAMES = frozenset((*_BUILTINS.keys(), LEGACY_PROFILE.name))
+_RESERVED_NAMES = frozenset(_BUILTINS.keys())
 
 
 def _validate_not_reserved(name: str) -> None:
@@ -225,7 +203,6 @@ def render_toml(profile: LayoutProfile, *, read_only_copy: bool = False) -> str:
     lines.append(f'agents_dir = "{profile.agents_dir}"')
     lines.append(f'agents_md = "{profile.agents_md}"')
     lines.append(f'mcp_json = "{profile.mcp_json}"')
-    lines.append(f"mirrors = {_render_string_list(profile.mirrors)}")
     if profile.symlinks:
         lines.append(f"symlinks = {_render_string_list(profile.symlinks)}")
     lines.append("")
@@ -378,28 +355,26 @@ def get_profile(project_root: Path, name: str) -> LayoutProfile:
     # Built-ins last.
     if name in _BUILTINS:
         return _BUILTINS[name]
-    if name == LEGACY_PROFILE.name:
-        return LEGACY_PROFILE
     raise LayoutProfileNotFoundError(name)
 
 
 def resolve_active(project_root: Path) -> LayoutProfile:
     """Return the active layout profile for a project.
 
-    Falls back to the legacy profile if no manifest exists or no profile is set.
+    Falls back to the default Claude profile if no manifest exists or no profile is set.
     """
     try:
         m = manifest.load(project_root)
     except manifest.ManifestNotFoundError:
-        return LEGACY_PROFILE
+        return BUILTIN_CLAUDE
     if m.layout_profile is None:
-        return LEGACY_PROFILE
+        return BUILTIN_CLAUDE
     try:
         return get_profile(project_root, m.layout_profile)
     except LayoutProfileNotFoundError:
         # Active profile name is recorded but not available. Preserve the name
-        # in the manifest but return legacy layout so the project keeps working.
-        return LEGACY_PROFILE
+        # in the manifest but return the default layout so the project keeps working.
+        return BUILTIN_CLAUDE
 
 
 # ---------- mutation ----------

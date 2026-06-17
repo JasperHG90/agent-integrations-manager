@@ -70,7 +70,7 @@ def project_aim_dir(project_root: Path) -> Path:
 
 
 def project_declarations_path(project_root: Path) -> Path:
-    return project_root / "aim.yml"
+    return project_root / "aim.toml"
 
 
 def project_lock_path(project_root: Path) -> Path:

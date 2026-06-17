@@ -66,9 +66,9 @@ def _run(options: PruneOptions) -> PruneResult:
         try:
             profile = layout_profiles.get_profile(project_root, active_name)
         except layout_profiles.LayoutProfileNotFoundError:
-            profile = layout_profiles.LEGACY_PROFILE
+            profile = layout_profiles.BUILTIN_CLAUDE
     else:
-        profile = layout_profiles.LEGACY_PROFILE
+        profile = layout_profiles.BUILTIN_CLAUDE
 
     result = PruneResult()
 

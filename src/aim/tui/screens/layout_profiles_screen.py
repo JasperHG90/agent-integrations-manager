@@ -49,7 +49,7 @@ class LayoutProfilesScreen(Screen[None]):
     def on_mount(self) -> None:
         table = self.query_one("#profiles-table", DataTable)
         table.add_columns(
-            "active", "name", "scope", "skills_dir", "rules_dir", "agents_md", "mirrors"
+            "active", "name", "scope", "skills_dir", "rules_dir", "subagents_md", "symlinks"
         )
         self._refresh()
         table.focus()
@@ -91,7 +91,7 @@ class LayoutProfilesScreen(Screen[None]):
                 p.skills_dir,
                 p.rules_dir,
                 p.agents_md,
-                ",".join(p.mirrors) if p.mirrors else "-",
+                ",".join(p.symlinks) if p.symlinks else "-",
                 key=p.name,
             )
         if selected is not None:

@@ -1,7 +1,7 @@
-"""`aim init` orchestration: create or update the user-editable `aim.yml`.
+"""`aim init` orchestration: create or update the user-editable `aim.toml`.
 
-`init` does NOT write AGENTS.md, mirrors, symlinks, or `aim.lock`. Those are
-produced by `aim lock` and `aim sync` respectively.
+`init` does NOT write AGENTS.md, symlinks, or `aim.lock`. Those are produced by
+`aim lock` and `aim sync` respectively.
 """
 
 from __future__ import annotations
@@ -21,17 +21,15 @@ from aim.core import (
 from aim.core.models import ProjectDeclarations
 from aim.core.validation import MirrorNameError, is_valid_mirror_name
 
-KNOWN_MIRRORS = ("CLAUDE.md", "GEMINI.md", "OPENCODE.md")
-DEFAULT_MIRRORS: tuple[str, ...] = ()  # opt-in only
+KNOWN_SYMLINKS = ("CLAUDE.md", "GEMINI.md", "OPENCODE.md")
 
 
 @dataclass
 class InitOptions:
     project_root: Path
-    template: str = templates.BUILTIN_DEFAULT
-    mirrors: tuple[str, ...] = DEFAULT_MIRRORS
+    instruction_template: str = templates.BUILTIN_DEFAULT
     symlinks: tuple[str, ...] = ()
-    clear_mirrors: bool = False
+    clear_symlinks: bool = False
     seed_default_rules: bool = True
     extra_rules: list[str] = field(default_factory=list)
     agent_dialect: str | None = None
@@ -50,12 +48,12 @@ class InitResult:
 def run(options: InitOptions) -> InitResult:
     paths.ensure_global_dirs()
     templates.ensure_builtin_registered()
-    templates.resolve(options.template)
+    templates.resolve(options.instruction_template)
 
-    for mirror in options.mirrors:
-        if not is_valid_mirror_name(mirror):
+    for link in options.symlinks:
+        if not is_valid_mirror_name(link):
             raise MirrorNameError(
-                f"mirror filename {mirror!r} invalid: must match "
+                f"symlink filename {link!r} invalid: must match "
                 "[A-Za-z0-9][A-Za-z0-9_.-]*.md and be a single path segment"
             )
 
@@ -64,29 +62,28 @@ def run(options: InitOptions) -> InitResult:
 
     decl_path = paths.project_declarations_path(proj)
     re_init = decl_path.exists()
-    decl = declarations.load(proj) if re_init else ProjectDeclarations(template=options.template)
+    decl = (
+        declarations.load(proj)
+        if re_init
+        else ProjectDeclarations(instruction_template=options.instruction_template)
+    )
 
-    # Resolve layout profile: CLI option wins, then existing decl, then legacy.
+    # Resolve layout profile: CLI option wins, then existing decl.
     active_profile_name = options.layout_profile or decl.layout_profile
     active_profile = (
         layout_profiles.get_profile(proj, active_profile_name)
         if active_profile_name
-        else layout_profiles.LEGACY_PROFILE
+        else layout_profiles.BUILTIN_CLAUDE
     )
 
-    # Mirror semantics: on first init fall back to profile defaults.
-    requested_mirrors = list(options.mirrors)
+    # Symlink semantics: on first init fall back to profile defaults.
     requested_symlinks = list(options.symlinks)
-    if not re_init and not requested_mirrors:
-        requested_mirrors = list(active_profile.mirrors)
     if not re_init and not requested_symlinks:
         requested_symlinks = list(active_profile.symlinks)
 
     # On re-init, union with existing declarations unless clearing.
-    if re_init and not options.clear_mirrors:
-        existing_mirrors = list(decl.mirrors)
+    if re_init and not options.clear_symlinks:
         existing_symlinks = list(decl.symlinks)
-        requested_mirrors = list(dict.fromkeys([*existing_mirrors, *requested_mirrors]))
         requested_symlinks = list(dict.fromkeys([*existing_symlinks, *requested_symlinks]))
 
     # Seed rules from explicit files into the global library so re-init works.
@@ -117,11 +114,10 @@ def run(options: InitOptions) -> InitResult:
     rule_names = expanded_names
 
     # Update declaration model.
-    decl.template = options.template
+    decl.instruction_template = options.instruction_template
     decl.layout_profile = options.layout_profile or decl.layout_profile
     decl.agent_dialect = options.agent_dialect or decl.agent_dialect
     decl.rules = rule_names
-    decl.mirrors = requested_mirrors
     decl.symlinks = requested_symlinks
 
     declarations.save(proj, decl)

@@ -36,7 +36,7 @@ class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
                 markup=False,
             ),
             Static(
-                "This determines where aim installs skills, rules, and mirror files.",
+                "This determines where aim installs skills, rules, and symlinks.",
                 markup=False,
             ),
             DataTable(id="profiles-table", cursor_type="row"),
@@ -52,7 +52,7 @@ class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
 
     def on_mount(self) -> None:
         table = self.query_one("#profiles-table", DataTable)
-        table.add_columns("name", "scope", "skills", "rules", "agents", "mirrors")
+        table.add_columns("name", "scope", "skills", "rules", "subagents", "symlinks")
         self._populate()
         table.focus()
 
@@ -76,7 +76,7 @@ class LayoutProfilePickerModal(ModalScreen[tuple[str, bool] | None]):
                 p.skills_dir,
                 p.rules_dir,
                 p.agents_md,
-                ",".join(p.mirrors) if p.mirrors else "-",
+                ",".join(p.symlinks) if p.symlinks else "-",
                 key=p.name,
             )
         if self._profiles:

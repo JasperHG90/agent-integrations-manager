@@ -40,7 +40,7 @@ async def test_layout_profiles_screen_adds_project_profile(home: Path, project_r
         assert isinstance(modal, LayoutProfileModal)
         modal.query_one("#name", Input).value = "custom"
         modal.query_one("#skills-dir", Input).value = ".custom/skills"
-        modal.query_one("#mirrors", Input).value = "CUSTOM.md"
+        modal.query_one("#symlinks", Input).value = "CUSTOM.md"
         await pilot.pause()
         from textual.widgets import Button
 
@@ -53,7 +53,7 @@ async def test_layout_profiles_screen_adds_project_profile(home: Path, project_r
 
     profile = layout_profiles.get_profile(project_root, "custom")
     assert profile.skills_dir == ".custom/skills"
-    assert profile.mirrors == ["CUSTOM.md"]
+    assert profile.symlinks == ["CUSTOM.md"]
     assert profile.scope == layout_profiles.LayoutProfileScope.PROJECT
 
 

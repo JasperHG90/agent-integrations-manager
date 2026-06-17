@@ -1,4 +1,4 @@
-"""Marker-delimited region rewrite for AGENTS.md and its mirrors — HTML
+"""Marker-delimited region rewrite for AGENTS.md and its symlinks — HTML
 dialect specialisation of `managed_regions`. Kept as a thin wrapper so
 existing callers (init, doctor, agents_md tests) don't need to change.
 """

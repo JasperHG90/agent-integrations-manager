@@ -93,8 +93,8 @@ def _resolve_profile(project_root: Path, m: Manifest, layout_profile: str | None
         try:
             return layout_profiles.get_profile(project_root, active_name)
         except layout_profiles.LayoutProfileNotFoundError:
-            return layout_profiles.LEGACY_PROFILE
-    return layout_profiles.LEGACY_PROFILE
+            return layout_profiles.BUILTIN_CLAUDE
+    return layout_profiles.BUILTIN_CLAUDE
 
 
 def _locked_repo_pairs(m: Manifest) -> dict[str, str]:
@@ -347,7 +347,7 @@ def _render_agent_files(
     *,
     force: bool,
 ) -> list[str]:
-    """Re-render AGENTS.md/mirrors and recreate symlinks. Returns drift warnings."""
+    """Re-render AGENTS.md and recreate symlinks. Returns drift warnings."""
     return agent_files.write_agent_files(
         project_root, m, profile, force=force
     )
@@ -391,7 +391,7 @@ async def run(options: SyncOptions) -> SyncResult:
     )
     result.synced_mcp = mcps_synced
 
-    # 6. Re-render AGENTS.md/mirrors/symlinks when requested.
+    # 6. Re-render AGENTS.md and symlinks when requested.
     if options.sync_agents:
         result.drift_warnings = await asyncio.to_thread(
             _render_agent_files, project_root, m, profile, force=options.force

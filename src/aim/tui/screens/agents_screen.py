@@ -29,7 +29,7 @@ class AgentsScreen(Screen[None]):
         self._repo_filter: str | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Agents", id="title", markup=False)
+        yield Static("Subagents", id="title", markup=False)
         yield Input(placeholder="search…", id="search-bar")
         yield DataTable(id="agents-table", cursor_type="row")
         yield Static("", id="status", markup=False)
@@ -59,7 +59,7 @@ class AgentsScreen(Screen[None]):
         filter_label = f" [repo={self._repo_filter}]" if self._repo_filter else ""
         if not rows:
             if not query and self._repo_filter is None:
-                self._status("no agents indexed — add a repo from the Repos screen")
+                self._status("no subagents indexed — add a repo from the Repos screen")
             else:
                 bits = []
                 if query:
@@ -81,7 +81,7 @@ class AgentsScreen(Screen[None]):
                 table.move_cursor(row=table.get_row_index(selected), animate=False)
             except Exception:
                 pass
-        self._status(f"{len(rows)} agent(s){filter_label}")
+        self._status(f"{len(rows)} subagent(s){filter_label}")
 
     def action_cycle_repo_filter(self) -> None:
         aliases = [r.alias for r in repos.list_repos()]
@@ -117,7 +117,7 @@ class AgentsScreen(Screen[None]):
         qn = self._selected()
         if qn is None:
             if self.query_one(DataTable).row_count == 0:
-                self.app.notify("no agents indexed — add a repo first", severity="warning")
+                self.app.notify("no subagents indexed — add a repo first", severity="warning")
             else:
                 self._status("no row selected")
             return
@@ -132,7 +132,7 @@ class AgentsScreen(Screen[None]):
         qn = self._selected()
         if qn is None:
             if self.query_one(DataTable).row_count == 0:
-                self.app.notify("no agents indexed — add a repo first", severity="warning")
+                self.app.notify("no subagents indexed — add a repo first", severity="warning")
             else:
                 self._status("no row selected")
             return
