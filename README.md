@@ -24,7 +24,7 @@ Every AI coding assistant works better with the right context: project conventio
 
 ## Screenshots
 
-The TUI is the default interface; every screenshot below is what you see after running `agent-init`.
+The TUI is the default interface; every screenshot below is what you see after running `agent-init`. The skills and agents shown are from repositories that were already registered in the author's workspace — `agent-init` does not ship with a built-in catalog.
 
 ### Main menu
 
