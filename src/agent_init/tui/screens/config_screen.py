@@ -1,4 +1,4 @@
-"""Config screen — project-level settings only.
+"""Config screen — project-level settings plus the global default template.
 
 Provides a single, focused pane for the *current* project's manifest:
 - where agent-init keeps its manifest
@@ -7,9 +7,9 @@ Provides a single, focused pane for the *current* project's manifest:
 - applied rules (read-only pointer to the Rules screen)
 - save re-runs `init` against the project
 
-Global state (roots, rule-repo overlays, saved init profiles) is now managed
-from the CLI; this screen no longer duplicates the Layout Profiles screen.
-A Help block at the bottom explains each field and how to get more help.
+Also exposes an editor for the global `default.md.j2` template. Editing this
+changes the scaffold used by every future `init`. Project-specific guidance
+still belongs in reusable rules, not in this template.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from agent_init.core import init as init_mod
-from agent_init.core import layout_profiles, manifest, paths
+from agent_init.core import layout_profiles, manifest, paths, templates
 from agent_init.tui.widgets import ToggleRow
 
 _HELP_TEXT = (
@@ -32,6 +32,11 @@ _HELP_TEXT = (
     "  Layout profile — controls skills/rules/agents/mcp paths, agent dialect, AND\n"
     "    per-agent AGENTS.md copies/symlinks.\n"
     "Shortcuts work from the main menu: [l] PROFILES, [u] RULES."
+)
+
+_TEMPLATE_HELP = (
+    "Edit the global default template below. This scaffold is used for every new project.\n"
+    "Keep it universal — project-specific sections (e.g. Python rules) belong in reusable rules, not here."
 )
 
 
@@ -45,6 +50,7 @@ class ConfigScreen(Screen[None]):
     def __init__(self, project_root: Path | None = None) -> None:
         super().__init__()
         self._project_root = (project_root or Path.cwd()).resolve()
+        self._template_path = templates._builtin_override_path(templates.BUILTIN_DEFAULT)
 
     def compose(self) -> ComposeResult:
         yield Static("Config", id="title", markup=False)
@@ -88,10 +94,20 @@ class ConfigScreen(Screen[None]):
                 markup=False,
             ),
             ToggleRow("Force overwrite existing files on save", id="proj-force"),
-            Button("Save (re-runs init)", id="proj-save", variant="primary"),
+            Button("Save project settings (re-runs init)", id="proj-save", variant="primary"),
             Static(_HELP_TEXT, classes="config-help", markup=True),
             id="project-pane",
         )
+
+        template_body = self._template_path.read_text(encoding="utf-8") if self._template_path.exists() else ""
+        yield Vertical(
+            Static("Global default template", classes="config-heading", markup=False),
+            Static(_TEMPLATE_HELP, classes="config-help", markup=True),
+            TextArea(template_body, id="global-template", language="markdown"),
+            Button("Save global template", id="template-save", variant="primary"),
+            id="template-pane",
+        )
+
         yield Static("", id="status", markup=False)
         yield Static(
             "[b] Back  [q] Quit  — manage profiles with [l] PROFILES",
@@ -107,11 +123,15 @@ class ConfigScreen(Screen[None]):
         return f"{profile.name}  ·  skills:{profile.skills_dir}  rules:{profile.rules_dir}  agents:{profile.agents_dir}  mcp:{profile.mcp_json}"
 
     def on_mount(self) -> None:
-        self._status("edit project settings and save, or press [b] to go back")
+        self._status("edit project settings or the global template, then save")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != "proj-save":
-            return
+        if event.button.id == "proj-save":
+            self._save_project()
+        elif event.button.id == "template-save":
+            self._save_template()
+
+    def _save_project(self) -> None:
         project = Path(self.query_one("#proj-root", Input).value).expanduser()
         template = self.query_one("#proj-template", Input).value.strip() or "default"
         force = self.query_one("#proj-force", ToggleRow).value
@@ -132,6 +152,21 @@ class ConfigScreen(Screen[None]):
         for warn in result.region_drift_warnings:
             self.app.notify(warn, severity="warning")
         self._project_root = project.resolve()
+
+    def _save_template(self) -> None:
+        body = self.query_one("#global-template", TextArea).text
+        try:
+            self._template_path.parent.mkdir(parents=True, exist_ok=True)
+            self._template_path.write_text(body, encoding="utf-8")
+        except Exception as exc:
+            self.app.notify(f"template save failed: {exc}", severity="error")
+            return
+        self.app.notify(
+            f"global template saved to {self._template_path}",
+            title="Template saved",
+        )
+        # Re-run init for the current project so the new template is applied immediately.
+        self._save_project()
 
     def _status(self, msg: str) -> None:
         self.query_one("#status", Static).update(msg)

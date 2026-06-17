@@ -1,9 +1,13 @@
 """Template registry. Bundled default plus user-registered templates.
 
 Per the plan: pluggable from day one. The `default` template is bundled and
-re-seeded into the global SQLite registry on demand. Users can add their own
-via `agent-init template add` (CLI lands in a later phase if there is a second
-template; the API is wired up now so it's an additive change).
+re-seeded into the global SQLite registry on demand. The bundled default is also
+copied to the user's global templates directory so it can be edited from the
+TUI; `resolve()` prefers that override when it exists.
+
+Users can add their own via `agent-init template add` (CLI lands in a later
+phase if there is a second template; the API is wired up now so it's an
+additive change).
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from pathlib import Path
 from jinja2 import Environment, StrictUndefined
 from sqlmodel import select
 
-from agent_init.core import db
+from agent_init.core import db, paths
 from agent_init.core.models import Template
 
 BUILTIN_DEFAULT = "default"
@@ -39,6 +43,20 @@ def _builtin_body(template_name: str) -> str:
     return resource.read_text()
 
 
+def _builtin_override_path(template_name: str) -> Path:
+    """Filesystem path where a user-editable copy of a builtin template lives."""
+    paths.ensure_global_dirs()
+    return paths.templates_library_dir() / f"{template_name}.md.j2"
+
+
+def _ensure_builtin_override(template_name: str) -> Path:
+    """Copy the bundled template to the global templates dir if no override exists."""
+    override = _builtin_override_path(template_name)
+    if not override.exists():
+        override.write_text(_builtin_body(template_name), encoding="utf-8")
+    return override
+
+
 def ensure_builtin_registered() -> None:
     """Idempotently register the bundled default template in the global DB."""
     with db.session() as session:
@@ -52,6 +70,7 @@ def ensure_builtin_registered() -> None:
                 )
             )
             session.commit()
+    _ensure_builtin_override(BUILTIN_DEFAULT)
 
 
 def list_templates() -> list[Template]:
@@ -67,6 +86,10 @@ def resolve(name: str) -> ResolvedTemplate:
     if row is None:
         raise TemplateNotFoundError(name)
     if row.source == "builtin":
+        # Prefer the user-editable override if it exists.
+        override = _builtin_override_path(name)
+        if override.is_file():
+            return ResolvedTemplate(name=name, body=override.read_text(encoding="utf-8"))
         return ResolvedTemplate(name=name, body=_builtin_body(name))
     # User-registered template: source is a filesystem path to a .md.j2 file.
     path = Path(row.source)
