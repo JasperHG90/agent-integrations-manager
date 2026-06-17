@@ -1,0 +1,1 @@
+{"eval_id": 2, "eval_name": "slugify-text-minimal", "prompt": "Write a minimal README for a tiny JavaScript utility called 'slugify-text' that converts strings to URL slugs. It has one install command and one usage example.", "assertions": ["README is under 80 lines", "Usage or quick start appears before or alongside install", "No unexplained jargon"]}

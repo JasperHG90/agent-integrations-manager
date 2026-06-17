@@ -22,28 +22,39 @@ Use this skill whenever the user (or another skill/agent) asks to:
 
 ## Workflow
 
-1. **Identify the artifact type** from the request:
+1. **Ensure `agent-init` is installed.** Before running any command, check whether `agent-init` is available:
+
+   - Try `command -v agent-init` or `agent-init --version`.
+   - If the command succeeds, continue with the workflow.
+   - If the command is not found, tell the user: "`agent-init` is not installed. Install it with `uvx`? Defaults to the latest version; say a version number if you want a specific one."
+   - If the user agrees, run:
+     - Latest: `uvx install agent-init`
+     - Specific version: `uvx install agent-init==<version>`
+   - After installing, verify with `agent-init --version` before continuing.
+   - If the user declines, stop and explain that this skill requires `agent-init`.
+
+2. **Identify the artifact type** from the request:
    - Skills: `agent-init skill ...`
    - Agents: `agent-init agent ...`
    - Rules: `agent-init rule ...`
 
-2. **If the exact name is not known, search first.** Prefer `--compact` NDJSON output to keep token usage low:
+3. **If the exact name is not known, search first.** Prefer `--compact` NDJSON output to keep token usage low:
    - Skills: `agent-init skill search <query> --compact`
    - Agents: `agent-init agent search <query> --compact`
    - Rules: `agent-init rule list --compact` and filter client-side by the query
 
-3. **Present top matches** using the compact NDJSON output. If the request is ambiguous, ask the user to pick one.
+4. **Present top matches** using the compact NDJSON output. If the request is ambiguous, ask the user to pick one.
 
-4. **Execute the right command** for the artifact and action:
+5. **Execute the right command** for the artifact and action:
    - Install: `agent-init skill install <qualified>` / `agent-init agent install <qualified>` / `agent-init rule install <name>`
    - Update: `agent-init skill update <qualified>` / `agent-init agent update <qualified>` / `agent-init rule update <name>`
    - Delete: `agent-init skill delete <qualified>` / `agent-init agent delete <qualified>` / `agent-init rule delete <name>`
    - Rollback: `agent-init skill rollback <qualified>` / `agent-init agent rollback <qualified>` / `agent-init rule rollback <name>`
    - List: `agent-init skill list --compact` / `agent-init agent list --compact` / `agent-init rule list --compact`
 
-5. **Surface CLI warnings verbatim.** If `agent-init` prints warnings about missing prereqs, capability collisions, or local edits, relay them to the user without rewording.
+6. **Surface CLI warnings verbatim.** If `agent-init` prints warnings about missing prereqs, capability collisions, or local edits, relay them to the user without rewording.
 
-6. **If the artifact is not found,** suggest registering a source repo first using the `repo-add` skill.
+7. **If the artifact is not found,** suggest registering a source repo first using the `repo-add` skill.
 
 ## Compact output discipline
 

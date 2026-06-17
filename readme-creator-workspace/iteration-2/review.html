@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "readme-creator", "runs": [{"id": "eval-1-with_skill", "prompt": "Create a README for this project. The repo is called agent-init and it scaffolds agent-engineering projects, manages reusable rules, and installs Claude skills from git repos. It already has a logo at assets/logo.png and a demo GIF at assets/demo.gif.", "eval_id": 1, "outputs": [{"name": "README.md", "type": "text", "content": "<p align=\"center\">\n  <img src=\"assets/logo.png\" alt=\"agent-init logo\" width=\"480\">\n</p>\n\n# agent-init\n\nA small CLI and TUI that scaffolds agent-engineering projects, manages reusable rules, and installs Claude skills from git repositories.\n\n## Why this exists\n\nEvery AI-assisted project needs the same groundwork: an `AGENTS.md` file that tells assistants how to behave, a set of rules you actually reuse, and a way to pull in curated skills without copy-pasting Markdown. Setting that up by hand is repetitive, and it drifts the moment someone on the team updates a rule.\n\n`agent-init` turns that groundwork into a single workflow. It generates project instructions from a managed template, keeps a library of reusable rule snippets, and installs, versions, and rolls back Claude skills straight from any git repo.\n\n## Features\n\n- **Scaffold agent instructions in seconds.** Generates `AGENTS.md` plus agent-specific mirrors like `CLAUDE.md` and `GEMINI.md`.\n- **Reuse rules across projects.** Maintain rule snippets in one place and seed the ones you mark as default into every new project.\n- **Install skills from git.** Register any git repository, browse or search its skills, and install them with version pinning and rollback.\n- **Rollback without guessing.** Per-project `manifest.json` pins skills to a `(tag, sha)` pair and keeps the last 10 versions, so rollback works even on a fresh clone.\n- **TUI or CLI.** Use `agent-init tui` for browsing, or script the same commands in CI.\n\n## Quick start\n\n```sh\n# Add a reusable rule and make it seed into every new project\nagent-init rule add be-concise --body \"Be concise.\" --default\n\n# Scaffold a new project\nagent-init init path/to/project\n\n# Register a skill source repo\nagent-init repo add anthropic https://github.com/anthropics/skills\n\n# Install a skill\nagent-init skill install anthropic/code-review\n```\n\nOr launch the TUI:\n\n```sh\nagent-init tui\n```\n\n## Installation\n\nRequires Python 3.12+ on macOS or Linux. Windows is not supported in this release.\n\n**Run without installing, using `uvx`:**\n\n```sh\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init --version\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init tui\n```\n\n**Install permanently as a `uv` tool:**\n\n```sh\nuv tool install git+https://github.com/jasperginn/agent-init.git\n```\n\n**Local development:**\n\n```sh\ngit clone https://github.com/jasperginn/agent-init.git\ncd agent-init\nuv sync\nuv run agent-init --version\n```\n\n## How to use\n\n<p align=\"center\">\n  <img src=\"assets/demo.gif\" alt=\"agent-init TUI demo showing project initialization, rule management, and skill installation\" width=\"640\">\n</p>\n\n### Scaffolding a project\n\nInitialize a directory with `AGENTS.md` and agent-specific mirrors:\n\n```sh\nagent-init init path/to/project\n```\n\n### Managing rules\n\nAdd a rule snippet and mark it as default so it seeds into every new project:\n\n```sh\nagent-init rule add be-concise --body \"Be concise.\" --default\n```\n\n### Installing skills\n\nRegister a source repo, then search and install skills:\n\n```sh\nagent-init repo add anthropic https://github.com/anthropics/skills\nagent-init skill search review\nagent-init skill install anthropic/code-review\n```\n\nKeep skills up to date, or roll back when something breaks:\n\n```sh\nagent-init repo refresh anthropic\nagent-init skill update anthropic/code-review\nagent-init skill rollback anthropic/code-review\n```\n\n### How it works\n\nPer-project state lives at `.agent-init/manifest.json` and is committed with your repo. The manifest pins installed skills to a `(tag, sha)` pair and keeps the last 10 versions so rollback survives fresh clones.\n\nGlobal state is machine-local and treated as a cache:\n\n- `user_data_dir`: SQLite registry of repos, indexed skills, templates, and rule metadata.\n- `user_cache_dir/repos/<alias>`: bare git mirrors reused across projects.\n- `user_cache_dir/snapshots/<alias>/<sha>/<skill>`: extracted skill bytes used when the upstream SHA is no longer reachable.\n- `user_config_dir/rules`: user-authored rule snippets, one Markdown file per rule.\n\nSkills are discovered at these paths, in order of precedence:\n\n1. `skills/<name>/SKILL.md`\n2. `.claude/skills/<name>/SKILL.md`\n3. `<name>/SKILL.md` at repo root\n4. `SKILL.md` at repo root (the repo alias becomes the skill name)\n\nThey are referenced everywhere as `<repo_alias>/<skill_name>`.\n\n## Contributing\n\nOpen an issue to report bugs or request features. Pull requests are welcome; please keep changes focused and include tests where possible. See the repository's `CONTRIBUTING.md` if available, and join existing discussions for larger design questions.\n\nThis project is licensed under the terms specified in `LICENSE`.\n"}], "grading": {"summary": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4}, "expectations": [{"text": "Logo appears in a centered <p align='center'> block at the top", "passed": true, "evidence": "passed"}, {"text": "A 'Features' section appears before installation instructions", "passed": true, "evidence": "passed"}, {"text": "Install section contains a fenced code block", "passed": true, "evidence": "passed"}, {"text": "Contributing or Dev section is near the bottom", "passed": true, "evidence": "passed"}]}}, {"id": "eval-1-without_skill", "prompt": "Create a README for this project. The repo is called agent-init and it scaffolds agent-engineering projects, manages reusable rules, and installs Claude skills from git repos. It already has a logo at assets/logo.png and a demo GIF at assets/demo.gif.", "eval_id": 1, "outputs": [{"name": "README.md", "type": "text", "content": "<p align=\"center\">\n  <img src=\"assets/logo.png\" alt=\"agent-init logo\" width=\"480\">\n</p>\n\n<h1 align=\"center\">agent-init</h1>\n\n<p align=\"center\">\n  Scaffold agent-engineering projects, manage reusable rules, and install Claude skills, agents, and MCP servers from git repos.\n</p>\n\n<p align=\"center\">\n  <img src=\"assets/demo.gif\" alt=\"agent-init TUI demo\" width=\"640\">\n</p>\n\n## Status\n\nv0.1.0 \u2014 macOS / Linux. Windows is not supported in this release.\n\n## Install\n\nRun with `uvx` directly from GitHub:\n\n```sh\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init --version\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init tui\n```\n\nInstall permanently as a `uv` tool:\n\n```sh\nuv tool install git+https://github.com/jasperginn/agent-init.git\n```\n\nFor local development:\n\n```sh\ngit clone https://github.com/jasperginn/agent-init.git\ncd agent-init\nuv sync\nuv run agent-init --version\n```\n\n## Quick start\n\n```sh\n# 1. Add a reusable rule and mark it as a default for every new project.\nagent-init rule add be-concise --body \"Be concise.\" --default\n\n# 2. Initialize a project: writes AGENTS.md + CLAUDE.md/GEMINI.md mirrors and seeds default rules.\nagent-init init path/to/project --mirror CLAUDE.md --mirror GEMINI.md\n\n# 3. Register a skill source repo (any git URL: https, ssh, or file://).\nagent-init repo add anthropic https://github.com/anthropics/skills\n\n# 4. Browse, search, and install skills.\nagent-init skill list\nagent-init skill search review\nagent-init skill install anthropic/code-review\n\n# 5. Later: refresh upstream and update or roll back.\nagent-init repo refresh anthropic\nagent-init skill update anthropic/code-review\nagent-init skill rollback anthropic/code-review\n\n# Or use the interactive TUI.\nagent-init tui\n```\n\n## Features\n\n- **Project scaffolding** \u2014 generates `AGENTS.md` from managed templates, with optional mirror files (`CLAUDE.md`, `GEMINI.md`, etc.) and symlinks.\n- **Reusable rules** \u2014 global rule library; mark rules as default so they auto-seed into every new project.\n- **Skill management** \u2014 register git repos, index skills, install/update/rollback with per-skill version pinning.\n- **Sub-agent management** \u2014 install and version Claude Code sub-agents from git repos the same way as skills.\n- **MCP servers** \u2014 search the public MCP registry and install servers into `.mcp.json` with version pinning.\n- **Project profiles** \u2014 snapshot a project configuration (skills, agents, MCP servers, rules) and re-apply it elsewhere.\n- **Drift detection** \u2014 `check` for pre-commit-friendly drift checks; `doctor` for a full audit across configured project roots.\n- **Interactive TUI** \u2014 browse repos, skills, agents, rules, and profiles in a Textual interface.\n\n## Command overview\n\n| Command | Purpose |\n| --- | --- |\n| `agent-init init <project>` | Scaffold or refresh `AGENTS.md`, mirrors, and rules |\n| `agent-init rule add/list/edit/delete` | Manage the global rule library |\n| `agent-init repo add/list/refresh/remove/rename` | Register skill/agent source repos |\n| `agent-init skill list/search/install/update/delete/rollback` | Manage installed skills |\n| `agent-init agent list/search/install/update/delete/rollback` | Manage installed sub-agents |\n| `agent-init mcp search/list/install/update/delete` | Manage MCP servers via the registry |\n| `agent-init profile save/list/show/apply/delete` | Save and apply project templates |\n| `agent-init check` | Pre-commit drift check |\n| `agent-init doctor` | Full audit across configured roots |\n| `agent-init tui` | Launch the interactive TUI |\n\n## How it works\n\nPer-project state lives in `.agent-init/manifest.json` (committed to the repo). It pins installed skills, agents, and MCP servers to exact versions and keeps a rollback history.\n\nGlobal machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):\n\n- `user_data_dir` \u2014 SQLite cache of registered repos, indexed skills/agents, templates, and rule metadata.\n- `user_cache_dir/repos/<alias>` \u2014 bare git mirrors reused across projects.\n- `user_cache_dir/snapshots/<alias>/<sha>/<skill>` \u2014 extracted skill bytes for rollback when upstream SHAs are no longer reachable.\n- `user_config_dir/rules` \u2014 user-authored rule snippets.\n\nThe global SQLite DB is a **cache**. The project's `manifest.json` is the **source of truth** for what is installed.\n\n## Skill and agent discovery\n\nA registered repo must expose skills or agents at one of these paths (precedence high \u2192 low):\n\n1. `skills/<name>/SKILL.md` or `agents/<name>.md`\n2. `.claude/skills/<name>/SKILL.md` or `.claude/agents/<name>.md`\n3. `<name>/SKILL.md` or `<name>.md` at repo root\n4. `SKILL.md` at repo root (the repo alias becomes the skill name)\n\nSkills are referenced as `<repo_alias>/<skill_name>`; agents as `<repo_alias>/<agent_name>`. Repos with no discoverable artifacts are rejected on `repo add` unless `--allow-empty` is passed.\n\n## Safety properties\n\n- `repo add` rolls back cleanly on indexing failure.\n- `git archive | tar` extraction surfaces git's stderr first.\n- Snapshots write a completion sentinel; partial extractions are re-run on next access.\n- `skill update` refuses to overwrite hand-edits unless `--force` is used.\n- `init` warns when in-region content was edited by hand since the last write.\n- `repo rename` rewrites the registry and skill index atomically.\n- Rollback prefers local snapshots and errors loudly if neither snapshot nor upstream is available.\n\n## Development\n\n```sh\nuv run pytest          # full suite \u2014 100+ tests, including TUI Pilot + snapshot tests\nuv run ruff check .    # lint\nuv run agent-init tui  # launch the TUI\n\npytest tests/tui --snapshot-update  # only after intentional visual changes\n```\n"}], "grading": {"summary": {"pass_rate": 0.75, "passed": 3, "failed": 1, "total": 4}, "expectations": [{"text": "Logo appears in a centered <p align='center'> block at the top", "passed": true, "evidence": "passed"}, {"text": "A 'Features' section appears before installation instructions", "passed": false, "evidence": "failed"}, {"text": "Install section contains a fenced code block", "passed": true, "evidence": "passed"}, {"text": "Contributing or Dev section is near the bottom", "passed": true, "evidence": "passed"}]}}, {"id": "eval-2-with_skill", "prompt": "Write a minimal README for a tiny JavaScript utility called 'slugify-text' that converts strings to URL slugs. It has one install command and one usage example.", "eval_id": 2, "outputs": [{"name": "README.md", "type": "text", "content": "<p align=\"center\">\n  <img src=\"assets/logo.png\" alt=\"slugify-text logo\" width=\"120\">\n</p>\n\n# slugify-text\n\nConvert strings to URL-friendly slugs.\n\n## Why\n\nTurn messy titles, names, and labels into clean, shareable URL slugs without thinking about edge cases.\n\n## Features\n\n- Lowercases and trims whitespace.\n- Replaces spaces and special characters with hyphens.\n- Tiny dependency-free utility.\n\n## Quick start\n\n```js\nconst slugify = require('slugify-text');\n\nslugify('Hello World!'); // \"hello-world\"\n```\n\n## Install\n\n```bash\nnpm install slugify-text\n```\n\n## Contributing\n\nOpen an issue or PR. Licensed under MIT.\n"}], "grading": {"summary": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3}, "expectations": [{"text": "README is under 80 lines", "passed": true, "evidence": "passed"}, {"text": "Usage or quick start appears before or alongside install", "passed": true, "evidence": "passed"}, {"text": "No unexplained jargon", "passed": true, "evidence": "passed"}]}}, {"id": "eval-2-without_skill", "prompt": "Write a minimal README for a tiny JavaScript utility called 'slugify-text' that converts strings to URL slugs. It has one install command and one usage example.", "eval_id": 2, "outputs": [{"name": "README.md", "type": "text", "content": "# slugify-text\n\nA tiny JavaScript utility that converts strings into URL-friendly slugs.\n\n## Install\n\n```bash\nnpm install slugify-text\n```\n\n## Usage\n\n```javascript\nconst slugify = require('slugify-text');\n\nconsole.log(slugify('Hello World!'));\n// => \"hello-world\"\n```\n"}], "grading": {"summary": {"pass_rate": 0.6666666666666666, "passed": 2, "failed": 1, "total": 3}, "expectations": [{"text": "README is under 80 lines", "passed": true, "evidence": "passed"}, {"text": "Usage or quick start appears before or alongside install", "passed": false, "evidence": "failed"}, {"text": "No unexplained jargon", "passed": true, "evidence": "passed"}]}}, {"id": "eval-3-with_skill", "prompt": "Improve the README for an existing project so it looks more trustworthy and follows a modern theme. Ask the user which theme they want from the theme-factory presets.", "eval_id": 3, "outputs": [{"name": "README.md", "type": "text", "content": "<p align=\"center\">\n  <img src=\"assets/logo.png\" alt=\"agent-init logo\" width=\"480\">\n</p>\n\n<h1 align=\"center\">agent-init</h1>\n\n<p align=\"center\">\n  A CLI and TUI that scaffolds agent-engineering projects with shared rules, skills, and per-project instructions.\n</p>\n\n<p align=\"center\">\n  <img src=\"https://img.shields.io/badge/version-0.1.0-2563eb?style=flat-square\" alt=\"version 0.1.0\">\n  <img src=\"https://img.shields.io/badge/python-%3E%3D3.12-2563eb?style=flat-square&logo=python&logoColor=white\" alt=\"Python 3.12+\">\n  <img src=\"https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2563eb?style=flat-square\" alt=\"macOS and Linux\">\n  <img src=\"https://img.shields.io/badge/tests-100%2B-2563eb?style=flat-square\" alt=\"100+ tests\">\n</p>\n\n## Why this exists\n\nMost agent-engineering projects start with copy-pasted instructions, drifting rule files, and skills installed by hand. `agent-init` turns that into versioned, reproducible project state: one committed manifest, reusable rules, and skills pinned to a tag and SHA. Your AI assistant gets the right context from day one, and it stays the same on every fresh clone.\n\n## Features\n\n- **Generate `AGENTS.md` plus mirrored instructions** for Claude, Gemini, and more from a single managed template.\n- **Manage reusable rule snippets** and mark the ones you always want as defaults, so every new project seeds them automatically.\n- **Register skill source repos globally**, then install, update, and roll back skills with per-skill version pinning.\n- **Keep the source of truth in your repo** via `.agent-init/manifest.json`; rollback works even on a fresh clone.\n- **Use the TUI or the CLI** \u2014 pick the workflow that fits the moment.\n\n## Quick start\n\nPrerequisites: `uv` is installed.\n\n```sh\n# Add a rule snippet and make it a default.\nagent-init rule add be-concise --body \"Be concise.\" --default\n\n# Scaffold a project: writes AGENTS.md + CLAUDE.md/GEMINI.md mirrors and seeds the default rule.\nagent-init init path/to/project\n\n# Register a skill source repo (https, ssh, or file://).\nagent-init repo add anthropic https://github.com/anthropics/skills\n\n# Browse, search, and install skills.\nagent-init skill list\nagent-init skill search review\nagent-init skill install anthropic/code-review\n\n# Or open the TUI.\nagent-init tui\n```\n\n## Installation\n\nRun without installing:\n\n```sh\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init --version\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init tui\n```\n\nInstall permanently as a `uv` tool:\n\n```sh\nuv tool install git+https://github.com/jasperginn/agent-init.git\n```\n\nFor local development:\n\n```sh\ngit clone https://github.com/jasperginn/agent-init.git\ncd agent_init\nuv sync\nuv run agent-init --version\n```\n\n> **Platform note:** v0.1 supports macOS and Linux. Windows is not supported in this release.\n\n## How it works\n\n```mermaid\n%%{init: {'theme':'base','themeVariables':{'primaryColor':'#2563eb','primaryTextColor':'#ffffff','primaryBorderColor':'#1d4ed8','lineColor':'#2563eb','secondaryColor':'#eff6ff','tertiaryColor':'#ffffff'}}}%%\nflowchart LR\n    A[Your project] -->|agent-init init| B(.agent-init/manifest.json)\n    C[Skill repo] -->|agent-init repo add| D[(Global cache)]\n    D -->|agent-init skill install| A\n    E[Rule snippets] -->|agent-init rule add| A\n```\n\nPer-project state lives in `.agent-init/manifest.json` and is committed to your repo. It pins installed skills to a `(tag, sha)` pair and keeps the last 10 versions in `history`, so rollback is reliable on a fresh clone.\n\nGlobal state lives under [platformdirs](https://platformdirs.readthedocs.io/):\n\n- `user_data_dir`: SQLite cache of registered repos, indexed skills, templates, and rule metadata.\n- `user_cache_dir/repos/<alias>`: bare git mirrors (`git clone --mirror`), reused across projects.\n- `user_cache_dir/snapshots/<alias>/<sha>/<skill>`: extracted skill bytes, used by rollback when the upstream SHA is no longer reachable.\n- `user_config_dir/rules`: user-authored rule snippets (one markdown file per rule).\n\nThe global SQLite DB is treated as a cache. The project `manifest.json` is the source of truth.\n\n### Skill discovery convention\n\nA registered repo must expose at least one skill at one of these paths (precedence high \u2192 low):\n\n1. `skills/<name>/SKILL.md`\n2. `.claude/skills/<name>/SKILL.md`\n3. `<name>/SKILL.md` at repo root\n4. `SKILL.md` at repo root (the repo alias becomes the skill name)\n\nSkills are referenced everywhere as `<repo_alias>/<skill_name>`. Repos with no discoverable skills are rejected on `repo add` unless you pass `--allow-empty`.\n\n### Versioning\n\nSkill versions are pinned as `<tag>+<short_sha>` when a tag both contains the skill at that revision and is at or after the skill's last-touching commit; otherwise the pin is SHA-only. On `update`, the resolver only attaches a tag when the install honestly reflects it.\n\n### Safety properties\n\n- `repo add` rolls back cleanly on indexing failure: no orphan registrations.\n- `git archive | tar` extraction surfaces git's `stderr` first; `tar` errors are never misattributed.\n- Snapshots write a `.agent-init.complete` sentinel; partial extractions are re-run on next access.\n- `skill update` refuses to overwrite hand-edits to the deployed target directory (compares `content_hash`); use `--force` to override.\n- `init` warns when it overwrites in-region content that was edited by hand since the last write.\n- `repo rename` rewrites the SQLite registry and skill index atomically; if the on-disk clone move fails, the DB rename is rolled back.\n- Rollback prefers the local snapshot; if both snapshot and upstream are gone, it errors out loudly rather than silently no-op'ing.\n\n## See it in action\n\n<p align=\"center\">\n  <img src=\"assets/demo.gif\" alt=\"agent-init TUI demo showing skill search, install, and project initialization\" width=\"640\">\n</p>\n\nThe demo above shows the TUI: searching skills, installing one into a project, and initializing a project with the generated instructions.\n\n## Development\n\n```sh\nuv run pytest          # full suite \u2014 100+ tests, including TUI Pilot + snapshot tests\nuv run ruff check .    # lint\nuv run agent-init tui  # launch the TUI\n\npytest tests/tui --snapshot-update  # only after intentional visual changes\n```\n\n## Contributing\n\nOpen an issue or pull request on [GitHub](https://github.com/jasperginn/agent-init). For questions or ideas, start a discussion in the repo.\n"}], "grading": {"summary": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3}, "expectations": [{"text": "README references a named theme or applies a consistent accent color", "passed": true, "evidence": "passed"}, {"text": "Badges or visual elements use a cohesive color palette", "passed": true, "evidence": "passed"}, {"text": "Ladder order is preserved", "passed": true, "evidence": "passed"}]}}, {"id": "eval-3-without_skill", "prompt": "Improve the README for an existing project so it looks more trustworthy and follows a modern theme. Ask the user which theme they want from the theme-factory presets.", "eval_id": 3, "outputs": [{"name": "README.md", "type": "text", "content": "<p align=\"center\">\n  <img src=\"assets/logo.png\" alt=\"agent-init logo\" width=\"480\">\n</p>\n\n<!-- Theme: Tech Innovation | Accent: #2563eb -->\n\n<h1 align=\"center\">agent-init</h1>\n\n<p align=\"center\">\n  A small CLI + TUI for scaffolding agent-engineering projects.\n</p>\n\n<p align=\"center\">\n  <img src=\"https://img.shields.io/badge/version-0.1.0-2563eb\" alt=\"Version\">\n  <img src=\"https://img.shields.io/badge/python-3.12+-2563eb\" alt=\"Python 3.12+\">\n  <img src=\"https://img.shields.io/badge/tests-100+-2563eb\" alt=\"100+ tests\">\n  <img src=\"https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2563eb\" alt=\"macOS / Linux\">\n</p>\n\n## Why agent-init exists\n\nEvery AI-native project needs the same scaffolding: an `AGENTS.md` file, model-specific mirrors, a shared set of rules, and a way to install reusable skills. Doing this by hand is repetitive and hard to keep consistent across repositories.\n\n**agent-init turns that setup into a reproducible, version-pinned workflow.** Define your rules once, register skill sources, and let every new project inherit the same baseline with one command.\n\n## Features\n\n- **Project scaffolding** \u2014 generates `AGENTS.md` with mirrored instructions for Claude, Gemini, and other agents.\n- **Reusable rule library** \u2014 author rule snippets once, mark defaults, and auto-seed them into every new project.\n- **Skill registry** \u2014 register any git repo as a skill source, then install, update, and rollback skills with per-skill version pinning.\n- **Source-of-truth manifest** \u2014 per-project state lives in `.agent-init/manifest.json`, so rollbacks work on a fresh clone.\n- **TUI + CLI** \u2014 prefer a guided interface? Run `agent-init tui`. Prefer scripts? Use the same commands in your terminal.\n\n## Quick start\n\n```sh\n# 1. Add a default rule snippet.\nagent-init rule add be-concise --body \"Be concise.\" --default\n\n# 2. Initialize a project: writes AGENTS.md + CLAUDE.md/GEMINI.md mirrors.\nagent-init init path/to/project\n\n# 3. Register a skill source repo.\nagent-init repo add anthropic https://github.com/anthropics/skills\n\n# 4. Search and install a skill into the current project.\nagent-init skill search review\nagent-init skill install anthropic/code-review\n\n# 5. Use the TUI for a guided experience.\nagent-init tui\n```\n\n## Install\n\nThe recommended way to run `agent-init` is via `uvx`:\n\n```sh\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init --version\nuvx --from git+https://github.com/jasperginn/agent-init.git agent-init tui\n```\n\nInstall permanently as a `uv` tool:\n\n```sh\nuv tool install git+https://github.com/jasperginn/agent-init.git\n```\n\nFor local development:\n\n```sh\ngit clone https://github.com/jasperginn/agent-init.git\ncd agent_init\nuv sync\nuv run agent-init --version\n```\n\n**Status:** v0.1 \u2014 macOS / Linux only. Windows is not supported in this release.\n\n## How it works\n\n```mermaid\n%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#2563eb','primaryTextColor':'#ffffff','primaryBorderColor':'#1d4ed8','lineColor':'#2563eb','secondaryColor':'#dbeafe','tertiaryColor':'#eff6ff'}}}%%\nflowchart LR\n    A[Author rules & templates] -->|agent-init rule add| B[Global rule library]\n    B -->|agent-init init| C[Project scaffolding]\n    D[Register skill repos] -->|agent-init skill install| E[.agent-init/manifest.json]\n    E -->|agent-init skill update| F[Update]\n    E -->|agent-init skill rollback| G[Rollback]\n```\n\nPer-project state lives at `.agent-init/manifest.json` (committed to your repo). It pins installed skills to a `(tag, sha)` pair and keeps the last 10 versions in `history` so rollback works on a fresh clone too.\n\nGlobal, machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):\n\n- `user_data_dir`: SQLite cache of registered repos, indexed skills, templates, and rule metadata.\n- `user_cache_dir/repos/<alias>`: bare git mirrors (`git clone --mirror`), reused across projects.\n- `user_cache_dir/snapshots/<alias>/<sha>/<skill>`: extracted skill bytes, used by rollback when the upstream SHA is no longer reachable.\n- `user_config_dir/rules`: user-authored rule snippets (one markdown file per rule).\n\nThe global SQLite DB is treated as a **cache**. The project's `manifest.json` is the **source of truth** for what's installed where.\n\n## Skill discovery convention\n\nA registered repo must expose at least one skill at one of these paths (precedence high \u2192 low):\n\n1. `skills/<name>/SKILL.md`\n2. `.claude/skills/<name>/SKILL.md`\n3. `<name>/SKILL.md` at repo root\n4. `SKILL.md` at repo root (the repo alias becomes the skill name)\n\nSkills are referenced everywhere as `<repo_alias>/<skill_name>`. Repos with no discoverable skills are rejected on `repo add` (pass `--allow-empty` to override).\n\n## Versioning\n\nSkill versions are pinned as `<tag>+<short_sha>` when a tag both (a) contains the skill at that revision and (b) is at or after the skill's last-touching commit; otherwise SHA-only. On `update`, the resolver only attaches the tag when the install honestly reflects it.\n\n## Safety properties\n\n- `repo add` rolls back cleanly on indexing failure: no orphan registrations.\n- `git archive | tar` extraction surfaces git's stderr first; `tar` errors are never misattributed.\n- Snapshots write a `.agent-init.complete` sentinel; partial extractions are re-run on next access.\n- `skill update` refuses to overwrite hand-edits to the deployed target directory (compare `content_hash`); use `--force` to override.\n- `init` warns when it overwrites in-region content that was edited by hand since the last write.\n- `repo rename` rewrites the SQLite registry and skill index atomically; if the on-disk clone move fails, the DB rename is rolled back.\n- Rollback prefers the local snapshot; if both snapshot and upstream are gone, it errors out loudly rather than silently no-op'ing.\n\n## Demo\n\n<p align=\"center\">\n  <img src=\"assets/demo.gif\" alt=\"agent-init TUI demo\" width=\"640\">\n</p>\n\n## Development\n\n```sh\nuv run pytest          # full suite \u2014 currently 100+ tests, including TUI Pilot + snapshot tests\nuv run ruff check .    # lint\nuv run agent-init tui  # launch the TUI\n\npytest tests/tui --snapshot-update  # only after intentional visual changes\n```\n\n## Contributing\n\nBug reports and pull requests are welcome. Use the [issue templates](.github/ISSUE_TEMPLATE) to report bugs or propose features.\n"}], "grading": {"summary": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3}, "expectations": [{"text": "README references a named theme or applies a consistent accent color", "passed": true, "evidence": "passed"}, {"text": "Badges or visual elements use a cohesive color palette", "passed": true, "evidence": "passed"}, {"text": "Ladder order is preserved", "passed": true, "evidence": "passed"}]}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "readme-creator", "skill_path": "skills/readme-creator", "executor_model": "claude-opus-4-7", "analyzer_model": "claude-opus-4-7", "timestamp": "2026-06-17T08:51:09Z", "evals_run": [1, 2, 3], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Logo appears in a centered <p align='center'> block at the top", "passed": true, "evidence": "passed"}, {"text": "A 'Features' section appears before installation instructions", "passed": true, "evidence": "passed"}, {"text": "Install section contains a fenced code block", "passed": true, "evidence": "passed"}, {"text": "Contributing or Dev section is near the bottom", "passed": true, "evidence": "passed"}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.75, "passed": 3, "failed": 1, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Logo appears in a centered <p align='center'> block at the top", "passed": true, "evidence": "passed"}, {"text": "A 'Features' section appears before installation instructions", "passed": false, "evidence": "failed"}, {"text": "Install section contains a fenced code block", "passed": true, "evidence": "passed"}, {"text": "Contributing or Dev section is near the bottom", "passed": true, "evidence": "passed"}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "README is under 80 lines", "passed": true, "evidence": "passed"}, {"text": "Usage or quick start appears before or alongside install", "passed": true, "evidence": "passed"}, {"text": "No unexplained jargon", "passed": true, "evidence": "passed"}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.6666666666666666, "passed": 2, "failed": 1, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "README is under 80 lines", "passed": true, "evidence": "passed"}, {"text": "Usage or quick start appears before or alongside install", "passed": false, "evidence": "failed"}, {"text": "No unexplained jargon", "passed": true, "evidence": "passed"}], "notes": []}, {"eval_id": 3, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "README references a named theme or applies a consistent accent color", "passed": true, "evidence": "passed"}, {"text": "Badges or visual elements use a cohesive color palette", "passed": true, "evidence": "passed"}, {"text": "Ladder order is preserved", "passed": true, "evidence": "passed"}], "notes": []}, {"eval_id": 3, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "README references a named theme or applies a consistent accent color", "passed": true, "evidence": "passed"}, {"text": "Badges or visual elements use a cohesive color palette", "passed": true, "evidence": "passed"}, {"text": "Ladder order is preserved", "passed": true, "evidence": "passed"}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}}, "without_skill": {"pass_rate": {"mean": 0.8056, "stddev": 0.1735, "min": 0.6667, "max": 1.0}}, "delta": {"pass_rate": "+0.19"}}, "notes": []}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

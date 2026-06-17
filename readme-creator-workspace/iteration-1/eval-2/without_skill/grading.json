@@ -1,0 +1,21 @@
+{
+  "without_skill": {
+    "expectations": [
+      {
+        "text": "README is under 80 lines",
+        "passed": true,
+        "evidence": "passed"
+      },
+      {
+        "text": "Usage or quick start appears before or alongside install",
+        "passed": false,
+        "evidence": "failed"
+      },
+      {
+        "text": "No unexplained jargon",
+        "passed": true,
+        "evidence": "passed"
+      }
+    ]
+  }
+}

@@ -20,24 +20,35 @@ Use this skill whenever the user wants to:
 
 ## Workflow
 
-1. **Gather inputs** from context or by asking the user:
+1. **Ensure `agent-init` is installed.** Before running any command, check whether `agent-init` is available:
+
+   - Try `command -v agent-init` or `agent-init --version`.
+   - If the command succeeds, continue with the workflow.
+   - If the command is not found, tell the user: "`agent-init` is not installed. Install it with `uvx`? Defaults to the latest version; say a version number if you want a specific one."
+   - If the user agrees, run:
+     - Latest: `uvx install agent-init`
+     - Specific version: `uvx install agent-init==<version>`
+   - After installing, verify with `agent-init --version` before continuing.
+   - If the user declines, stop and explain that this skill requires `agent-init`.
+
+2. **Gather inputs** from context or by asking the user:
    - Local alias (short, lowercase, e.g. `local`, `anth`, `google`)
    - Git URL (https, ssh, or `file://`)
    - Optional default ref (default: `HEAD`)
 
-2. **Prefer `agent-init repo add`.** This indexes skills, agents, and rules in one operation:
+3. **Prefer `agent-init repo add`.** This indexes skills, agents, and rules in one operation:
 
    ```bash
    agent-init repo add <alias> <url> [--ref <branch-or-tag>]
    ```
 
-3. **If that fails and the user explicitly mentioned rules,** fall back to the rule-library overlay command:
+4. **If that fails and the user explicitly mentioned rules,** fall back to the rule-library overlay command:
 
    ```bash
    agent-init rule-repo add <alias> <url> [--ref <branch-or-tag>]
    ```
 
-4. **After adding, show what became available.** Run one or more of:
+5. **After adding, show what became available.** Run one or more of:
 
    ```bash
    agent-init skill list --compact
@@ -45,7 +56,7 @@ Use this skill whenever the user wants to:
    agent-init rule list --compact
    ```
 
-5. **Echo the exact command used** and the short SHA/head if the CLI returned it.
+6. **Echo the exact command used** and the short SHA/head if the CLI returned it.
 
 ## Tips
 

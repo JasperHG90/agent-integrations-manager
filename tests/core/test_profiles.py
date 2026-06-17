@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import respx
 from httpx import Response
+from pydantic import ValidationError
 
 from agent_init.core import (
     agent_install,
@@ -27,8 +28,8 @@ def test_save_and_load_round_trip(home: Path) -> None:
 
 
 def test_invalid_name_rejected(home: Path) -> None:
-    with pytest.raises(profiles.ProfileNameError):
-        profiles.save(profiles.Profile(name="Bad Name"))
+    with pytest.raises(ValidationError):
+        profiles.Profile(name="Bad Name")
 
 
 def test_load_missing(home: Path) -> None:
@@ -205,3 +206,83 @@ def test_rename_profile(home: Path) -> None:
     profiles.delete("old")
     assert [p.name for p in profiles.list_profiles()] == ["new"]
     assert profiles.load("new").rules == ["a"]
+
+
+def test_toml_round_trip(home: Path) -> None:
+    p = profiles.Profile(
+        name="my-template",
+        template="default",
+        mirrors=["CLAUDE.md"],
+        symlinks=[],
+        rules=["be-concise"],
+        skills=[profiles.ProfileSkill(qualified_name="repo/skill", pin="v1.0.0")],
+        agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
+        mcp_servers=[
+            profiles.ProfileMcpServer(
+                registry_name="srv",
+                alias="srv",
+                transport="stdio",
+                overrides={"command": "uvx"},
+            )
+        ],
+    )
+    text = profiles.render_toml(p)
+    loaded = profiles.parse_toml(text)
+    assert loaded == p
+
+
+def test_toml_multiple_items(home: Path) -> None:
+    text = """
+name = "multi"
+template = "default"
+rules = ["a", "b"]
+
+[[skill]]
+qualified_name = "repo/one"
+
+[[skill]]
+qualified_name = "repo/two"
+pin = "v2"
+
+[[agent]]
+qualified_name = "repo/agent"
+
+[[mcp_server]]
+registry_name = "srv-one"
+alias = "one"
+
+[[mcp_server]]
+registry_name = "srv-two"
+alias = "two"
+transport = "http"
+"""
+    p = profiles.parse_toml(text)
+    assert p.name == "multi"
+    assert [s.qualified_name for s in p.skills] == ["repo/one", "repo/two"]
+    assert p.skills[1].pin == "v2"
+    assert [a.qualified_name for a in p.agents] == ["repo/agent"]
+    assert [m.alias for m in p.mcp_servers] == ["one", "two"]
+
+
+def test_toml_invalid_name(home: Path) -> None:
+    text = 'name = "Bad Name"\ntemplate = "default"\n'
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml(text)
+
+
+def test_toml_rejects_yaml(home: Path) -> None:
+    text = "name: bad\ntemplate: default\n"
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml(text)
+
+
+def test_toml_rejects_unknown_key(home: Path) -> None:
+    text = 'name = "x"\ntemplate = "default"\nbad_key = "nope"\n'
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml(text)
+
+
+def test_toml_rejects_invalid_mirror(home: Path) -> None:
+    text = 'name = "x"\ntemplate = "default"\nmirrors = ["../escape.md"]\n'
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml(text)

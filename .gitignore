@@ -14,3 +14,5 @@ DESIGN.md
 .claude
 snapshot_report.html
 tests/tui/__snapshots__
+
+.vscode

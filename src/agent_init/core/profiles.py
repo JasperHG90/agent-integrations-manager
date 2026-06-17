@@ -6,16 +6,19 @@ from it. Stored as JSON under `user_config_dir/profiles/<name>.json`. Skills,
 agents and MCP servers reference upstream by qualified_name/registry_name +
 pin/track, not by frozen bytes — so applying a profile always picks up the
 latest version unless pinned.
+
+Profiles can also be imported/exported as TOML for easy sharing and editing.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent_init.core import agent_install as agent_install_mod
 from agent_init.core import init as init_mod
@@ -23,6 +26,7 @@ from agent_init.core import install as install_mod
 from agent_init.core import mcp_install as mcp_install_mod
 from agent_init.core import mcp_registry as mcp_registry_mod
 from agent_init.core import paths
+from agent_init.core.validation import is_valid_mirror_name, is_valid_rule_name
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -32,6 +36,11 @@ class ProfileNameError(ValueError):
 
 
 class ProfileNotFoundError(KeyError):
+    pass
+
+
+class ProfileTomlError(ValueError):
+    """Invalid TOML or content for a project profile."""
     pass
 
 
@@ -73,6 +82,31 @@ class Profile(BaseModel):
     agents: list[ProfileAgent] = Field(default_factory=list)
     mcp_servers: list[ProfileMcpServer] = Field(default_factory=list)
     agent_dialect: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name_field(cls, value: str) -> str:
+        if not _NAME_RE.fullmatch(value):
+            raise ProfileNameError(
+                f"profile name {value!r} invalid: must be lowercase alphanumeric, _, or -"
+            )
+        return value
+
+    @field_validator("mirrors", "symlinks")
+    @classmethod
+    def _validate_mirror_like(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not is_valid_mirror_name(value):
+                raise ValueError(f"filename {value!r} invalid")
+        return values
+
+    @field_validator("rules")
+    @classmethod
+    def _validate_rule_names(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not is_valid_rule_name(value):
+                raise ValueError(f"rule name {value!r} invalid")
+        return values
 
 
 def _profile_path(name: str) -> Path:
@@ -125,6 +159,109 @@ def delete(name: str) -> bool:
         return False
     path.unlink()
     return True
+
+
+_TOML_KEY_MAP = {
+    "skill": "skills",
+    "agent": "agents",
+    "mcp_server": "mcp_servers",
+}
+
+
+def parse_toml(text: str, *, source: str | None = None) -> Profile:
+    """Parse a project profile from a TOML string.
+
+    TOML uses singular array-of-table headers per item:
+        [[skill]], [[agent]], [[mcp_server]]
+    These are mapped to the plural field names on the Profile model.
+    """
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProfileTomlError(f"invalid TOML in {source or 'profile'}: {exc}") from exc
+    for singular, plural in _TOML_KEY_MAP.items():
+        if singular in raw:
+            raw[plural] = raw.pop(singular)
+    try:
+        return Profile.model_validate(raw)
+    except (ProfileNameError, ValueError) as exc:
+        raise ProfileTomlError(str(exc)) from exc
+
+
+def render_toml(profile: Profile) -> str:
+    """Serialize a project profile to TOML."""
+    lines: list[str] = []
+    lines.append(f'name = "{_escape_toml_string(profile.name)}"')
+    lines.append(f'template = "{_escape_toml_string(profile.template)}"')
+    lines.append(f"mirrors = {_render_string_list(profile.mirrors)}")
+    lines.append(f"symlinks = {_render_string_list(profile.symlinks)}")
+    lines.append(f"rules = {_render_string_list(profile.rules)}")
+    lines.append("")
+    for skill in profile.skills:
+        lines.append("[[skill]]")
+        lines.append(f'qualified_name = "{_escape_toml_string(skill.qualified_name)}"')
+        if skill.pin:
+            lines.append(f'pin = "{_escape_toml_string(skill.pin)}"')
+        if skill.track:
+            lines.append(f'track = "{_escape_toml_string(skill.track)}"')
+        lines.append("")
+    for agent in profile.agents:
+        lines.append("[[agent]]")
+        lines.append(f'qualified_name = "{_escape_toml_string(agent.qualified_name)}"')
+        if agent.pin:
+            lines.append(f'pin = "{_escape_toml_string(agent.pin)}"')
+        if agent.track:
+            lines.append(f'track = "{_escape_toml_string(agent.track)}"')
+        lines.append("")
+    for mcp in profile.mcp_servers:
+        lines.append("[[mcp_server]]")
+        lines.append(f'registry_name = "{_escape_toml_string(mcp.registry_name)}"')
+        lines.append(f'alias = "{_escape_toml_string(mcp.alias)}"')
+        if mcp.transport:
+            lines.append(f'transport = "{_escape_toml_string(mcp.transport)}"')
+        if mcp.overrides:
+            lines.append("  [mcp_server.overrides]")
+            for key, value in mcp.overrides.items():
+                lines.append(f"  {key} = {_render_toml_value(value)}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _escape_toml_string(value: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        char = match.group(0)
+        if char == "\\":
+            return "\\\\"
+        if char == '"':
+            return '\\"'
+        if char == "\n":
+            return "\\n"
+        if char == "\t":
+            return "\\t"
+        code = ord(char)
+        return f"\\u{code:04x}"
+
+    return re.sub(r'[\\"\x00-\x1f\x7f]', _replace, value)
+
+
+def _render_string_list(values: list[str]) -> str:
+    if not values:
+        return "[]"
+    parts = [f'"{_escape_toml_string(v)}"' for v in values]
+    return "[" + ", ".join(parts) + "]"
+
+
+def _render_toml_value(value: object) -> str:
+    if isinstance(value, str):
+        return f'"{_escape_toml_string(value)}"'
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "false"
+    # Fall back to string for anything else.
+    return f'"{_escape_toml_string(str(value))}"'
 
 
 def from_project(name: str, project_root: Path) -> Profile:

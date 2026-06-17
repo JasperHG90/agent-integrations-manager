@@ -1,0 +1,138 @@
+[
+  {
+    "eval_id": 1,
+    "eval_name": "agent-init-full-readme",
+    "with_skill": {
+      "expectations": [
+        {
+          "text": "Logo appears in a centered <p align='center'> block at the top",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "A 'Features' section appears before installation instructions",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Install section contains a fenced code block",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Contributing or Dev section is near the bottom",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    },
+    "without_skill": {
+      "expectations": [
+        {
+          "text": "Logo appears in a centered <p align='center'> block at the top",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "A 'Features' section appears before installation instructions",
+          "passed": false,
+          "evidence": "failed"
+        },
+        {
+          "text": "Install section contains a fenced code block",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Contributing or Dev section is near the bottom",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    }
+  },
+  {
+    "eval_id": 2,
+    "eval_name": "slugify-text-minimal",
+    "with_skill": {
+      "expectations": [
+        {
+          "text": "README is under 80 lines",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Usage or quick start appears before or alongside install",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "No unexplained jargon",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    },
+    "without_skill": {
+      "expectations": [
+        {
+          "text": "README is under 80 lines",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Usage or quick start appears before or alongside install",
+          "passed": false,
+          "evidence": "failed"
+        },
+        {
+          "text": "No unexplained jargon",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    }
+  },
+  {
+    "eval_id": 3,
+    "eval_name": "themed-trustworthy-readme",
+    "with_skill": {
+      "expectations": [
+        {
+          "text": "README references a named theme or applies a consistent accent color",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Badges or visual elements use a cohesive color palette",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Ladder order is preserved",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    },
+    "without_skill": {
+      "expectations": [
+        {
+          "text": "README references a named theme or applies a consistent accent color",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Badges or visual elements use a cohesive color palette",
+          "passed": true,
+          "evidence": "passed"
+        },
+        {
+          "text": "Ladder order is preserved",
+          "passed": true,
+          "evidence": "passed"
+        }
+      ]
+    }
+  }
+]

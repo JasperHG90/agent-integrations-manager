@@ -15,17 +15,21 @@ from textual.widgets import DataTable, Static
 
 from agent_init.core import profiles as profiles_mod
 from agent_init.tui.modals.confirm import ConfirmModal
+from agent_init.tui.modals.export_toml import ExportTomlModal
 from agent_init.tui.modals.project_picker import ProjectPick, ProjectPickerModal
 from agent_init.tui.modals.template_edit import TemplateEditModal, TemplateEditResult
 from agent_init.tui.modals.template_save import TemplateSaveModal, TemplateSaveResult
+from agent_init.tui.screens.template_builder_screen import TemplateBuilderScreen
 
 
 class ProjectTemplatesScreen(Screen[None]):
     BINDINGS = [
         ("escape", "app.pop_screen", "Back"),
         ("b", "app.pop_screen", "Back"),
+        ("n", "new_template", "New"),
         ("a", "save_template", "Save"),
         ("e", "edit_current", "Edit"),
+        ("shift+e", "export_current", "Export TOML"),
         ("u", "update_from_project", "Update from project"),
         ("enter", "view_current", "View"),
         ("v", "view_current", "View"),
@@ -43,7 +47,7 @@ class ProjectTemplatesScreen(Screen[None]):
         yield DataTable(id="templates-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
-            "[a] Save  [e] Edit  [u] Update from project  "
+            "[n] New  [a] Save  [e] Edit  [E] Export TOML  [u] Update from project  "
             "[enter/v] View  [p] Apply  [d] Delete  [b] Back  [q] Quit",
             id="hint",
             markup=False,
@@ -92,6 +96,12 @@ class ProjectTemplatesScreen(Screen[None]):
             except Exception:
                 pass
         self._status(f"{len(profiles)} template(s)")
+
+    def action_new_template(self) -> None:
+        self.app.push_screen(TemplateBuilderScreen(), self._on_new)
+
+    def _on_new(self, result: None) -> None:
+        self._populate()
 
     def action_save_template(self) -> None:
         self.app.push_screen(TemplateSaveModal(), self._on_save)
@@ -299,6 +309,21 @@ class ProjectTemplatesScreen(Screen[None]):
 
         self.app.push_screen(
             ConfirmModal(f"Delete project template {name!r}?"), _on_confirm
+        )
+
+    def action_export_current(self) -> None:
+        name = self._selected_name()
+        if name is None:
+            self._notify_or_status("select a template to export")
+            return
+        try:
+            profile = profiles_mod.load(name)
+        except profiles_mod.ProfileNotFoundError:
+            self._status(f"template {name!r} not found")
+            return
+        self.app.push_screen(
+            ExportTomlModal(profile, initial_path=f"{profile.name}.toml"),
+            lambda _: self._populate(),
         )
 
     def _status(self, msg: str) -> None:

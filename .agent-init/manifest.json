@@ -115,6 +115,22 @@
       "content_hash": "2dca9595f2a8635a224862027352f5f8a8bd0b2070f20321c2b1ad67fa709398",
       "pin": null,
       "track": null
+    },
+    {
+      "qualified_name": "0xforai/aspnet-core-expert",
+      "repo_alias": "0xforai",
+      "repo_url": "https://github.com/0xfurai/claude-code-subagents",
+      "source_path": "agents/aspnet-core-expert.md",
+      "target_path": ".claude/agents/aspnet-core-expert.md",
+      "current": {
+        "tag": null,
+        "sha": "ac521270089d83ad1e427acb4bff0b5d7434b276",
+        "installed_at": "2026-06-17T07:25:52.141708Z"
+      },
+      "history": [],
+      "content_hash": "d2367d6144730efa996c64d8fe5972f810a85a8d41d4d415d99e9e2aa22fccd0",
+      "pin": null,
+      "track": null
     }
   ],
   "mcp_servers": [

@@ -230,8 +230,7 @@ class McpScreen(Screen[None]):
 
                     try:
                         until_dt = datetime.fromisoformat(valid_until)
-                        days = max(0, (until_dt - datetime.now(until_dt.tzinfo)).days)
-                        status = f"cached ({days}d)"
+                        status = f"cached (until {until_dt.strftime('%Y-%m-%d %H:%M')})"
                     except Exception:
                         status = "cached"
                 else:

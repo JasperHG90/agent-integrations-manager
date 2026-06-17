@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "text": "Logo appears in a centered <p align='center'> block at the top",
+      "passed": true,
+      "evidence": "passed"
+    },
+    {
+      "text": "A 'Features' section appears before installation instructions",
+      "passed": true,
+      "evidence": "passed"
+    },
+    {
+      "text": "Install section contains a fenced code block",
+      "passed": true,
+      "evidence": "passed"
+    },
+    {
+      "text": "Contributing or Dev section is near the bottom",
+      "passed": true,
+      "evidence": "passed"
+    }
+  ]
+}
