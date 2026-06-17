@@ -70,7 +70,5 @@ This file provides guidance to coding agents (Claude Code, Gemini CLI, opencode,
 
 <!-- BEGIN aim: rules -->
 
-### rule-one
-
-First rule
+_No rules applied. Add rules with `aim rule add` and apply them with `aim rule apply`._
 <!-- END aim: rules -->

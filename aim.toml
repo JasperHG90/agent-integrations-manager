@@ -1,0 +1,12 @@
+manifest_version = 1
+instruction_template = "default"
+layout_profile = "claude"
+symlinks = [
+    "CLAUDE.md",
+]
+rules = []
+skills = []
+agents = []
+mcp_servers = []
+
+[repos]

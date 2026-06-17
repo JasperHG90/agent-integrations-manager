@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from hermes_runner import agent as agent_module
 from hermes_runner.config import HermesRunnerSettings
 
 
 class _FakeAgent:
-    instances: list['_FakeAgent'] = []
+    instances: list[_FakeAgent] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs

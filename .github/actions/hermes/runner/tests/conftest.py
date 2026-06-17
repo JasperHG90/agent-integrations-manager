@@ -5,7 +5,6 @@ from collections.abc import Iterator
 
 import pytest
 
-
 _RUNNER_ENV_KEYS = [
     'HERMES_RUNNER_MODEL',
     'HERMES_RUNNER_PROVIDER',

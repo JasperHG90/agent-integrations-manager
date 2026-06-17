@@ -1,1 +1,0 @@
-{"eval_id": 3, "eval_name": "themed-trustworthy-readme", "prompt": "Improve the README for an existing project so it looks more trustworthy and follows a modern theme. Ask the user which theme they want from the theme-factory presets.", "assertions": ["User is asked to confirm a theme choice", "Color choices are consistent across badges/diagrams", "Ladder order is preserved"]}
