@@ -79,6 +79,7 @@ class LayoutProfilesScreen(Screen[None]):
         active = self._active_name()
         profiles = layout_profiles.list_profiles(self._project_root)
         table = self.query_one("#profiles-table", DataTable)
+        selected = self._selected_name()
         table.clear()
         for p in profiles:
             is_active = ">" if p.name == active else ""
@@ -93,6 +94,11 @@ class LayoutProfilesScreen(Screen[None]):
                 ",".join(p.mirrors) if p.mirrors else "-",
                 key=p.name,
             )
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         self._status(f"{len(profiles)} profile(s)")
 
     def action_add_profile(self) -> None:

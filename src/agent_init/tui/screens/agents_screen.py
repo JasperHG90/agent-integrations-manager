@@ -51,6 +51,7 @@ class AgentsScreen(Screen[None]):
 
     def _populate(self, query: str) -> None:
         table = self.query_one(DataTable)
+        selected = self._selected()
         table.clear()
         rows = agents.search(query) if query else agents.list_agents()
         if self._repo_filter is not None:
@@ -75,6 +76,11 @@ class AgentsScreen(Screen[None]):
                 r.model or "",
                 key=r.qualified_name,
             )
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         self._status(f"{len(rows)} agent(s){filter_label}")
 
     def action_cycle_repo_filter(self) -> None:

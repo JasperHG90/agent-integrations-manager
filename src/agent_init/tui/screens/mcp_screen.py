@@ -155,13 +155,19 @@ class McpScreen(Screen[None]):
         results: list[mcp_registry.McpSearchResult],
         next_cursor: str | None,
     ) -> None:
-        self._results = results
         table = self.query_one(DataTable)
+        selected = self._selected_name()
+        self._results = results
         table.clear()
         if not results:
             self._status(f"no MCP servers match {self._last_query!r}")
             return
         self._add_rows(results)
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         tail = " (more available)" if next_cursor else ""
         self._status(f"{len(results)} result(s){tail}")
 
@@ -185,12 +191,26 @@ class McpScreen(Screen[None]):
             combined.append(entry)
             shown.add(entry.server.name)
 
+        table = self.query_one(DataTable)
+        selected = self._selected_name()
         self._results = combined
         if not combined:
             self._status("type a search query")
             return
         self._add_rows(combined)
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         self._status(f"{len(installed)} installed · {len(combined) - len(installed)} cached/default")
+
+    def _selected_name(self) -> str | None:
+        table = self.query_one(DataTable)
+        if table.row_count == 0 or not self._results:
+            return None
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        return str(row_key.value) if row_key and row_key.value is not None else None
 
     def _add_rows(self, results: list[mcp_registry.McpSearchResult]) -> None:
         table = self.query_one(DataTable)

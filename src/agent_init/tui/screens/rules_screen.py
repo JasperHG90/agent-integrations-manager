@@ -45,6 +45,7 @@ class RulesScreen(Screen[None]):
 
     def _populate(self) -> None:
         table = self.query_one(DataTable)
+        selected = self._selected()
         table.clear()
         entries = rules.list_all()
         if not entries:
@@ -57,6 +58,11 @@ class RulesScreen(Screen[None]):
                 r.description or "",
                 key=r.name,
             )
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         self._status(f"{len(entries)} rule(s)")
 
     def _selected(self) -> str | None:

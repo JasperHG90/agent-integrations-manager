@@ -99,6 +99,7 @@ class ProjectScreen(Screen[None]):
             return
 
         skills_table = self.query_one("#skills-table", DataTable)
+        skills_key = self._selected_in("#skills-table")
         skills_table.clear()
         for s in m.skills:
             target = paths.safe_project_path(self._project_root, s.target_dir)
@@ -112,6 +113,7 @@ class ProjectScreen(Screen[None]):
             )
 
         agents_table = self.query_one("#agents-table", DataTable)
+        agents_key = self._selected_in("#agents-table")
         agents_table.clear()
         for a in m.agents:
             target = paths.safe_project_path(self._project_root, a.target_path)
@@ -125,6 +127,7 @@ class ProjectScreen(Screen[None]):
             )
 
         mcp_table = self.query_one("#mcp-table", DataTable)
+        mcp_key = self._selected_in("#mcp-table")
         mcp_table.clear()
         try:
             mcp_data = mcp_registry.read_mcp_json(self._project_root)
@@ -144,6 +147,7 @@ class ProjectScreen(Screen[None]):
             )
 
         rules_table = self.query_one("#rules-table", DataTable)
+        rules_key = self._selected_in("#rules-table")
         rules_table.clear()
         for rule_name in m.rules:
             drift, source = self._rule_drift(rule_name)
@@ -154,11 +158,31 @@ class ProjectScreen(Screen[None]):
                 key=rule_name,
             )
 
+        for table_id, key in (
+            ("#skills-table", skills_key),
+            ("#agents-table", agents_key),
+            ("#mcp-table", mcp_key),
+            ("#rules-table", rules_key),
+        ):
+            if key is not None:
+                table = self.query_one(table_id, DataTable)
+                try:
+                    table.move_cursor(row=table.get_row_index(key), animate=False)
+                except Exception:
+                    pass
+
         dialect = f" · agent: {m.agent_dialect}" if m.agent_dialect else ""
         self._status(
             f"{len(m.skills)} skill(s), {len(m.agents)} agent(s), "
             f"{len(m.mcp_servers)} MCP server(s), {len(m.rules)} rule(s){dialect}"
         )
+
+    def _selected_in(self, table_id: str) -> str | None:
+        table = self.query_one(table_id, DataTable)
+        if table.row_count == 0:
+            return None
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        return str(row_key.value) if row_key and row_key.value is not None else None
 
     def _skill_drift(self, s: InstalledSkill, target: Path | None) -> str:
         if target is None:

@@ -76,7 +76,7 @@ class ReposScreen(Screen[None]):
         if selected_alias is not None:
             try:
                 table.move_cursor(row=table.get_row_index(selected_alias), animate=False)
-            except KeyError:
+            except Exception:
                 pass
         self._status(f"{len(rows)} repo(s)")
 

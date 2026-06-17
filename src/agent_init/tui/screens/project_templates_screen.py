@@ -69,6 +69,7 @@ class ProjectTemplatesScreen(Screen[None]):
 
     def _populate(self) -> None:
         table = self.query_one("#templates-table", DataTable)
+        selected = self._selected_name()
         table.clear()
         profiles = profiles_mod.list_profiles()
         if not profiles:
@@ -85,6 +86,11 @@ class ProjectTemplatesScreen(Screen[None]):
                 str(len(p.rules)),
                 key=p.name,
             )
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
         self._status(f"{len(profiles)} template(s)")
 
     def action_save_template(self) -> None:
