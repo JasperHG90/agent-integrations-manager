@@ -43,7 +43,20 @@ Use this skill whenever the user (or another skill/agent) asks to:
    - Agents: `agent-init agent search <query> --compact`
    - Rules: `agent-init rule list --compact` and filter client-side by the query
 
-4. **Present top matches** using the compact NDJSON output. If the request is ambiguous, ask the user to pick one.
+4. **Present top matches with `AskUserQuestion`.** If the request is ambiguous or multiple artifacts match, render the top matches as a single-select `AskUserQuestion`. Use the compact NDJSON fields for labels (qualified name and short description). The tool requires `header`, `question`, `type`, and `options` fields; each option must be an object with `label`, `value`, and `description`. If `AskUserQuestion` is unavailable, list the matches in plain text and ask the user to reply with the qualified name.
+
+   Example:
+   ```json
+   {
+     "header": "Select a skill",
+     "question": "Which skill do you want to install?",
+     "type": "single_select",
+     "options": [
+       {"label": "repo-add", "value": "agent-init/repo-add", "description": "Register source repositories"},
+       {"label": "agent-installer", "value": "agent-init/agent-installer", "description": "Install skills, agents, and rules"}
+     ]
+   }
+   ```
 
 5. **Execute the right command** for the artifact and action:
    - Install: `agent-init skill install <qualified>` / `agent-init agent install <qualified>` / `agent-init rule install <name>`

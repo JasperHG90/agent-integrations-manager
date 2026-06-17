@@ -31,10 +31,45 @@ Use this skill whenever the user wants to:
    - After installing, verify with `agent-init --version` before continuing.
    - If the user declines, stop and explain that this skill requires `agent-init`.
 
-2. **Gather inputs** from context or by asking the user:
-   - Local alias (short, lowercase, e.g. `local`, `anth`, `google`)
-   - Git URL (https, ssh, or `file://`)
-   - Optional default ref (default: `HEAD`)
+2. **Gather inputs with `AskUserQuestion`.** If the alias, URL, or ref are not already clear from context, ask using `AskUserQuestion`. The tool requires `header`, `question`, `type`, and `options` fields; each option must be an object with `label`, `value`, and `description`. For text inputs, supply example options as quick-select suggestions.
+
+   Example:
+   ```json
+   [
+     {
+       "header": "Repository alias",
+       "question": "What alias should I use for this repository? (short, lowercase identifier)",
+       "type": "text",
+       "options": [
+         {"label": "local", "value": "local", "description": "Local filesystem alias"},
+         {"label": "anth", "value": "anth", "description": "Anthropic-related alias"},
+         {"label": "google", "value": "google", "description": "Google-related alias"}
+       ]
+     },
+     {
+       "header": "Repository URL",
+       "question": "What is the repository URL?",
+       "type": "text",
+       "options": [
+         {"label": "https repo", "value": "https://github.com/user/repo.git", "description": "Public HTTPS git URL"},
+         {"label": "ssh repo", "value": "git@github.com:user/repo.git", "description": "SSH git URL"},
+         {"label": "local repo", "value": "file:///path/to/repo", "description": "Local filesystem path as file URL"}
+       ]
+     },
+     {
+       "header": "Git ref (optional)",
+       "question": "Which git ref should I pin? Leave blank for HEAD.",
+       "type": "text",
+       "options": [
+         {"label": "main", "value": "main", "description": "Track the main branch"},
+         {"label": "v1.0.0", "value": "v1.0.0", "description": "Pin to a specific release tag"},
+         {"label": "develop", "value": "develop", "description": "Track a development branch"}
+       ]
+     }
+   ]
+   ```
+
+   If `AskUserQuestion` is unavailable, ask in plain text and confirm the values before running the command.
 
 3. **Prefer `agent-init repo add`.** This indexes skills, agents, and rules in one operation:
 
