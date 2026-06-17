@@ -26,10 +26,10 @@ Use this skill whenever the user (or another skill/agent) asks to:
 
    - Try `command -v atm` or `atm --version`.
    - If the command succeeds, continue with the workflow.
-   - If the command is not found, tell the user: "`atm` is not installed. Install it with `uvx`? Defaults to the latest version; say a version number if you want a specific one."
+   - If the command is not found, tell the user: "`atm` is not installed. Install it with `uv tool install`? Defaults to the latest version; say a version number if you want a specific one."
    - If the user agrees, run:
-     - Latest: `uvx install atm`
-     - Specific version: `uvx install atm==<version>`
+     - Latest: `uv tool install git+https://github.com/JasperHG90/agent-tooling-manager.git`
+     - Specific version: `uv tool install git+https://github.com/JasperHG90/agent-tooling-manager.git@<version>`
    - After installing, verify with `atm --version` before continuing.
    - If the user declines, stop and explain that this skill requires `atm`.
 

@@ -34,6 +34,14 @@ def test_parse_raises_on_unbalanced_markers() -> None:
         agents_md.parse(text)
 
 
+def test_parse_legacy_agent_init_markers_raise_clear_error() -> None:
+    text = "<!-- BEGIN agent-init: header -->\nold content\n<!-- END agent-init: header -->\n"
+    with pytest.raises(agents_md.LegacyMarkerError) as exc_info:
+        agents_md.parse(text)
+    assert "legacy agent-init markers" in str(exc_info.value)
+    assert "migrate to atm markers" in str(exc_info.value)
+
+
 def test_merge_replaces_existing_region_preserving_outside() -> None:
     existing = """User preamble.
 

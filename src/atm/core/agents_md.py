@@ -21,6 +21,10 @@ class RegionError(ValueError):
     """Raised on malformed region markup (unbalanced or unknown markers)."""
 
 
+class LegacyMarkerError(RegionError):
+    """Raised when the file still uses pre-rename `agent-init` markers."""
+
+
 @dataclass(frozen=True)
 class Region:
     name: str
@@ -31,6 +35,13 @@ def parse(text: str) -> list[Region]:
     """Return regions found in `text` in source order. Tolerant of missing markers
     (returns empty list) and of regions wrapped around any content. Raises
     RegionError if a BEGIN marker is found without a matching END."""
+    # Give a clear diagnostic when the file still uses the old `agent-init`
+    # marker string from before the atm rebrand.
+    if re.search(r"<!--\s*(BEGIN|END)\s+agent-init:", text):
+        raise LegacyMarkerError(
+            "legacy agent-init markers detected; migrate to atm markers "
+            "(e.g. '<!-- BEGIN atm: header -->')"
+        )
     regions = [
         Region(name=m.group("name"), body=m.group("body")) for m in _REGION_RE.finditer(text)
     ]

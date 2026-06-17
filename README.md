@@ -121,20 +121,20 @@ Requires Python >= 3.12. macOS and Linux are supported; Windows is not supported
 Run without installing:
 
 ```sh
-uvx --from git+https://github.com/jasperginn/atm.git atm
+uvx --from git+https://github.com/JasperHG90/agent-tooling-manager.git atm
 ```
 
 Install permanently as a `uv` tool:
 
 ```sh
-uv tool install git+https://github.com/jasperginn/atm.git
+uv tool install git+https://github.com/JasperHG90/agent-tooling-manager.git
 ```
 
 For local development:
 
 ```sh
-git clone https://github.com/jasperginn/atm.git
-cd atm
+git clone https://github.com/JasperHG90/agent-tooling-manager.git
+cd agent-tooling-manager
 uv sync
 uv run atm --version
 ```
