@@ -1,21 +1,3 @@
 {
-  "mcpServers": {
-    "new": {
-      "args": [],
-      "env": {},
-      "headers": {},
-      "type": "http",
-      "url": "https://example.com/mcp"
-    },
-    "playwright-mcp": {
-      "args": [
-        "-y",
-        "@playwright/mcp"
-      ],
-      "command": "npx",
-      "env": {},
-      "headers": {},
-      "type": "stdio"
-    }
-  }
+  "mcpServers": {}
 }
