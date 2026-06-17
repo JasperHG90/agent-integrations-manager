@@ -179,10 +179,8 @@ def add(
     ):
         remove(alias)
         raise RepoHasNoArtifactsError(
-            f"{alias}: no SKILL.md found under skills/**/, .claude/skills/**/, "
-            f"*/skills/**/, or repo root; no AGENT.md found under agents/**/, "
-            f".claude/agents/**/, */agents/**/; and no rule .md found under "
-            f"rules/**/ or .claude/rules/**/"
+            f"{alias}: no SKILL.md, AGENT.md, or valid rule .md files found "
+            f"anywhere in the repository"
         )
     return repo
 

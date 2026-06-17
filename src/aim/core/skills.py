@@ -1,22 +1,11 @@
 """Skill discovery + search.
 
-A skill lives inside a registered repo at any depth under one of these
-prefixes (precedence: highest first):
+A skill is any `SKILL.md` file inside a registered repo. The skill `name` is
+the directory containing `SKILL.md`. A bare `SKILL.md` at the repo root uses
+the repo alias as its name.
 
-    1. skills/.../<name>/SKILL.md
-    2. .claude/skills/.../<name>/SKILL.md
-    3. */skills/.../<name>/SKILL.md  (any other nested skills dir, e.g.
-                                     plugins/business-analytics/skills/...)
-    4. <name>/SKILL.md   (at repo root, no prefix)
-    5. SKILL.md          (at repo root, bare)
-
-Intermediate directories under `skills/` and `.claude/skills/` are allowed
-to support repos that group skills by category (e.g.
-`skills/cloud/<name>/SKILL.md` in google/skills). The skill `name` is the
-directory containing SKILL.md.
-
-If the same skill name appears at multiple locations, the higher-precedence
-one wins (ties broken by shallower path); the others are ignored (recorded
+If the same skill name appears at multiple locations, the shallower path
+wins (ties broken by lexicographic path); the others are ignored (recorded
 as shadowed on the returned result).
 
 Discovery results are persisted in the SQLite `SkillIndex` table. The index
@@ -28,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 
 from sqlmodel import delete, select
@@ -43,17 +33,7 @@ def split_csv(value: str) -> list[str]:
     return [p for p in (s.strip() for s in value.split(",")) if p]
 
 
-# Matches:
-#   skills/.../<name>/SKILL.md                    (rank 0; repo root skills dir)
-#   .claude/skills/.../<name>/SKILL.md             (rank 1)
-#   <any-prefix>/skills/.../<name>/SKILL.md       (rank 2; e.g. plugins/cat/skills/...)
-#   <name>/SKILL.md                                (rank 3; root-level dir)
-#   SKILL.md at repo root                          (rank 4)
-_SKILL_RE = re.compile(
-    r"^(?:(?P<prefix>.*)/)?skills/(?:[^/]+/)*(?P<name1>[^/]+)/SKILL\.md$|"
-    r"^(?P<name2>[^/]+)/SKILL\.md$|"
-    r"^SKILL\.md$"
-)
+_SKILL_RE = re.compile(r"^(?P<path>.*)/SKILL\.md$|^SKILL\.md$")
 
 
 class DiscoveredSkill(NamedTuple):
@@ -78,40 +58,26 @@ def discover(repo_alias: str) -> IndexResult:
 
     # Group candidates by skill name with precedence-rank ordering. Ties on
     # prefix are broken by shallower path, then by lexicographic path.
-    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredSkill]]] = {}
+    by_name: dict[str, list[tuple[tuple[int, str], DiscoveredSkill]]] = {}
     for p in paths:
         match = _SKILL_RE.match(p)
         if not match:
             continue
-        prefix = match.group("prefix")
-        name1 = match.group("name1")
-        name2 = match.group("name2")
 
-        if name1 is not None:
-            name = name1
-            # Prefix is the path before the final `skills/` segment.
-            if prefix is None:
-                prefix_rank = 0  # skills/<name>/SKILL.md at repo root
-            elif prefix == ".claude":
-                prefix_rank = 1  # .claude/skills/.../<name>/SKILL.md
-            else:
-                prefix_rank = 2  # any other */skills/.../<name>/SKILL.md
-        elif name2 is not None:
-            name = name2
-            prefix_rank = 3  # root-level <name>/SKILL.md
+        path = match.group("path") or ""
+        if path:
+            name = Path(path).name
+            source_dir = path
         else:
             name = repo_alias
-            prefix_rank = 4  # bare SKILL.md at repo root
+            source_dir = ""
 
-        # Reject path-traversal names like `..` or names with path separators
-        # before they are ever used in filesystem paths.
         if not is_valid_alias(name):
             continue
-        source_dir = p[: -len("/SKILL.md")] if p != "SKILL.md" else ""
         depth = p.count("/")
         by_name.setdefault(name, []).append(
             (
-                (prefix_rank, depth, p),
+                (depth, p),
                 DiscoveredSkill(name=name, source_path=source_dir, skill_md_path=p),
             )
         )

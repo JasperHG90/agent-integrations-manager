@@ -1,19 +1,13 @@
 """Sub-agent discovery + search.
 
-A sub-agent lives inside a registered repo at any depth under one of these
-prefixes (precedence: highest first):
+A sub-agent is any `AGENT.md` file inside a registered repo, or a flat
+`<name>.md` file inside an `agents/` directory (anywhere in the repo).
+The agent `name` is the directory containing `AGENT.md`, or the filename
+stem for flat `agents/<name>.md` files. A bare `AGENT.md` at the repo root
+uses the repo alias as its name.
 
-    1. agents/.../<name>/AGENT.md or agents/.../<name>.md
-    2. .claude/agents/.../<name>/AGENT.md or .claude/agents/.../<name>.md
-    3. */agents/.../<name>/AGENT.md or */agents/.../<name>.md
-       (any other nested agents dir, e.g. plugins/business-analytics/agents/...)
-
-Intermediate directories under `agents/` and `.claude/agents/` are allowed
-to support repos that group agents by category. The agent `name` is the
-parent directory name (nested form) or the filename stem (flat form).
-
-If the same agent name appears at multiple locations, the higher-precedence
-one wins (ties broken by shallower path); the other is ignored.
+If the same agent name appears at multiple locations, the shallower path
+wins (ties broken by lexicographic path); the other is ignored.
 
 Discovery results are persisted in the SQLite `AgentIndex` table. The index
 is rebuilt from the cached bare clone's default ref on refresh.
@@ -23,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from sqlmodel import delete, select
@@ -41,13 +36,9 @@ def split_csv(value: str) -> list[str]:
     return [p for p in (s.strip() for s in value.split(",")) if p]
 
 
-# Matches:
-#   agents/.../<name>/AGENT.md or agents/.../<name>.md    (rank 0; repo root agents dir)
-#   .claude/agents/.../<name>/AGENT.md or .md              (rank 1)
-#   <any-prefix>/agents/.../<name>/AGENT.md or .md        (rank 2; e.g. plugins/cat/agents/...)
 _AGENT_RE = re.compile(
-    r"^(?:(?P<prefix>.*)/)?agents/(?:[^/]+/)*(?P<name_dir>[^/]+)/AGENT\.md$|"
-    r"^(?:(?P<prefix2>.*)/)?agents/(?:[^/]+/)*(?P<name_flat>[^/]+)\.md$"
+    r"^(?P<path>.*)/AGENT\.md$|^AGENT\.md$|"
+    r"^(?:(?P<flat_prefix>.*)/)?agents/(?:[^/]+/)*(?P<name_flat>[^/]+)\.md$"
 )
 
 
@@ -71,36 +62,32 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredAgent]]] = {}
+    by_name: dict[str, list[tuple[tuple[int, str], DiscoveredAgent]]] = {}
     for p in paths:
         match = _AGENT_RE.match(p)
         if not match:
             continue
-        prefix = match.group("prefix")
-        prefix2 = match.group("prefix2")
-        name = match.group("name_dir") or match.group("name_flat")
+
+        flat_name = match.group("name_flat")
+        if flat_name is not None:
+            name = flat_name
+            source_dir = p
+        else:
+            path = match.group("path") or ""
+            if path:
+                name = Path(path).name
+                source_dir = path
+            else:
+                name = repo_alias
+                source_dir = ""
+
         if not validation.is_valid_agent_name(name):
             continue
 
-        # Use the captured prefix from either alternation.
-        effective_prefix = prefix if prefix is not None else prefix2
-        if effective_prefix is None:
-            prefix_rank = 0  # agents/<name>/... at repo root
-        elif effective_prefix == ".claude":
-            prefix_rank = 1  # .claude/agents/.../<name>/...
-        else:
-            prefix_rank = 2  # any other */agents/.../<name>/...
-
         depth = p.count("/")
-        # Flat file: agents/.../<name>.md  -> source_path is the file itself.
-        # Nested dir: agents/.../<name>/AGENT.md -> source_path is the directory.
-        if p.endswith(f"/{name}.md") and not p.endswith(f"/{name}/AGENT.md"):
-            source_dir = p
-        else:
-            source_dir = p[: -len("/AGENT.md")]
         by_name.setdefault(name, []).append(
             (
-                (prefix_rank, depth, p),
+                (depth, p),
                 DiscoveredAgent(name=name, source_path=source_dir, agent_md_path=p),
             )
         )

@@ -161,14 +161,13 @@ The global SQLite DB is a **cache**. The project's `manifest.json` is the **sour
 
 ### Skill and agent discovery
 
-A registered repo must expose at least one skill or agent artifact at one of these paths (precedence high to low):
+A registered repo can expose skills, agents, and rules in **any** location. `aim` discovers:
 
-1. `skills/<name>/SKILL.md` or `agents/<name>/AGENT.md`
-2. `.claude/skills/<name>/SKILL.md` or `.claude/agents/<name>/AGENT.md`
-3. `<name>/SKILL.md` or `<name>/AGENT.md` at repo root
-4. `SKILL.md` or `AGENT.md` at repo root (the repo alias becomes the artifact name)
+- Any `SKILL.md` file anywhere in the repo. The skill name is its parent directory; a bare `SKILL.md` at the repo root uses the repo alias as its name.
+- Any `AGENT.md` file anywhere in the repo, plus flat `<name>.md` files inside any `agents/` directory. The agent name follows the same rules as skills.
+- Any `.md` file whose stem is a valid rule name anywhere in the repo. Names like `README.md` are ignored.
 
-Artifacts are referenced everywhere as `<repo_alias>/<name>`. Repos with no discoverable artifacts are rejected on `repo add` unless you pass `--allow-empty`.
+If the same name appears in multiple places, the shallower path wins (ties broken by lexicographic path). Artifacts are referenced everywhere as `<repo_alias>/<name>`. Repos with no discoverable artifacts are rejected on `repo add` unless you pass `--allow-empty`.
 
 ### Versioning
 
