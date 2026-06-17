@@ -78,6 +78,16 @@ def test_update_detects_local_edits(home: Path, tmp_path: Path, project_root: Pa
     agent_install.update(project_root, qn, force=True)
 
 
+def test_uninstall_removes_file_and_manifest_entry(
+    home: Path, tmp_path: Path, project_root: Path
+) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    agent_install.install(project_root, qn)
+    agent_install.delete(project_root, qn)
+    assert not (project_root / ".claude" / "agents" / "review.md").exists()
+    assert manifest.load(project_root).agents == []
+
+
 def test_delete_removes_file_and_manifest_entry(home: Path, tmp_path: Path, project_root: Path) -> None:
     _, qn = _make_project_and_repo(tmp_path, project_root)
     agent_install.install(project_root, qn)

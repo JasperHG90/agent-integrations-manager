@@ -135,6 +135,21 @@ def test_delete_removes_target_and_manifest_entry(
     assert m.skills == []
 
 
+def test_uninstall_removes_target_and_manifest_entry(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    _, bare = _build_repo(tmp_path, {"skills/foo/SKILL.md": "# foo\n"})
+    repos.add("a", f"file://{bare}")
+    install.install(project_root, "a/foo")
+    target = project_root / ".claude" / "skills" / "foo"
+    assert target.exists()
+
+    install.delete(project_root, "a/foo")
+    assert not target.exists()
+    m = manifest.load(project_root)
+    assert m.skills == []
+
+
 def test_delete_unknown_errors(home: Path, project_root: Path) -> None:
     with pytest.raises(install.SkillNotInstalledError):
         install.delete(project_root, "ghost/skill")

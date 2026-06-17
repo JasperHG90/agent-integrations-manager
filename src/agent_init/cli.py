@@ -579,15 +579,25 @@ def mcp_update_cmd(
     typer.echo(f"updated MCP server {updated.alias} -> {updated.current.registry_version or '?'}")
 
 
-@mcp_app.command("delete")
+@mcp_app.command("uninstall")
 @_friendly
-def mcp_delete_cmd(
+def mcp_uninstall_cmd(
     alias: str = typer.Argument(..., help="Local alias."),
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
     """Remove a managed MCP server from .mcp.json."""
     mcp_install_mod.delete(_here(project), alias)
-    typer.echo(f"deleted MCP server {alias}")
+    typer.echo(f"uninstalled MCP server {alias}")
+
+
+@mcp_app.command("delete", hidden=True)
+@_friendly
+def mcp_delete_cmd(
+    alias: str = typer.Argument(..., help="Local alias."),
+    project: Path | None = typer.Argument(None, help="Project root."),
+) -> None:
+    """Deprecated alias for "uninstall"."""
+    mcp_uninstall_cmd(alias, project)
 
 
 @app.command("tui")
@@ -984,14 +994,25 @@ def skill_update_many(
         raise typer.Exit(code=1)
 
 
-@skill_app.command("delete")
+@skill_app.command("uninstall")
+@_friendly
+def skill_uninstall(
+    qualified_name: str = typer.Argument(...),
+    project: Path | None = typer.Argument(None),
+) -> None:
+    """Remove an installed skill from the project."""
+    install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"uninstalled {qualified_name}")
+
+
+@skill_app.command("delete", hidden=True)
 @_friendly
 def skill_delete(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    install_mod.delete(_here(project), qualified_name)
-    typer.echo(f"deleted {qualified_name}")
+    """Deprecated alias for "uninstall"."""
+    skill_uninstall(qualified_name, project)
 
 
 @skill_app.command("rollback")
@@ -1100,14 +1121,25 @@ def agent_update_many(
         raise typer.Exit(code=1)
 
 
-@agent_app.command("delete")
+@agent_app.command("uninstall")
+@_friendly
+def agent_uninstall(
+    qualified_name: str = typer.Argument(...),
+    project: Path | None = typer.Argument(None),
+) -> None:
+    """Remove an installed sub-agent from the project."""
+    agent_install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"uninstalled {qualified_name}")
+
+
+@agent_app.command("delete", hidden=True)
 @_friendly
 def agent_delete(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    agent_install_mod.delete(_here(project), qualified_name)
-    typer.echo(f"deleted {qualified_name}")
+    """Deprecated alias for "uninstall"."""
+    agent_uninstall(qualified_name, project)
 
 
 @agent_app.command("rollback")

@@ -127,6 +127,21 @@ def test_delete_removes_entry(project_root: Path) -> None:
     assert m.mcp_servers == []
 
 
+@respx.mock
+def test_uninstall_removes_entry(project_root: Path) -> None:
+    init.run(init.InitOptions(project_root=project_root))
+    respx.get(f"{mcp_registry._REGISTRY_BASE}").mock(
+        return_value=Response(200, json=_http_payload("srv"))
+    )
+    mcp_install.install(project_root, "srv", alias="srv")
+    mcp_install.delete(project_root, "srv")
+
+    data = json.loads((project_root / ".mcp.json").read_text())
+    assert "srv" not in data.get("mcpServers", {})
+    m = mcp_install.manifest.load(project_root)
+    assert m.mcp_servers == []
+
+
 def test_delete_unknown_alias_raises(project_root: Path) -> None:
     init.run(init.InitOptions(project_root=project_root))
     with pytest.raises(mcp_install.McpServerNotInstalledError):

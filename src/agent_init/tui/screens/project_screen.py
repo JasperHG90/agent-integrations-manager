@@ -33,7 +33,7 @@ class ProjectScreen(Screen[None]):
         ("b", "app.pop_screen", "Back"),
         ("u", "update_current", "Update"),
         ("r", "rollback_current", "Rollback"),
-        ("x", "delete_current", "Delete"),
+        ("x", "uninstall_current", "Uninstall"),
         ("q", "app.quit", "Quit"),
     ]
 
@@ -61,7 +61,7 @@ class ProjectScreen(Screen[None]):
                 yield DataTable(id="rules-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
-            "[u] Update  [r] Rollback  [x] Delete  [b] Back  [q] Quit",
+            "[u] Update  [r] Rollback  [x] Uninstall  [b] Back  [q] Quit",
             id="hint",
             markup=False,
         )
@@ -372,7 +372,7 @@ class ProjectScreen(Screen[None]):
         self.app.notify(f"rolled back {key} -> {result.current.identifier()}")
         self._populate()
 
-    def action_delete_current(self) -> None:
+    def action_uninstall_current(self) -> None:
         key = self._guard()
         if key is None:
             return
@@ -392,12 +392,12 @@ class ProjectScreen(Screen[None]):
                 elif kind == "mcp":
                     mcp_install.delete(self._project_root, key)
             except Exception as exc:
-                self.app.notify(f"delete failed: {exc}", severity="error")
+                self.app.notify(f"uninstall failed: {exc}", severity="error")
                 return
-            self.app.notify(f"deleted {key}")
+            self.app.notify(f"uninstalled {key}")
             self._populate()
 
-        self.app.push_screen(ConfirmModal(f"Delete {kind} {key!r}?"), _on_confirm)
+        self.app.push_screen(ConfirmModal(f"Uninstall {kind} {key!r}?"), _on_confirm)
 
     def _status(self, msg: str) -> None:
         self.last_status = msg
