@@ -56,6 +56,7 @@ class ReposScreen(Screen[None]):
 
     def _populate(self) -> None:
         table = self.query_one(DataTable)
+        selected_alias = self._selected_alias()
         table.clear()
         rows = repos.list_repos()
         if not rows:
@@ -72,6 +73,11 @@ class ReposScreen(Screen[None]):
                 when = _humanize((now - fetched).total_seconds())
             tag = kind_tag(repos.artifact_kinds(r.alias))
             table.add_row(r.alias, r.url, sha, when, tag, key=r.alias)
+        if selected_alias is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected_alias), animate=False)
+            except KeyError:
+                pass
         self._status(f"{len(rows)} repo(s)")
 
     def _selected_alias(self) -> str | None:
