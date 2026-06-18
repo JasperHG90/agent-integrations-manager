@@ -176,7 +176,44 @@ def _alias_from_url(url: str) -> str:
     return alias or "repo"
 
 
-def _resolve_or_register_repo(url: str, *, alias: str | None, allow_insecure: bool) -> str:
+# Web "tree"/"blob" URLs (GitHub, GitLab, Gitea, ...) that point at a path
+# *inside* a repo on a branch: <scheme>://<host>/<org>/<repo>/tree/<ref>/<subpath>.
+# These are not cloneable as-is; we split out the clone URL, ref, and subpath.
+_TREE_URL_RE = re.compile(
+    r"^(?P<base>https?://[^/]+/[^/]+/[^/]+?)(?:\.git)?/(?:tree|blob|-/tree|-/blob)/"
+    r"(?P<ref>[^/]+)/(?P<subpath>.+?)/?$"
+)
+
+
+def _parse_source_url(url: str) -> tuple[str, str | None, str | None]:
+    """Split a source URL into (clone_url, ref, inferred_name).
+
+    A plain clone URL passes through unchanged with no ref/name. A web
+    tree/blob URL is decomposed so the repo can actually be cloned and the
+    artifact name inferred from the in-repo path (a `<name>.md` file yields its
+    stem; a `<name>/SKILL.md`/`AGENT.md` yields the directory name; a bare
+    directory yields its last segment)."""
+    match = _TREE_URL_RE.match(url.strip())
+    if match is None:
+        return url, None, None
+    clone_url = match.group("base")
+    ref = match.group("ref")
+    segments = [s for s in match.group("subpath").split("/") if s]
+    name: str | None = None
+    if segments:
+        last = segments[-1]
+        if last.lower() in ("skill.md", "agent.md"):
+            name = segments[-2] if len(segments) >= 2 else None
+        elif last.endswith(".md"):
+            name = last[:-3]
+        else:
+            name = last
+    return clone_url, ref, name
+
+
+def _resolve_or_register_repo(
+    url: str, *, alias: str | None, allow_insecure: bool, default_ref: str | None = None
+) -> str:
     """Resolve a full git URL to a registered repo alias, registering it if
     necessary. Reuses an existing alias when the URL is already registered;
     otherwise registers under `alias` (or one derived from the URL)."""
@@ -195,8 +232,29 @@ def _resolve_or_register_repo(url: str, *, alias: str | None, allow_insecure: bo
         )
     if existing is None:
         typer.echo(f"registering repo {chosen!r} -> {url}")
-        repos_mod.add(chosen, url, allow_empty=True, allow_insecure=allow_insecure)
+        repos_mod.add(
+            chosen, url, default_ref=default_ref or "HEAD", allow_empty=True,
+            allow_insecure=allow_insecure,
+        )
     return chosen
+
+
+def _qualified_for_add(
+    ctx: typer.Context, url: str, name: str | None, alias: str | None, kind: str
+) -> str:
+    """Resolve `add`'s URL (+ optional NAME) to a qualified name, registering the
+    repo if needed. Accepts a clone URL or a web tree/blob URL; when the URL
+    encodes the artifact path, NAME is inferred from it."""
+    clone_url, ref, name_hint = _parse_source_url(url)
+    resolved = name or name_hint
+    if not resolved:
+        raise typer.BadParameter(
+            f"could not infer the {kind} name from {url!r}; pass NAME explicitly"
+        )
+    repo_alias = _resolve_or_register_repo(
+        clone_url, alias=alias, allow_insecure=_get_allow_insecure(ctx), default_ref=ref
+    )
+    return f"{repo_alias}/{resolved}"
 
 
 @app.callback()
@@ -933,8 +991,10 @@ def rule_search(
 @_friendly
 def rule_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Full git URL of the source repository."),
-    name: str = typer.Argument(..., help="Rule name within the repository."),
+    url: str = typer.Argument(..., help="Git clone URL, or a web tree/blob URL to the rule."),
+    name: str | None = typer.Argument(
+        None, help="Rule name within the repo (inferred from a tree/blob URL if omitted)."
+    ),
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     alias: str | None = typer.Option(
         None, "--alias", help="Repo alias to register under (default: derived from the URL)."
@@ -949,10 +1009,7 @@ def rule_add(
     ),
 ) -> None:
     """Add a rule from a git repository, registering the repo if needed."""
-    repo_alias = _resolve_or_register_repo(
-        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
-    )
-    qualified_name = f"{repo_alias}/{name}"
+    qualified_name = _qualified_for_add(ctx, url, name, alias, "rule")
     installed = rule_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
     typer.echo(f"added rule {qualified_name} {installed.current.identifier()}")
 
@@ -1136,8 +1193,10 @@ def skill_search(
 @_friendly
 def skill_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Full git URL of the source repository."),
-    name: str = typer.Argument(..., help="Skill name within the repository."),
+    url: str = typer.Argument(..., help="Git clone URL, or a web tree/blob URL to the skill."),
+    name: str | None = typer.Argument(
+        None, help="Skill name within the repo (inferred from a tree/blob URL if omitted)."
+    ),
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     alias: str | None = typer.Option(
         None, "--alias", help="Repo alias to register under (default: derived from the URL)."
@@ -1152,10 +1211,7 @@ def skill_add(
     ),
 ) -> None:
     """Add a skill from a git repository, registering the repo if needed."""
-    repo_alias = _resolve_or_register_repo(
-        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
-    )
-    qualified_name = f"{repo_alias}/{name}"
+    qualified_name = _qualified_for_add(ctx, url, name, alias, "skill")
     installed = install_mod.install(_here(project), qualified_name, pin=pin, track=track)
     typer.echo(
         f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
@@ -1323,8 +1379,10 @@ def agent_search(
 @_friendly
 def agent_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Full git URL of the source repository."),
-    name: str = typer.Argument(..., help="Sub-agent name within the repository."),
+    url: str = typer.Argument(..., help="Git clone URL, or a web tree/blob URL to the sub-agent."),
+    name: str | None = typer.Argument(
+        None, help="Sub-agent name within the repo (inferred from a tree/blob URL if omitted)."
+    ),
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     alias: str | None = typer.Option(
         None, "--alias", help="Repo alias to register under (default: derived from the URL)."
@@ -1339,10 +1397,7 @@ def agent_add(
     ),
 ) -> None:
     """Add a sub-agent from a git repository, registering the repo if needed."""
-    repo_alias = _resolve_or_register_repo(
-        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
-    )
-    qualified_name = f"{repo_alias}/{name}"
+    qualified_name = _qualified_for_add(ctx, url, name, alias, "sub-agent")
     installed = agent_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
     typer.echo(
         f"added {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
