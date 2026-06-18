@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -69,52 +69,56 @@ class ConfigScreen(Screen[None]):
         instruction_template = decl.instruction_template or "default"
         applied_rules = list(m.rules) if m else list(decl.rules)
 
-        yield Vertical(
-            Static(f"Project: {self._project_root}", classes="config-paths", markup=False),
-            Static(
-                "lockfile: "
-                + str(paths.project_lock_path(self._project_root))
-                + ("" if has_manifest else "  (not initialized — save will create one)"),
-                classes="config-paths",
-                markup=False,
-            ),
-            Static(
-                f"Active layout profile: {active_profile}",
-                id="active-profile",
-                classes="config-paths",
-                markup=False,
-            ),
-            Static("Project root:", classes="config-heading", markup=False),
-            Input(value=str(self._project_root), id="proj-root"),
-            Static("Instruction template:", classes="config-heading", markup=False),
-            Input(value=instruction_template, id="proj-template"),
-            Static(
-                f"Applied rules ({len(applied_rules)}):",
-                classes="config-heading",
-                markup=False,
-            ),
-            Static(
-                ", ".join(applied_rules)
-                if applied_rules
-                else "(none — manage on the Rules screen)",
-                id="proj-rules-display",
-                classes="config-paths",
-                markup=False,
-            ),
-            Button("Save project settings (updates aim.toml)", id="proj-save", variant="primary"),
-            Static(_HELP_TEXT, classes="config-help", markup=True),
-            id="project-pane",
-        )
-
         template_body = (
             self._template_path.read_text(encoding="utf-8") if self._template_path.exists() else ""
         )
-        yield Vertical(
-            Static("Global default template", classes="config-heading", markup=False),
-            Static(_TEMPLATE_HELP, classes="config-help", markup=True),
-            TextArea(template_body, id="global-template", language="markdown"),
-            Button("Save global template", id="template-save", variant="primary"),
-            id="template-pane",
+        yield VerticalScroll(
+            Vertical(
+                Static(f"Project: {self._project_root}", classes="config-paths", markup=False),
+                Static(
+                    "lockfile: "
+                    + str(paths.project_lock_path(self._project_root))
+                    + ("" if has_manifest else "  (not initialized — save will create one)"),
+                    classes="config-paths",
+                    markup=False,
+                ),
+                Static(
+                    f"Active layout profile: {active_profile}",
+                    id="active-profile",
+                    classes="config-paths",
+                    markup=False,
+                ),
+                Static("Project root:", classes="config-heading", markup=False),
+                Input(value=str(self._project_root), id="proj-root"),
+                Static("Instruction template:", classes="config-heading", markup=False),
+                Input(value=instruction_template, id="proj-template"),
+                Static(
+                    f"Applied rules ({len(applied_rules)}):",
+                    classes="config-heading",
+                    markup=False,
+                ),
+                Static(
+                    ", ".join(applied_rules)
+                    if applied_rules
+                    else "(none — manage on the Rules screen)",
+                    id="proj-rules-display",
+                    classes="config-paths",
+                    markup=False,
+                ),
+                Button(
+                    "Save project settings (updates aim.toml)", id="proj-save", variant="primary"
+                ),
+                Static(_HELP_TEXT, classes="config-help", markup=True),
+                id="project-pane",
+            ),
+            Vertical(
+                Static("Global default template", classes="config-heading", markup=False),
+                Static(_TEMPLATE_HELP, classes="config-help", markup=True),
+                TextArea(template_body, id="global-template", language="markdown"),
+                Button("Save global template", id="template-save", variant="primary"),
+                id="template-pane",
+            ),
+            id="config-scroll",
         )
 
         yield Static("", id="status", markup=False)
@@ -122,6 +126,11 @@ class ConfigScreen(Screen[None]):
             "[b] Back  [q] Quit  — manage profiles with [l] PROFILES",
             id="hint",
             markup=False,
+        )
+
+    def on_screen_resume(self) -> None:
+        self.query_one("#active-profile", Static).update(
+            f"Active layout profile: {self._active_profile_label()}"
         )
 
     def _active_profile_label(self) -> str:

@@ -170,6 +170,9 @@ class MainScreen(Screen[None]):
 
         self.app.push_screen(ConfigScreen(project_root=self._project_root))
 
+    def on_screen_resume(self) -> None:
+        self.query_one("#banner", Static).update(_render_banner(self._project_root))
+
     def action_open_layout_profiles(self) -> None:
         from aim.tui.screens.layout_profiles_screen import LayoutProfilesScreen
 
