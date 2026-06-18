@@ -35,6 +35,9 @@ class ReposScreen(Screen[None]):
         ("q", "app.quit", "Quit"),
     ]
 
+    _adding: RepoAddResult | None = None
+    _refreshing: str | None = None
+
     def compose(self) -> ComposeResult:
         yield Static("Registered Repos", id="title", markup=False)
         yield DataTable(id="repos-table", cursor_type="row")

@@ -31,10 +31,10 @@ async def test_mcp_screen_defaults_and_enter_search(
 
     search_results = [
         mcp_registry.McpSearchResult(
-            server=_server("io.github.hubertgajewski/playwright-report-mcp", "1.0.0"), meta={}
+            server=_server("io.github.hubertgajewski/playwright-report-mcp", "1.0.0"), _meta={}
         ),
         mcp_registry.McpSearchResult(
-            server=_server("io.github.hubertgajewski/playwright-report-mcp", "1.0.2"), meta={}
+            server=_server("io.github.hubertgajewski/playwright-report-mcp", "1.0.2"), _meta={}
         ),
     ]
 

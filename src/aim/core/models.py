@@ -14,7 +14,7 @@ from sqlmodel import SQLModel
 # ---------- DB tables ----------
 
 
-class RegisteredRepo(SQLModel, table=True):
+class RegisteredRepo(SQLModel, table=True):  # type: ignore[call-arg]  # type: ignore[call-arg]
     """A skill source repo registered globally on this machine."""
 
     alias: str = SQLField(primary_key=True)
@@ -24,7 +24,7 @@ class RegisteredRepo(SQLModel, table=True):
     last_sha: str | None = None
 
 
-class SkillIndex(SQLModel, table=True):
+class SkillIndex(SQLModel, table=True):  # type: ignore[call-arg]
     """Discovered skill within a registered repo, used for `skill list/search`."""
 
     qualified_name: str = SQLField(primary_key=True)  # "<alias>/<skill_name>"
@@ -40,7 +40,7 @@ class SkillIndex(SQLModel, table=True):
     provides: str = ""  # capability tags this skill claims to fulfill
 
 
-class Template(SQLModel, table=True):
+class Template(SQLModel, table=True):  # type: ignore[call-arg]
     """A registered AGENTS.md template (built-in default plus user-registered)."""
 
     name: str = SQLField(primary_key=True)
@@ -48,7 +48,7 @@ class Template(SQLModel, table=True):
     description: str | None = None
 
 
-class RuleEntry(SQLModel, table=True):
+class RuleEntry(SQLModel, table=True):  # type: ignore[call-arg]
     """User-saved rule snippet. Body lives at user_config_dir/rules/<name>.md."""
 
     name: str = SQLField(primary_key=True)
@@ -56,7 +56,7 @@ class RuleEntry(SQLModel, table=True):
     description: str | None = None
 
 
-class RegisteredRuleRepo(SQLModel, table=True):
+class RegisteredRuleRepo(SQLModel, table=True):  # type: ignore[call-arg]
     """A shared rule library overlay — markdown rules cloned from a git repo
     and resolved as a lower-priority source after the local library."""
 
@@ -67,7 +67,7 @@ class RegisteredRuleRepo(SQLModel, table=True):
     last_sha: str | None = None
 
 
-class LayoutProfile(SQLModel, table=True):
+class LayoutProfile(SQLModel, table=True):  # type: ignore[call-arg]
     """Cached global layout profile. Repo-side global profiles are authoritative;
     the DB is a cache for sharing across projects."""
 
@@ -77,14 +77,14 @@ class LayoutProfile(SQLModel, table=True):
     updated_at: datetime
 
 
-class GlobalSetting(SQLModel, table=True):
+class GlobalSetting(SQLModel, table=True):  # type: ignore[call-arg]
     """Single-row key/value settings for machine-wide defaults."""
 
     key: str = SQLField(primary_key=True)
     value: str
 
 
-class AgentIndex(SQLModel, table=True):
+class AgentIndex(SQLModel, table=True):  # type: ignore[call-arg]
     """Discovered sub-agent within a registered repo, used for `agent list/search`."""
 
     qualified_name: str = SQLField(primary_key=True)  # "<alias>/<agent_name>"
@@ -99,7 +99,7 @@ class AgentIndex(SQLModel, table=True):
     model: str | None = None
 
 
-class RuleIndex(SQLModel, table=True):
+class RuleIndex(SQLModel, table=True):  # type: ignore[call-arg]
     """Discovered rule within a registered repo, used for rule search/overlay."""
 
     qualified_name: str = SQLField(primary_key=True)  # "<alias>/<rule_name>"
@@ -111,7 +111,7 @@ class RuleIndex(SQLModel, table=True):
     indexed_at_sha: str
 
 
-class McpServerCache(SQLModel, table=True):
+class McpServerCache(SQLModel, table=True):  # type: ignore[call-arg]
     """Cached default MCP registry server definitions for instant TUI startup."""
 
     name: str = SQLField(primary_key=True)  # canonical registry server name

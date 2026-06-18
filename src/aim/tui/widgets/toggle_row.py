@@ -12,7 +12,7 @@ from textual.reactive import reactive
 from textual.widgets import Static
 
 
-class ToggleRow(Static, can_focus=True):
+class ToggleRow(Static, can_focus=True):  # type: ignore[call-arg]
     """Focusable row with a clickable/keyboard toggle marker."""
 
     value: reactive[bool] = reactive(False)

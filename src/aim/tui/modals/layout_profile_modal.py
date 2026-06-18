@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -186,7 +187,7 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
             return layout_profiles.LayoutProfileScope.GLOBAL
         return layout_profiles.LayoutProfileScope.PROJECT
 
-    def _read_rules_mode(self) -> str:
+    def _read_rules_mode(self) -> Literal["files", "inline"]:
         rs = self.query_one("#rules-mode", RadioSet)
         pressed = rs.pressed_button
         if pressed is not None and pressed.id == "rules-mode-inline":

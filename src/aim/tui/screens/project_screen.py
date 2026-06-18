@@ -438,6 +438,7 @@ class ProjectScreen(Screen[None]):
                 "rules have no rollback; re-run init to refresh them", severity="information"
             )
             return
+        result: InstalledSkill | InstalledAgent | InstalledMcpServer
         try:
             if kind == "skills":
                 result = skill_install.rollback(self._project_root, key)

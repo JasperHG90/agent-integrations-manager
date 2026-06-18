@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 
 _REGISTRY_BASE = "https://registry.modelcontextprotocol.io/v0/servers"
 _SEARCH_TTL_SECONDS = 60
-_SEARCH_CACHE = TTLCache(maxsize=128, ttl=_SEARCH_TTL_SECONDS)
+_SEARCH_CACHE: TTLCache[tuple[str, str | None], tuple[list[McpSearchResult], str | None]] = (
+    TTLCache(maxsize=128, ttl=_SEARCH_TTL_SECONDS)
+)
 _DEFAULT_CACHE_MAXSIZE = 64
-_DEFAULT_CACHE = LRUCache(maxsize=_DEFAULT_CACHE_MAXSIZE)
+_DEFAULT_CACHE: LRUCache[str, McpServer] = LRUCache(maxsize=_DEFAULT_CACHE_MAXSIZE)
 _CACHE_LOCK = threading.Lock()
 _DB_CACHE_TTL_DAYS = 7
 _TIMEOUT_SECONDS = 15

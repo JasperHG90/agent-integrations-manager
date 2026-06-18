@@ -38,6 +38,10 @@ class ProjectTemplatesScreen(Screen[None]):
         ("q", "app.quit", "Quit"),
     ]
 
+    _pending_edit: str | None = None
+    _pending_update: str | None = None
+    _pending_apply: str | None = None
+
     def __init__(self, project_root: Path | None = None) -> None:
         super().__init__()
         self._project_root = (project_root or Path.cwd()).resolve()

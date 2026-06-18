@@ -38,6 +38,11 @@ class TemplateBuilderScreen(Screen[None]):
 
     def __init__(self, profile: profiles_mod.Profile | None = None) -> None:
         super().__init__()
+        self._name: str
+        self._skills: list[profiles_mod.ProfileSkill]
+        self._agents: list[profiles_mod.ProfileAgent]
+        self._rules: list[str]
+        self._mcp_servers: list[profiles_mod.ProfileMcpServer]
         if profile is not None:
             self._name = profile.name
             self._skills = list(profile.skills)
@@ -46,10 +51,10 @@ class TemplateBuilderScreen(Screen[None]):
             self._mcp_servers = list(profile.mcp_servers)
         else:
             self._name = ""
-            self._skills: list[profiles_mod.ProfileSkill] = []
-            self._agents: list[profiles_mod.ProfileAgent] = []
-            self._rules: list[str] = []
-            self._mcp_servers: list[profiles_mod.ProfileMcpServer] = []
+            self._skills = []
+            self._agents = []
+            self._rules = []
+            self._mcp_servers = []
 
     def _profile(self) -> profiles_mod.Profile:
         return profiles_mod.Profile(

@@ -33,6 +33,7 @@ class McpScreen(Screen[None]):
         self._default_results: list[mcp_registry.McpSearchResult] | None = None
         self._cached_results: list[mcp_registry.McpSearchResult] | None = None
         self._installed_results: list[mcp_registry.McpSearchResult] | None = None
+        self._installing: tuple[mcp_registry.McpServer, McpInstallConfig] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("MCP servers", id="title", markup=False)

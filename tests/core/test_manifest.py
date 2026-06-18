@@ -60,7 +60,7 @@ def test_history_push_caps_at_limit() -> None:
         skill.push_history(new)
     assert len(skill.history) == HISTORY_CAP
     # newest history entry should be the previously-current one
-    assert skill.history[0].tag.startswith("v1.0.")
+    assert (skill.history[0].tag or "").startswith("v1.0.")
 
 
 def test_migrate_from_v0() -> None:
