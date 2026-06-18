@@ -78,7 +78,7 @@ jobs:
           markers: "not integration"
 
   build-python:
-    needs: [changes, pre-commit, python-tests, mcp-import-check]
+    needs: [changes, pre-commit, python-tests]
     if: always() && !failure() && !cancelled() && (github.event_name == 'push' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
