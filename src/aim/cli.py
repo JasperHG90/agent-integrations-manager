@@ -801,7 +801,13 @@ def sync_cmd(
 def prune_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
     dry_run: bool = typer.Option(
-        False, "--dry-run", "-n", help="Preview removals without deleting."
+        False, "--dry-run", "-n", help="Show plan and exit (no prompt, no changes)."
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "--skip-plan",
+        help="Skip the plan prompt and prune immediately.",
     ),
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile to use (overrides manifest)."
@@ -809,27 +815,95 @@ def prune_cmd(
     exclude: list[str] = typer.Option(
         [], "--exclude", help="Glob pattern to protect from pruning (can be repeated)."
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show kept items in addition to removals."
+    ),
 ) -> None:
-    """Remove skills/agents/rules/MCP servers not listed in aim.lock.toml.
+    """Remove lockfile entries no longer declared in aim.toml.
 
-    Persistent exclusions can also be stored in an `.aimignore` file at the
-    project root with one glob pattern per line, e.g. `.claude/skills/local/*`.
+    Prune compares aim.toml (declarations) against aim.lock.toml (installed
+    state) and removes entries — and their on-disk files — that are no longer
+    declared. Files on disk not tracked by aim (e.g. installed by Terraform or
+    other plugins) are left alone.
+
+    By default, prune shows a plan and prompts for confirmation. Use --force
+    (or --skip-plan) to apply immediately, or --dry-run to preview only.
+
+    Persistent exclusions can be stored in an .aimignore file at the project
+    root with one glob pattern per line, e.g. .claude/skills/local/*.
     """
+    import sys
+
     console = Console()
-    with console.status("Pruning artifacts...", spinner="dots"):
-        result = prune_mod.run(
-            prune_mod.PruneOptions(
-                project_root=_here(project),
-                dry_run=dry_run,
-                layout_profile=layout_profile,
-                excludes=list(exclude),
-            )
+    err_console = Console(stderr=True)
+    options = prune_mod.PruneOptions(
+        project_root=_here(project),
+        dry_run=dry_run,
+        force=force,
+        layout_profile=layout_profile,
+        excludes=list(exclude),
+    )
+
+    try:
+        plan_result = prune_mod.plan(options)
+    except prune_mod.PruneError as exc:
+        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    # Missing aim.toml — warnings explain; nothing to apply.
+    if not any(i.action == "would-remove" for i in plan_result.removed):
+        prune_mod.render_prune_plan(plan_result, verbose=verbose)
+        for warning in plan_result.warnings:
+            console.print(f"[yellow]warning:[/yellow] {warning}")
+        return
+
+    prune_mod.render_prune_plan(plan_result, verbose=verbose)
+    for warning in plan_result.warnings:
+        console.print(f"[yellow]warning:[/yellow] {warning}")
+
+    if dry_run:
+        return
+
+    if force:
+        try:
+            apply_result = prune_mod.apply(options, plan_result)
+        except prune_mod.PruneError as exc:
+            err_console.print(f"[bold red]error:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
+        _print_prune_apply_result(console, apply_result)
+        return
+
+    if not sys.stdin.isatty():
+        err_console.print(
+            "[yellow]warning:[/yellow] not a TTY; use --force to apply. No changes made."
         )
+        raise typer.Exit(code=0)
+
+    n = sum(1 for i in plan_result.removed if i.action == "would-remove")
+    confirmed = typer.confirm(f"Apply {n} change(s)?", default=False)
+    if not confirmed:
+        console.print("Aborted. No changes made.")
+        return
+
+    try:
+        apply_result = prune_mod.apply(options, plan_result)
+    except prune_mod.PruneError as exc:
+        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    _print_prune_apply_result(console, apply_result)
+
+
+def _print_prune_apply_result(console: Console, result: prune_mod.PruneResult) -> None:
     for item in result.removed:
-        prefix = "would remove" if item.action == "would-remove" else item.action
-        typer.echo(f"{prefix} {item.kind} {item.path}", err=item.action != "removed")
+        if item.action == "removed":
+            console.print(f"[red]removed[/red] {item.kind} {item.path}")
+        elif item.action == "removed-stale-entry":
+            console.print(f"[red]removed[/red] (stale) {item.kind} {item.path}")
     for item in result.kept:
-        typer.echo(f"{item.action} {item.kind} {item.path}")
+        if item.action.startswith("error") or item.action == "skipped-unsafe":
+            console.print(f"[yellow]{item.action}[/yellow] {item.kind} {item.path}")
+    for warning in result.warnings:
+        console.print(f"[yellow]warning:[/yellow] {warning}")
 
 
 def _print_diffs(changes: list) -> None:  # type: ignore[type-arg]

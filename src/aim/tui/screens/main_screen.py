@@ -21,6 +21,7 @@ from aim.core import layout_profiles
 from aim.core import lock as lock_mod
 from aim.core import prune as prune_mod
 from aim.core import sync as sync_mod
+from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.init_modal import InitConfig, InitModal
 
 _ROCKET = (
@@ -190,6 +191,35 @@ class MainScreen(Screen[None]):
         )
 
     def action_open_prune(self) -> None:
+        self.run_worker(self._plan_prune_thread, exclusive=True, thread=True)
+
+    def _plan_prune_thread(self) -> None:
+        try:
+            plan_result = prune_mod.plan(
+                prune_mod.PruneOptions(project_root=self._project_root)
+            )
+        except Exception as exc:
+            self.app.call_from_thread(self.app.notify, f"prune failed: {exc}", severity="error")
+            return
+        removals = [i for i in plan_result.removed if i.action == "would-remove"]
+        if not removals:
+            self.app.call_from_thread(self.app.notify, "Nothing to prune.", title="Prune")
+            return
+        summary = "\n".join(f"{i.kind}: {i.path}" for i in removals)
+        for warn in plan_result.warnings:
+            self.app.call_from_thread(self.app.notify, warn, severity="warning")
+        self.app.call_from_thread(
+            self.app.push_screen,
+            ConfirmModal(
+                f"Remove {len(removals)} item(s)?\n\n{summary}",
+                confirm_label="Prune",
+            ),
+            self._on_prune_confirm,
+        )
+
+    def _on_prune_confirm(self, confirmed: bool | None) -> None:
+        if confirmed is not True:
+            return
         self.run_worker(self._do_prune_thread, exclusive=True, thread=True)
 
     def _do_lock_thread(self) -> None:
@@ -228,8 +258,16 @@ class MainScreen(Screen[None]):
 
     def _do_prune_thread(self) -> None:
         try:
-            result = prune_mod.run(
-                prune_mod.PruneOptions(project_root=self._project_root, dry_run=False)
+            plan_result = prune_mod.plan(
+                prune_mod.PruneOptions(project_root=self._project_root)
+            )
+            removals = [i for i in plan_result.removed if i.action == "would-remove"]
+            if not removals:
+                self.app.call_from_thread(self.app.notify, "Nothing to prune.", title="Prune")
+                return
+            result = prune_mod.apply(
+                prune_mod.PruneOptions(project_root=self._project_root, force=True),
+                plan_result,
             )
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"prune failed: {exc}", severity="error")
