@@ -11,6 +11,7 @@ backstop.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -112,12 +113,20 @@ async def test_rules_screen_structure_with_rule(home: Path) -> None:
 # ---------- Single bitmap backstop per area (layout regression) ----------
 
 
+skip_in_ci = pytest.mark.skipif(
+    os.environ.get("CI") == "true",
+    reason="Bitmap snapshots are rendered with the local terminal; they differ across platforms.",
+)
+
+
+@skip_in_ci
 def test_snapshot_main_layout(home: Path, snap_compare) -> None:  # type: ignore[no-untyped-def]
     """One bitmap test per area — catches gross layout regressions. Update
     via `pytest tests/tui --snapshot-update` after intentional UI changes."""
     assert snap_compare(AimApp())
 
 
+@skip_in_ci
 def test_snapshot_skills_populated(
     home: Path,
     tmp_path: Path,
