@@ -722,6 +722,9 @@ def init_cmd(
 def lock_cmd(
     ctx: typer.Context,
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Always rewrite aim.lock.toml, even if unchanged."
+    ),
 ) -> None:
     """Resolve aim.toml declarations into an exact aim.lock.toml."""
     console = Console()
@@ -735,11 +738,16 @@ def lock_cmd(
                 project_root=_here(project),
                 allow_insecure=_get_allow_insecure(ctx),
                 progress_callback=_progress,
+                force=force,
             )
         )
 
     with console.status("Locking dependencies...", spinner="dots") as status:
         result = asyncio.run(_run(status))
+
+    if result.unchanged:
+        typer.echo("aim.lock.toml up to date; no changes")
+        return
 
     for qn in result.locked_skills:
         typer.echo(f"locked skill {qn}")

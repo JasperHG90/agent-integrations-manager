@@ -57,6 +57,7 @@ class LockOptions:
     project_root: Path
     progress_callback: Callable[[str, str, str], object] | None = None
     allow_insecure: bool = False
+    force: bool = False
 
 
 @dataclass
@@ -67,6 +68,7 @@ class LockResult:
     locked_mcp: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    unchanged: bool = False
 
 
 def _notify(
@@ -148,10 +150,19 @@ def _hash_skill_at_sha(skill: DeclaredSkill, sha: str) -> str:
     return h.hexdigest()
 
 
-def _lock_skill(skill: DeclaredSkill) -> tuple[InstalledSkill | None, str | None]:
+def _lock_skill(
+    skill: DeclaredSkill, cached: InstalledSkill | None = None
+) -> tuple[InstalledSkill | None, str | None]:
     try:
         version = _resolve_skill_version(skill)
-        content_hash = _hash_skill_at_sha(skill, version.sha)
+        if (
+            cached is not None
+            and cached.current.sha == version.sha
+            and cached.source_path == skill.source_path
+        ):
+            content_hash = cached.content_hash
+        else:
+            content_hash = _hash_skill_at_sha(skill, version.sha)
     except Exception as exc:
         return None, f"{skill.qualified_name}: {exc}"
     repo_url = repos.get(skill.repo_alias).url
@@ -172,13 +183,16 @@ def _lock_skill(skill: DeclaredSkill) -> tuple[InstalledSkill | None, str | None
 async def _lock_skills(
     skills: list[DeclaredSkill],
     callback: Callable[[str, str, str], object] | None,
+    cached_by_name: dict[str, InstalledSkill] | None = None,
 ) -> tuple[list[InstalledSkill], list[str]]:
     if not skills:
         return [], []
 
+    lookup = cached_by_name or {}
+
     async def _one(skill: DeclaredSkill) -> tuple[InstalledSkill | None, str | None]:
         _notify(callback, "skill", skill.qualified_name, "locking")
-        installed, error = await asyncio.to_thread(_lock_skill, skill)
+        installed, error = await asyncio.to_thread(_lock_skill, skill, lookup.get(skill.qualified_name))
         if error:
             _notify(callback, "skill", skill.qualified_name, "error")
         else:
@@ -210,11 +224,20 @@ def _read_agent_at_sha(agent: DeclaredAgent, sha: str) -> str:
     return git.get_backend().cat_file(repo_dir, sha, artifact_path)
 
 
-def _lock_agent(agent: DeclaredAgent) -> tuple[InstalledAgent | None, str | None]:
+def _lock_agent(
+    agent: DeclaredAgent, cached: InstalledAgent | None = None
+) -> tuple[InstalledAgent | None, str | None]:
     try:
         version = _resolve_agent_version(agent)
-        content = _read_agent_at_sha(agent, version.sha)
-        content_hash = hashing.hash_text(content)
+        if (
+            cached is not None
+            and cached.current.sha == version.sha
+            and cached.source_path == agent.source_path
+        ):
+            content_hash = cached.content_hash
+        else:
+            content = _read_agent_at_sha(agent, version.sha)
+            content_hash = hashing.hash_text(content)
     except Exception as exc:
         return None, f"{agent.qualified_name}: {exc}"
     repo_url = repos.get(agent.repo_alias).url
@@ -235,13 +258,16 @@ def _lock_agent(agent: DeclaredAgent) -> tuple[InstalledAgent | None, str | None
 async def _lock_agents(
     agents: list[DeclaredAgent],
     callback: Callable[[str, str, str], object] | None,
+    cached_by_name: dict[str, InstalledAgent] | None = None,
 ) -> tuple[list[InstalledAgent], list[str]]:
     if not agents:
         return [], []
 
+    lookup = cached_by_name or {}
+
     async def _one(agent: DeclaredAgent) -> tuple[InstalledAgent | None, str | None]:
         _notify(callback, "agent", agent.qualified_name, "locking")
-        installed, error = await asyncio.to_thread(_lock_agent, agent)
+        installed, error = await asyncio.to_thread(_lock_agent, agent, lookup.get(agent.qualified_name))
         if error:
             _notify(callback, "agent", agent.qualified_name, "error")
         else:
@@ -319,6 +345,101 @@ def _compute_region_hashes(
     return {name: hashing.hash_text(body) for name, body in regions.items()}
 
 
+def _skill_key(s: InstalledSkill) -> tuple:
+    return (
+        s.qualified_name,
+        s.repo_alias,
+        s.repo_url,
+        s.source_path,
+        s.target_dir,
+        s.content_hash,
+        s.current.sha,
+        s.current.tag,
+        s.pin,
+        s.track,
+    )
+
+
+def _agent_key(a: InstalledAgent) -> tuple:
+    return (
+        a.qualified_name,
+        a.repo_alias,
+        a.repo_url,
+        a.source_path,
+        a.target_path,
+        a.content_hash,
+        a.current.sha,
+        a.current.tag,
+        a.pin,
+        a.track,
+    )
+
+
+def _mcp_key(m: InstalledMcpServer) -> tuple:
+    return (
+        m.alias,
+        m.registry_name,
+        m.entry_hash,
+        m.current.definition_hash,
+        m.current.registry_version,
+        m.current.overrides,
+        m.overrides,
+    )
+
+
+def _top_level_key(m: Manifest) -> tuple:
+    return (
+        m.instruction_template,
+        m.layout_profile,
+        tuple(m.rules),
+        tuple(m.symlinks),
+        tuple(m.managed_files),
+        tuple(sorted(m.managed_region_hashes.items())),
+    )
+
+
+def _lockfile_unchanged(existing: Manifest, new: Manifest) -> bool:
+    if _top_level_key(existing) != _top_level_key(new):
+        return False
+    if [_skill_key(s) for s in existing.skills] != [_skill_key(s) for s in new.skills]:
+        return False
+    if [_agent_key(a) for a in existing.agents] != [_agent_key(a) for a in new.agents]:
+        return False
+    if [_mcp_key(m) for m in existing.mcp_servers] != [_mcp_key(m) for m in new.mcp_servers]:
+        return False
+    return True
+
+
+def _preserve_unchanged_metadata(existing: Manifest | None, new: Manifest) -> None:
+    """For items whose comparison key matches an entry in `existing`, restore the
+    prior `installed_at` and `history` so unchanged items don't show a fresh
+    timestamp (and don't lose rollback history) on a partial-change re-lock.
+    """
+    if existing is None:
+        return
+
+    skill_by_key = {_skill_key(s): s for s in existing.skills}
+    for s in new.skills:
+        prev_skill = skill_by_key.get(_skill_key(s))
+        if prev_skill is not None:
+            s.current = prev_skill.current
+            s.history = list(prev_skill.history)
+
+    agent_by_key = {_agent_key(a): a for a in existing.agents}
+    for a in new.agents:
+        prev_agent = agent_by_key.get(_agent_key(a))
+        if prev_agent is not None:
+            a.current = prev_agent.current
+            a.history = list(prev_agent.history)
+
+    mcp_by_key = {_mcp_key(m): m for m in existing.mcp_servers}
+    for m in new.mcp_servers:
+        prev_mcp = mcp_by_key.get(_mcp_key(m))
+        if prev_mcp is not None:
+            m.current = prev_mcp.current
+            m.history = list(prev_mcp.history)
+
+
 async def run(options: LockOptions) -> LockResult:
     project_root = options.project_root.resolve()
     decl = _load_declarations(project_root)
@@ -326,14 +447,26 @@ async def run(options: LockOptions) -> LockResult:
 
     result = LockResult(project_root=project_root)
 
+    try:
+        existing = manifest.load(project_root)
+    except manifest.ManifestNotFoundError:
+        existing = None
+
+    cached_skills: dict[str, InstalledSkill] = {} if options.force else {
+        s.qualified_name: s for s in (existing.skills if existing else [])
+    }
+    cached_agents: dict[str, InstalledAgent] = {} if options.force else {
+        a.qualified_name: a for a in (existing.agents if existing else [])
+    }
+
     _notify(options.progress_callback, "repos", "all", "locking")
     result.errors = await _ensure_repos(decl, options.allow_insecure)
     _notify(options.progress_callback, "repos", "all", "ok")
 
     # Skills, agents, MCPs, and region hashes only depend on repos being
     # available, so lock them concurrently instead of sequentially.
-    skills_task = _lock_skills(decl.skills, options.progress_callback)
-    agents_task = _lock_agents(decl.agents, options.progress_callback)
+    skills_task = _lock_skills(decl.skills, options.progress_callback, cached_skills)
+    agents_task = _lock_agents(decl.agents, options.progress_callback, cached_agents)
     mcps_task = _lock_mcps(decl.mcp_servers, options.progress_callback)
     regions_task = asyncio.to_thread(_compute_region_hashes, decl, profile)
 
@@ -365,9 +498,21 @@ async def run(options: LockOptions) -> LockResult:
         mcp_servers=mcps_locked,
     )
 
-    manifest.save(project_root, lock)
+    if not options.force:
+        _preserve_unchanged_metadata(existing, lock)
 
     all_errors = result.errors + skill_errors + agent_errors + mcp_errors
+    if (
+        existing is not None
+        and not options.force
+        and not all_errors
+        and _lockfile_unchanged(existing, lock)
+    ):
+        result.unchanged = True
+        return result
+
+    manifest.save(project_root, lock)
+
     if all_errors:
         # Lock is partial; re-run will continue where it left off.
         raise LockError("; ".join(all_errors))

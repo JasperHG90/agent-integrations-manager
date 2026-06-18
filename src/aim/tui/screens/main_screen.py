@@ -209,6 +209,11 @@ class MainScreen(Screen[None]):
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"lock failed: {exc}", severity="error")
             return
+        if result.unchanged:
+            self.app.call_from_thread(
+                self.app.notify, "aim.lock.toml up to date; no changes", title="Lock"
+            )
+            return
         self.app.call_from_thread(
             self.app.notify,
             f"locked {len(result.locked_skills)} skills, "
