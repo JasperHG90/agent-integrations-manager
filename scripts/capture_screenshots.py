@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from aim.core import repos, rules
+from aim.core import repos
 from aim.tui.app import AimApp
 
 
@@ -112,9 +112,9 @@ async def capture_screenshots(output_dir: Path) -> list[Path]:
             {
                 "skills/review/SKILL.md": "# Review\n\nReview a PR.\n",
                 "skills/format/SKILL.md": "# Format\n\nApply formatting.\n",
+                "rules/be-concise.md": "---\ndescription: brevity\n---\nBe concise.\n",
             },
         )
-        rules.add("be-concise", "Be concise.", description="brevity", is_default=True)
 
         app = AimApp()
         screenshots: list[Path] = []

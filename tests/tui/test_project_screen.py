@@ -63,9 +63,7 @@ async def test_project_screen_shows_clean_and_edited(
 
 
 @pytest.mark.asyncio
-async def test_project_screen_rules_tab(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+async def test_project_screen_rules_tab(home: Path, project_root: Path, tmp_path: Path) -> None:
     working = git_fixtures.make_source_repo(
         tmp_path / "rsrc", files={"rules/be-concise.md": "Be concise.\n", "README.md": "x\n"}
     )

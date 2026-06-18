@@ -130,9 +130,7 @@ def test_apply_reproduces_state(home: Path, project_root: Path, tmp_path: Path) 
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("anth", f"file://{bare}")
-    init_mod.run(
-        init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",))
-    )
+    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",)))
     install.install(project_root, "anth/foo")
     rule_install.install(project_root, "anth/be-concise")
 

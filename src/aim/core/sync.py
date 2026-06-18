@@ -358,8 +358,7 @@ def _sync_rule(
             return installed.qualified_name, None
         if not force:
             raise SyncDriftError(
-                f"{installed.qualified_name}: {rel} edited since install; "
-                "pass --force to overwrite"
+                f"{installed.qualified_name}: {rel} edited since install; pass --force to overwrite"
             )
 
     try:

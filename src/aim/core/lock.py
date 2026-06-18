@@ -196,7 +196,9 @@ async def _lock_skills(
 
     async def _one(skill: DeclaredSkill) -> tuple[InstalledSkill | None, str | None]:
         _notify(callback, "skill", skill.qualified_name, "locking")
-        installed, error = await asyncio.to_thread(_lock_skill, skill, lookup.get(skill.qualified_name))
+        installed, error = await asyncio.to_thread(
+            _lock_skill, skill, lookup.get(skill.qualified_name)
+        )
         if error:
             _notify(callback, "skill", skill.qualified_name, "error")
         else:
@@ -271,7 +273,9 @@ async def _lock_agents(
 
     async def _one(agent: DeclaredAgent) -> tuple[InstalledAgent | None, str | None]:
         _notify(callback, "agent", agent.qualified_name, "locking")
-        installed, error = await asyncio.to_thread(_lock_agent, agent, lookup.get(agent.qualified_name))
+        installed, error = await asyncio.to_thread(
+            _lock_agent, agent, lookup.get(agent.qualified_name)
+        )
         if error:
             _notify(callback, "agent", agent.qualified_name, "error")
         else:
@@ -341,7 +345,9 @@ async def _lock_rules(
 
     async def _one(rule: DeclaredRule) -> tuple[InstalledRule | None, str | None]:
         _notify(callback, "rule", rule.qualified_name, "locking")
-        installed, error = await asyncio.to_thread(_lock_rule, rule, lookup.get(rule.qualified_name))
+        installed, error = await asyncio.to_thread(
+            _lock_rule, rule, lookup.get(rule.qualified_name)
+        )
         if error:
             _notify(callback, "rule", rule.qualified_name, "error")
         else:
@@ -551,15 +557,19 @@ async def run(options: LockOptions) -> LockResult:
     except manifest.ManifestNotFoundError:
         existing = None
 
-    cached_skills: dict[str, InstalledSkill] = {} if options.force else {
-        s.qualified_name: s for s in (existing.skills if existing else [])
-    }
-    cached_agents: dict[str, InstalledAgent] = {} if options.force else {
-        a.qualified_name: a for a in (existing.agents if existing else [])
-    }
-    cached_rules: dict[str, InstalledRule] = {} if options.force else {
-        r.qualified_name: r for r in (existing.rules if existing else [])
-    }
+    cached_skills: dict[str, InstalledSkill] = (
+        {}
+        if options.force
+        else {s.qualified_name: s for s in (existing.skills if existing else [])}
+    )
+    cached_agents: dict[str, InstalledAgent] = (
+        {}
+        if options.force
+        else {a.qualified_name: a for a in (existing.agents if existing else [])}
+    )
+    cached_rules: dict[str, InstalledRule] = (
+        {} if options.force else {r.qualified_name: r for r in (existing.rules if existing else [])}
+    )
 
     _notify(options.progress_callback, "repos", "all", "locking")
     result.errors = await _ensure_repos(decl, options.allow_insecure)
@@ -587,9 +597,7 @@ async def run(options: LockOptions) -> LockResult:
     # Region hashes depend on the locked rule bodies (read at their pinned
     # SHAs), so compute them after the rule lock — not concurrently — to avoid a
     # moving-HEAD race between the region hash and each rule's content_hash.
-    region_hashes = await asyncio.to_thread(
-        _compute_region_hashes, decl, profile, rules_locked
-    )
+    region_hashes = await asyncio.to_thread(_compute_region_hashes, decl, profile, rules_locked)
 
     managed_files = [
         profile.agents_md,

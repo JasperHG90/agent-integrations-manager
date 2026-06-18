@@ -243,7 +243,10 @@ def _resolve_or_register_repo(
             raise typer.Abort()
         typer.echo(f"registering repo {chosen!r} -> {url}")
         repos_mod.add(
-            chosen, url, default_ref=default_ref or "HEAD", allow_empty=True,
+            chosen,
+            url,
+            default_ref=default_ref or "HEAD",
+            allow_empty=True,
             allow_insecure=allow_insecure,
         )
     return chosen
@@ -283,9 +286,7 @@ def _qualified_for_add(
                     f"(`aim repo add {repo_alias} <git-url>`), then retry."
                 )
             return target
-        raise typer.BadParameter(
-            f"expected a git URL or '<alias>/<name>', got {target!r}"
-        )
+        raise typer.BadParameter(f"expected a git URL or '<alias>/<name>', got {target!r}")
 
     clone_url, ref, name_hint = _parse_source_url(target)
     resolved = name or name_hint
@@ -1037,7 +1038,10 @@ def rule_search(
 @_friendly
 def rule_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo."),
+    url: str = typer.Argument(
+        ...,
+        help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo.",
+    ),
     name: str | None = typer.Argument(
         None, help="Rule name within the repo (inferred from a tree/blob URL if omitted)."
     ),
@@ -1242,7 +1246,10 @@ def skill_search(
 @_friendly
 def skill_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo."),
+    url: str = typer.Argument(
+        ...,
+        help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo.",
+    ),
     name: str | None = typer.Argument(
         None, help="Skill name within the repo (inferred from a tree/blob URL if omitted)."
     ),
@@ -1265,9 +1272,7 @@ def skill_add(
     """Add a skill from a git repository, registering the repo if needed."""
     qualified_name = _qualified_for_add(ctx, url, name, alias, "skill", assume_yes=yes)
     installed = install_mod.install(_here(project), qualified_name, pin=pin, track=track)
-    typer.echo(
-        f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
-    )
+    typer.echo(f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}")
     for warn in install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
 
@@ -1431,7 +1436,10 @@ def agent_search(
 @_friendly
 def agent_add(
     ctx: typer.Context,
-    url: str = typer.Argument(..., help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo."),
+    url: str = typer.Argument(
+        ...,
+        help="Git URL (clone or web tree/blob), or '<alias>/<name>' of an already-registered repo.",
+    ),
     name: str | None = typer.Argument(
         None, help="Sub-agent name within the repo (inferred from a tree/blob URL if omitted)."
     ),

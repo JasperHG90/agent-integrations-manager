@@ -98,9 +98,7 @@ def test_update_with_force_overrides_local_edits(
 # ---------- #3: in-region drift warning on re-init ----------
 
 
-def test_sync_warns_on_in_region_drift(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_warns_on_in_region_drift(home: Path, project_root: Path, tmp_path: Path) -> None:
     from aim.core import layout_profiles
 
     _, bare = _build_repo(tmp_path, {"rules/focus.md": "Focus.\n", "README.md": "x\n"})
@@ -118,9 +116,7 @@ def test_sync_warns_on_in_region_drift(
             rules_mode="inline",
         ),
     )
-    init_mod.run(
-        init_mod.InitOptions(project_root=project_root, layout_profile="inline")
-    )
+    init_mod.run(init_mod.InitOptions(project_root=project_root, layout_profile="inline"))
     rule_install.install(project_root, "a/focus")
     asyncio.run(lock_run(LockOptions(project_root=project_root)))
     asyncio.run(

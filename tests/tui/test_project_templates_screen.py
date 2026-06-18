@@ -130,7 +130,9 @@ async def test_template_edit_checkbox_toggles_uncheck_all(
 
 
 @pytest.mark.asyncio
-async def test_template_edit_togglerow_space_toggles(home: Path, project_root: Path, tmp_path: Path) -> None:
+async def test_template_edit_togglerow_space_toggles(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     """Focused ToggleRow must toggle on Space."""
     _register_rule_repo(tmp_path, ["rule-one"])
     init.run(init.InitOptions(project_root=project_root))
@@ -162,7 +164,9 @@ async def test_template_edit_togglerow_space_toggles(home: Path, project_root: P
 
 
 @pytest.mark.asyncio
-async def test_template_edit_togglerow_reaches_by_tab(home: Path, project_root: Path, tmp_path: Path) -> None:
+async def test_template_edit_togglerow_reaches_by_tab(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     """Tab navigation must reach ToggleRow and Space must toggle it."""
     _register_rule_repo(tmp_path, ["rule-tab"])
     init.run(init.InitOptions(project_root=project_root))

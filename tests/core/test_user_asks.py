@@ -110,9 +110,7 @@ def test_rule_install_adds_to_manifest_and_renders(
     assert "Be concise." in agents_md
 
 
-def test_rule_install_preserves_symlinks(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_rule_install_preserves_symlinks(home: Path, project_root: Path, tmp_path: Path) -> None:
     _save_inline_profile(project_root)
     init_mod.run(
         init_mod.InitOptions(

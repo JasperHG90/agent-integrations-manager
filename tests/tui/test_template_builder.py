@@ -84,9 +84,7 @@ async def test_builder_adds_rule(home: Path, project_root: Path, tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_builder_skips_duplicate_rule(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+async def test_builder_skips_duplicate_rule(home: Path, project_root: Path, tmp_path: Path) -> None:
     _register_rule_repo(tmp_path, ["dup-rule"])
     app = AimApp(project_root=project_root)
     async with app.run_test() as pilot:

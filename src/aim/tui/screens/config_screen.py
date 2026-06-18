@@ -67,7 +67,7 @@ class ConfigScreen(Screen[None]):
 
         active_profile = self._active_profile_label()
         instruction_template = decl.instruction_template or "default"
-        applied_rules = list(m.rules) if m else list(decl.rules)
+        applied_rules = [r.qualified_name for r in (m.rules if m else decl.rules)]
 
         template_body = (
             self._template_path.read_text(encoding="utf-8") if self._template_path.exists() else ""

@@ -195,9 +195,7 @@ class MainScreen(Screen[None]):
 
     def _plan_prune_thread(self) -> None:
         try:
-            plan_result = prune_mod.plan(
-                prune_mod.PruneOptions(project_root=self._project_root)
-            )
+            plan_result = prune_mod.plan(prune_mod.PruneOptions(project_root=self._project_root))
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"prune failed: {exc}", severity="error")
             return
@@ -258,9 +256,7 @@ class MainScreen(Screen[None]):
 
     def _do_prune_thread(self) -> None:
         try:
-            plan_result = prune_mod.plan(
-                prune_mod.PruneOptions(project_root=self._project_root)
-            )
+            plan_result = prune_mod.plan(prune_mod.PruneOptions(project_root=self._project_root))
             removals = [i for i in plan_result.removed if i.action == "would-remove"]
             if not removals:
                 self.app.call_from_thread(self.app.notify, "Nothing to prune.", title="Prune")

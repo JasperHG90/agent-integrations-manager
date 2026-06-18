@@ -10,6 +10,7 @@ default:
 # Sync dependencies and install the project in the local venv.
 install:
     uv sync
+    uv run prek install
 
 # Run the full pytest suite.
 test *args='':

@@ -363,9 +363,7 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
     rule_names_to_remove = {_rule_name_from_rel(rel) for rel in rule_rels}
     m.skills = [s for s in m.skills if s.target_dir not in skill_paths]
     m.agents = [a for a in m.agents if a.target_path not in agent_paths]
-    m.rules = [
-        r for r in m.rules if r.qualified_name.split("/", 1)[-1] not in rule_names_to_remove
-    ]
+    m.rules = [r for r in m.rules if r.qualified_name.split("/", 1)[-1] not in rule_names_to_remove]
     m.symlinks = [s for s in m.symlinks if s not in symlink_paths]
     m.mcp_servers = [mc for mc in m.mcp_servers if mc.alias not in mcp_aliases]
     # Inline rules are rendered into AGENTS.md managed regions; removing a rule

@@ -132,7 +132,11 @@ def install(
     """Install a rule into the project."""
     row = _rule_index_row(qualified_name)
     version = resolve_install_version(
-        row.repo_alias, row.rule_md_path, track=track, pin=pin, artifact_name=Path(row.rule_md_path).name
+        row.repo_alias,
+        row.rule_md_path,
+        track=track,
+        pin=pin,
+        artifact_name=Path(row.rule_md_path).name,
     )
     content = repo_rules.read_rule_content(qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"rule {qualified_name}")
