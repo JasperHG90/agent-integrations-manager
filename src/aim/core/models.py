@@ -48,25 +48,6 @@ class Template(SQLModel, table=True):  # type: ignore[call-arg]
     description: str | None = None
 
 
-class RuleEntry(SQLModel, table=True):  # type: ignore[call-arg]
-    """User-saved rule snippet. Body lives at user_config_dir/rules/<name>.md."""
-
-    name: str = SQLField(primary_key=True)
-    is_default: bool = False
-    description: str | None = None
-
-
-class RegisteredRuleRepo(SQLModel, table=True):  # type: ignore[call-arg]
-    """A shared rule library overlay — markdown rules cloned from a git repo
-    and resolved as a lower-priority source after the local library."""
-
-    alias: str = SQLField(primary_key=True)
-    url: str
-    default_ref: str = "HEAD"
-    last_fetched_at: datetime | None = None
-    last_sha: str | None = None
-
-
 class LayoutProfile(SQLModel, table=True):  # type: ignore[call-arg]
     """Cached global layout profile. Repo-side global profiles are authoritative;
     the DB is a cache for sharing across projects."""
@@ -121,7 +102,7 @@ class McpServerCache(SQLModel, table=True):  # type: ignore[call-arg]
 
 # ---------- Project declarations (aim.toml) ----------
 
-CURRENT_DECLARATIONS_VERSION = 2
+CURRENT_DECLARATIONS_VERSION = 3
 
 
 class DeclaredRepo(BaseModel):
@@ -154,6 +135,16 @@ class DeclaredAgent(BaseModel):
     pin: str | None = None
 
 
+class DeclaredRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str
+    repo_alias: str
+    source_path: str  # path of the rule .md file relative to repo root
+    track: str | None = None
+    pin: str | None = None
+
+
 class DeclaredMcpServer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -172,7 +163,7 @@ class ProjectDeclarations(BaseModel):
     instruction_template: str = "default"
     layout_profile: str | None = None
     symlinks: list[str] = Field(default_factory=list)
-    rules: list[str] = Field(default_factory=list)
+    rules: list[DeclaredRule] = Field(default_factory=list)
     repos: dict[str, str] = Field(default_factory=dict)
     skills: list[DeclaredSkill] = Field(default_factory=list)
     agents: list[DeclaredAgent] = Field(default_factory=list)
@@ -181,7 +172,7 @@ class ProjectDeclarations(BaseModel):
 
 # ---------- Manifest (per-project lockfile, committed) ----------
 
-CURRENT_MANIFEST_VERSION = 7  # v7: dropped per-project agent_dialect
+CURRENT_MANIFEST_VERSION = 8  # v8: rules are repo-sourced, SHA-pinned artifacts
 HISTORY_CAP = 10
 
 
@@ -287,6 +278,39 @@ class InstalledAgent(BaseModel):
             del self.history[HISTORY_CAP:]
 
 
+class InstalledRule(BaseModel):
+    """An installed rule, mirroring InstalledAgent. A rule is a single .md file;
+    its render target is derived from the active layout profile (files dir or
+    inline AGENTS.md region), so there is no per-rule target_path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<rule_name>" at install time
+    repo_alias: str  # the local alias at install time
+    repo_url: str
+    source_path: str  # path of the rule .md file inside the source repo
+    current: SkillVersion
+    history: list[SkillVersion] = Field(default_factory=list)
+    content_hash: str | None = None  # sha256 of installed file text (drift detection)
+    pin: str | None = None
+    track: str | None = None
+
+    def push_history(self, new_current: SkillVersion) -> None:
+        self.history.insert(0, self.current)
+        self.current = new_current
+        if len(self.history) > HISTORY_CAP:
+            del self.history[HISTORY_CAP:]
+
+
+class RenderRule(BaseModel):
+    """Render-time view of a rule body, consumed by the AGENTS.md template
+    (which references `.name`, `.description`, `.body`). Not persisted."""
+
+    name: str
+    body: str
+    description: str | None = None
+
+
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -295,7 +319,7 @@ class Manifest(BaseModel):
     skills: list[InstalledSkill] = Field(default_factory=list)
     agents: list[InstalledAgent] = Field(default_factory=list)
     mcp_servers: list[InstalledMcpServer] = Field(default_factory=list)
-    rules: list[str] = Field(default_factory=list)
+    rules: list[InstalledRule] = Field(default_factory=list)
     managed_files: list[str] = Field(default_factory=list)
     # Hash of the last-written body of each managed region inside AGENTS.md (and
     # symlinks). Drift means the user edited inside markers — warn before rewrite.

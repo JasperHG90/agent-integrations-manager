@@ -53,14 +53,6 @@ def snapshots_cache_dir() -> Path:
     return user_cache_dir() / "snapshots"
 
 
-def rules_library_dir() -> Path:
-    return user_config_dir() / "rules"
-
-
-def rule_repos_cache_dir() -> Path:
-    return user_cache_dir() / "rule_repos"
-
-
 def templates_library_dir() -> Path:
     return user_config_dir() / "templates"
 
@@ -114,8 +106,6 @@ def ensure_global_dirs() -> None:
         user_config_dir(),
         repos_cache_dir(),
         snapshots_cache_dir(),
-        rule_repos_cache_dir(),
-        rules_library_dir(),
         templates_library_dir(),
     ):
         path.mkdir(parents=True, exist_ok=True)

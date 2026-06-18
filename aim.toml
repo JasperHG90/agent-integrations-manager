@@ -1,12 +1,10 @@
-manifest_version = 2
+manifest_version = 3
 instruction_template = "default"
 layout_profile = "claude"
 symlinks = [
     "CLAUDE.md",
 ]
-rules = [
-    "pre-existing-issues",
-]
+rules = []
 mcp_servers = []
 
 [repos]

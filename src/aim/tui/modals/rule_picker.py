@@ -11,12 +11,13 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Static
 
-from aim.core import rules
+from aim.core import repo_rules
+from aim.core.models import RuleIndex
 
 
 @dataclass(frozen=True)
 class RulePick:
-    name: str
+    name: str  # qualified name "<alias>/<rule>"
 
 
 class _PickerDataTable(DataTable):
@@ -41,7 +42,7 @@ class RulePickerModal(ModalScreen[RulePick | None]):
 
     def __init__(self) -> None:
         super().__init__()
-        self._entries: list[rules.Rule] = []
+        self._entries: list[RuleIndex] = []
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -59,31 +60,23 @@ class RulePickerModal(ModalScreen[RulePick | None]):
 
     def on_mount(self) -> None:
         table = self.query_one("#rules-table", DataTable)
-        table.add_columns("name", "description")
+        table.add_columns("qualified name", "description")
         self._populate("")
         self.query_one("#search-bar", Input).focus()
 
     def _populate(self, query: str) -> None:
         table = self.query_one("#rules-table", DataTable)
         table.clear()
-        q = query.strip().lower()
-        all_entries = rules.list_all()
-        if q:
-            self._entries = [
-                r
-                for r in all_entries
-                if q in r.name.lower() or (r.description and q in r.description.lower())
-            ]
-        else:
-            self._entries = all_entries
+        q = query.strip()
+        self._entries = repo_rules.search(q) if q else repo_rules.list_rules()
         if not self._entries:
-            self._status("no rules registered — add one from the Rules screen")
+            self._status("no rules indexed — add a repo from the Repos screen")
             return
         for r in self._entries:
             table.add_row(
-                r.name,
+                r.qualified_name,
                 r.description or "",
-                key=r.name,
+                key=r.qualified_name,
             )
         self._status(f"{len(self._entries)} rule(s)")
 

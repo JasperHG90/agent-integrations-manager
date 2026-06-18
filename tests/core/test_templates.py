@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from aim.core import content_guard, templates
-from aim.core.rules import Rule
+from aim.core.models import RenderRule
 
 
 def test_resolve_builtin_default(home: Path) -> None:
@@ -26,7 +26,7 @@ def test_list_includes_builtin(home: Path) -> None:
 
 def test_render_with_rules(home: Path) -> None:
     rules = [
-        Rule(name="be-concise", body="Be concise.", description="brevity", is_default=True),
+        RenderRule(name="be-concise", body="Be concise.", description="brevity"),
     ]
     out = templates.render(
         templates.BUILTIN_DEFAULT,

@@ -28,10 +28,9 @@ from aim.core import (
     paths,
     repos,
     roots,
-    rules,
 )
 from aim.core.install import _SNAPSHOT_SENTINEL
-from aim.core.models import RegisteredRepo, RuleEntry
+from aim.core.models import RegisteredRepo
 
 
 class DoctorPathEscapeError(ValueError):
@@ -79,7 +78,6 @@ def audit(
         _audit_project(root, report)
 
     _audit_global_repos(report, stale_days=stale_repo_days)
-    _audit_global_rules(report)
     _audit_snapshots(report)
 
     return report
@@ -250,21 +248,6 @@ def _audit_global_repos(report: DoctorReport, *, stale_days: int) -> None:
                     "warning",
                     None,
                     f"repo {repo.alias}: cache clone missing at {clone_dir}",
-                )
-            )
-
-
-def _audit_global_rules(report: DoctorReport) -> None:
-    with db.session() as session:
-        rule_rows: list[RuleEntry] = list(session.exec(select(RuleEntry)).all())
-    for entry in rule_rows:
-        body_path = rules.body_path(entry.name)
-        if not body_path.exists():
-            report.findings.append(
-                Finding(
-                    "warning",
-                    None,
-                    f"rule {entry.name}: DB row exists but body file missing at {body_path}",
                 )
             )
 

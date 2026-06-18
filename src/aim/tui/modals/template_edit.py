@@ -16,7 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from aim.core import profiles as profiles_mod
-from aim.core import rules as rules_mod
+from aim.core import repo_rules as repo_rules_mod
 from aim.tui.widgets import ToggleRow
 
 
@@ -47,7 +47,7 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
         return f"{kind}-{safe}"
 
     def compose(self) -> ComposeResult:
-        self._rule_names = [r.name for r in rules_mod.list_all()]
+        self._rule_names = [r.qualified_name for r in repo_rules_mod.list_rules()]
 
         rule_toggles = [
             ToggleRow(

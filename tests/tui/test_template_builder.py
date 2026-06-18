@@ -8,7 +8,7 @@ import pytest
 from textual.app import App
 from textual.widgets import DataTable, Input
 
-from aim.core import profiles, rules
+from aim.core import profiles, repos
 from aim.tui.app import AimApp
 from aim.tui.modals.agent_picker import AgentPickerModal
 from aim.tui.modals.export_toml import ExportTomlModal
@@ -18,6 +18,15 @@ from aim.tui.modals.rule_picker import RulePickerModal
 from aim.tui.modals.skill_picker import SkillPickerModal
 from aim.tui.screens.project_templates_screen import ProjectTemplatesScreen
 from aim.tui.screens.template_builder_screen import TemplateBuilderScreen
+from tests.fixtures import git_fixtures
+
+
+def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
+    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
+    files["README.md"] = "x\n"
+    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    repos.add("rr", f"file://{bare}")
 
 
 def _unfocus_input(app: App[None]) -> None:
@@ -54,8 +63,8 @@ async def test_builder_saves_template(home: Path, project_root: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_builder_adds_rule(home: Path, project_root: Path) -> None:
-    rules.add("builder-rule", "A rule for the builder.")
+async def test_builder_adds_rule(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _register_rule_repo(tmp_path, ["builder-rule"])
     app = AimApp(project_root=project_root)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -71,12 +80,14 @@ async def test_builder_adds_rule(home: Path, project_root: Path) -> None:
         assert isinstance(app.screen, TemplateBuilderScreen)
         table = app.screen.query_one("#rules-table", DataTable)
         assert table.row_count == 1
-        assert table.get_row_at(0)[0] == "builder-rule"
+        assert table.get_row_at(0)[0] == "rr/builder-rule"
 
 
 @pytest.mark.asyncio
-async def test_builder_skips_duplicate_rule(home: Path, project_root: Path) -> None:
-    rules.add("dup-rule", "Duplicate rule.")
+async def test_builder_skips_duplicate_rule(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    _register_rule_repo(tmp_path, ["dup-rule"])
     app = AimApp(project_root=project_root)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -94,8 +105,8 @@ async def test_builder_skips_duplicate_rule(home: Path, project_root: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_builder_removes_rule(home: Path, project_root: Path) -> None:
-    rules.add("remove-rule", "Rule to remove.")
+async def test_builder_removes_rule(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _register_rule_repo(tmp_path, ["remove-rule"])
     app = AimApp(project_root=project_root)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -120,7 +131,7 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
     toml_path.write_text(
         'name = "imported-template"\n'
         'instruction_template = "default"\n'
-        'rules = ["imported-rule"]\n'
+        'rules = ["repo/imported-rule"]\n'
         "[[skill]]\n"
         'qualified_name = "repo/skill"\n',
         encoding="utf-8",
@@ -142,7 +153,7 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
         assert app.screen.query_one("#name", Input).value == "imported-template"
         rules_table = app.screen.query_one("#rules-table", DataTable)
         assert rules_table.row_count == 1
-        assert rules_table.get_row_at(0)[0] == "imported-rule"
+        assert rules_table.get_row_at(0)[0] == "repo/imported-rule"
         skills_table = app.screen.query_one("#skills-table", DataTable)
         assert skills_table.row_count == 1
         assert skills_table.get_row_at(0)[0] == "repo/skill"
@@ -153,7 +164,7 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
     profile = profiles.Profile(
         name="export-me",
         instruction_template="default",
-        rules=["export-rule"],
+        rules=["repo/export-rule"],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill")],
     )
     export_path = tmp_path / "exported.toml"
@@ -175,7 +186,7 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
     text = export_path.read_text(encoding="utf-8")
     assert 'name = "export-me"' in text
     assert 'instruction_template = "default"' in text
-    assert 'rules = ["export-rule"]' in text
+    assert 'rules = ["repo/export-rule"]' in text
     assert "[[skill]]" in text
     assert 'qualified_name = "repo/skill"' in text
 

@@ -12,11 +12,21 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import declarations, manifest, repos, rules
+from aim.core import declarations, manifest, repos, rule_install
 from aim.core import init as init_mod
 from aim.core import sync as sync_mod
 from aim.core.lock import LockOptions
 from aim.core.lock import run as lock_run
+from tests.fixtures import git_fixtures
+
+
+def _repo_with_rule(tmp_path: Path, name: str = "be-concise", body: str = "Be concise.") -> str:
+    working = git_fixtures.make_source_repo(
+        tmp_path / f"src-{name}", files={f"rules/{name}.md": f"{body}\n", "README.md": "x\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / f"bare-{name}.git")
+    repos.add("anth", f"file://{bare}")
+    return f"anth/{name}"
 
 
 def _lock_and_sync(project_root: Path) -> None:
@@ -85,28 +95,32 @@ def _save_inline_profile(project_root: Path) -> None:
     )
 
 
-def test_rule_install_adds_to_manifest_and_renders(home: Path, project_root: Path) -> None:
+def test_rule_install_adds_to_manifest_and_renders(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     _save_inline_profile(project_root)
     init_mod.run(init_mod.InitOptions(project_root=project_root, layout_profile="inline"))
-    rules.add("be-concise", "Be concise.")
+    qn = _repo_with_rule(tmp_path)
 
-    rules.install_to_project(project_root, "be-concise")
+    rule_install.install(project_root, qn)
     _lock_and_sync(project_root)
     m = manifest.load(project_root)
-    assert "be-concise" in m.rules
+    assert [r.qualified_name for r in m.rules] == [qn]
     agents_md = (project_root / "AGENTS.md").read_text()
     assert "Be concise." in agents_md
 
 
-def test_rule_install_preserves_symlinks(home: Path, project_root: Path) -> None:
+def test_rule_install_preserves_symlinks(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     _save_inline_profile(project_root)
     init_mod.run(
         init_mod.InitOptions(
             project_root=project_root, layout_profile="inline", symlinks=("CLAUDE.md",)
         )
     )
-    rules.add("focus", "Focus.")
-    rules.install_to_project(project_root, "focus")
+    qn = _repo_with_rule(tmp_path, name="focus", body="Focus.")
+    rule_install.install(project_root, qn)
     _lock_and_sync(project_root)
 
     assert (project_root / "CLAUDE.md").exists()
@@ -115,21 +129,14 @@ def test_rule_install_preserves_symlinks(home: Path, project_root: Path) -> None
 
 def test_rule_install_unknown_errors(home: Path, project_root: Path) -> None:
     init_mod.run(init_mod.InitOptions(project_root=project_root))
-    with pytest.raises(rules.RuleNotFoundError):
-        rules.install_to_project(project_root, "ghost")
+    with pytest.raises(rule_install.RuleNotIndexedError):
+        rule_install.install(project_root, "ghost/missing")
 
 
 # ---------- 3. fullmatch trailing-newline ----------
 
 
-def test_rule_name_rejects_trailing_newline(home: Path) -> None:
-    with pytest.raises(rules.RuleNameError):
-        rules.add("ok\n", "body")
-
-
 def test_repo_alias_rejects_trailing_newline(home: Path, tmp_path: Path) -> None:
-    from tests.fixtures import git_fixtures
-
     working = git_fixtures.make_source_repo(
         tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
     )

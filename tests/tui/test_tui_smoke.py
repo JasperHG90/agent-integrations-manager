@@ -13,9 +13,17 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import repos, rules
+from aim.core import repos
 from aim.tui.app import AimApp
 from tests.fixtures import git_fixtures
+
+
+def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
+    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
+    files["README.md"] = "x\n"
+    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    repos.add("rr", f"file://{bare}")
 
 
 @pytest.mark.asyncio
@@ -89,9 +97,8 @@ async def test_skills_screen_search_filters(home: Path, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rules_screen_lists_rules(home: Path) -> None:
-    rules.add("be-concise", "Be concise.", is_default=True)
-    rules.add("test-first", "Test first.")
+async def test_rules_screen_lists_rules(home: Path, tmp_path: Path) -> None:
+    _register_rule_repo(tmp_path, ["be-concise", "test-first"])
     app = AimApp()
     async with app.run_test() as pilot:
         await pilot.pause()

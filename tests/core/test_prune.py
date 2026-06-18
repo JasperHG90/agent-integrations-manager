@@ -10,10 +10,13 @@ import pytest
 from aim.core import declarations, init, install, lock, manifest, prune, repos
 from aim.core.models import (
     DeclaredMcpServer,
+    DeclaredRule,
     DeclaredSkill,
     InstalledMcpServer,
+    InstalledRule,
     McpClaudeEntry,
     McpServerVersion,
+    SkillVersion,
 )
 from tests.fixtures import git_fixtures
 
@@ -95,12 +98,23 @@ def test_prune_removes_drifted_rule(home: Path, project_root: Path) -> None:
     init.run(init.InitOptions(project_root=project_root))
     _lock(project_root)
 
-    # Add "managed" to the lockfile + aim.toml, then remove from aim.toml (drift).
+    # Add "rr/managed" to the lockfile + aim.toml, then remove from aim.toml (drift).
     m = manifest.load(project_root)
-    m.rules = ["managed"]
+    m.rules = [
+        InstalledRule(
+            qualified_name="rr/managed",
+            repo_alias="rr",
+            repo_url="file:///x",
+            source_path="rules/managed.md",
+            current=SkillVersion(sha="0" * 40, installed_at=datetime.now(UTC)),
+            content_hash="abc",
+        )
+    ]
     manifest.save(project_root, m)
     decl = declarations.load(project_root)
-    decl.rules = ["managed"]
+    decl.rules = [
+        DeclaredRule(qualified_name="rr/managed", repo_alias="rr", source_path="rules/managed.md")
+    ]
     declarations.save(project_root, decl)
     decl.rules = []
     declarations.save(project_root, decl)
@@ -114,7 +128,7 @@ def test_prune_removes_drifted_rule(home: Path, project_root: Path) -> None:
     assert ".claude/rules/managed.md" in removed_paths
     assert not (rules_dir / "managed.md").exists()
     m = manifest.load(project_root)
-    assert "managed" not in m.rules
+    assert not any(r.qualified_name == "rr/managed" for r in m.rules)
 
 
 def test_prune_inline_rule_no_file_deletion(home: Path, project_root: Path) -> None:
@@ -124,10 +138,21 @@ def test_prune_inline_rule_no_file_deletion(home: Path, project_root: Path) -> N
 
     # Add a rule to the lockfile + aim.toml, then remove from aim.toml (drift).
     m = manifest.load(project_root)
-    m.rules = ["myrule"]
+    m.rules = [
+        InstalledRule(
+            qualified_name="rr/myrule",
+            repo_alias="rr",
+            repo_url="file:///x",
+            source_path="rules/myrule.md",
+            current=SkillVersion(sha="0" * 40, installed_at=datetime.now(UTC)),
+            content_hash="abc",
+        )
+    ]
     manifest.save(project_root, m)
     decl = declarations.load(project_root)
-    decl.rules = ["myrule"]
+    decl.rules = [
+        DeclaredRule(qualified_name="rr/myrule", repo_alias="rr", source_path="rules/myrule.md")
+    ]
     declarations.save(project_root, decl)
     decl.rules = []
     declarations.save(project_root, decl)
@@ -138,7 +163,7 @@ def test_prune_inline_rule_no_file_deletion(home: Path, project_root: Path) -> N
     assert "removed-stale-entry" in actions
     assert "removed" not in actions
     m = manifest.load(project_root)
-    assert "myrule" not in m.rules
+    assert not any(r.qualified_name == "rr/myrule" for r in m.rules)
     # Warning about stale AGENTS.md.
     assert any("AGENTS.md" in w for w in result.warnings)
 

@@ -4,147 +4,135 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import agent_files, content_guard, rules
-from aim.core.models import Manifest
+from aim.core import content_guard, init, manifest, repos, rule_install
+from tests.fixtures import git_fixtures
 
 
-def test_add_writes_body_and_metadata(home: Path) -> None:
-    r = rules.add("be-concise", "Be concise.", description="brevity", is_default=True)
-    assert r.name == "be-concise"
-    assert r.is_default is True
-    assert rules.body_path("be-concise").read_text() == "Be concise."
-
-
-def test_add_overwrites(home: Path) -> None:
-    rules.add("r1", "first")
-    rules.add("r1", "second", is_default=True)
-    out = rules.get("r1")
-    assert out.body == "second"
-    assert out.is_default is True
-
-
-def test_add_rejects_bad_name(home: Path) -> None:
-    with pytest.raises(rules.RuleNameError):
-        rules.add("Bad Name", "body")
-
-
-def test_list_all_sorted(home: Path) -> None:
-    rules.add("zeta", "z")
-    rules.add("alpha", "a")
-    rules.add("middle", "m")
-    names = [r.name for r in rules.list_all()]
-    assert names == ["alpha", "middle", "zeta"]
-
-
-def test_list_defaults_filters(home: Path) -> None:
-    rules.add("d1", "x", is_default=True)
-    rules.add("d2", "y", is_default=False)
-    names = [r.name for r in rules.list_defaults()]
-    assert names == ["d1"]
-
-
-def test_get_missing_raises(home: Path) -> None:
-    with pytest.raises(rules.RuleNotFoundError):
-        rules.get("ghost")
-
-
-def test_set_default_toggles(home: Path) -> None:
-    rules.add("toggleable", "body", is_default=False)
-    rules.set_default("toggleable", is_default=True)
-    assert rules.get("toggleable").is_default is True
-    rules.set_default("toggleable", is_default=False)
-    assert rules.get("toggleable").is_default is False
-
-
-def test_delete_removes_both(home: Path) -> None:
-    rules.add("deleteme", "body")
-    rules.delete("deleteme")
-    with pytest.raises(rules.RuleNotFoundError):
-        rules.get("deleteme")
-    assert not rules.body_path("deleteme").exists()
-
-
-def test_apply_to_project_copies_body(home: Path, project_root: Path) -> None:
-    rules.add("style", "Be terse.")
-    rules.add("test", "Test first.")
-    applied = rules.apply_to_project(project_root, ["style", "test"])
-    assert [r.name for r in applied] == ["style", "test"]
-    assert (project_root / ".claude" / "rules" / "style.md").read_text() == "Be terse."
-    assert (project_root / ".claude" / "rules" / "test.md").read_text() == "Test first."
-
-
-def test_apply_to_project_inline_skips_files(home: Path, project_root: Path) -> None:
-    from aim.core import layout_profiles
-
-    rules.add("style", "Be terse.")
-    layout_profiles.save_project_profile(
-        project_root,
-        layout_profiles.LayoutProfile(
-            name="inline",
-            skills_dir=".claude/skills",
-            rules_dir=".claude/rules",
-            agents_dir=".claude/agents",
-            agents_md="AGENTS.md",
-            mcp_json=".mcp.json",
-            rules_mode="inline",
-        ),
+def _make_project_and_repo(
+    tmp_path: Path, project_root: Path, body: str = "Be concise.\n"
+) -> tuple[Path, str]:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            "rules/be-concise.md": body,
+            "README.md": "x\n",
+        },
     )
-    applied = rules.apply_to_project(project_root, ["style"], rules_mode="inline")
-    assert [r.name for r in applied] == ["style"]
-    assert not (project_root / ".claude" / "rules" / "style.md").exists()
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    init.run(init.InitOptions(project_root=project_root))
+    repos.add("anth", f"file://{bare}")
+    return bare, "anth/be-concise"
 
 
-def test_add_rejects_hidden_unicode(home: Path) -> None:
+def test_install_writes_rule_file(home: Path, tmp_path: Path, project_root: Path) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    installed = rule_install.install(project_root, qn)
+    assert installed.qualified_name == qn
+    target = project_root / ".claude" / "rules" / "be-concise.md"
+    assert target.exists()
+    assert "Be concise." in target.read_text()
+
+    m = manifest.load(project_root)
+    assert len(m.rules) == 1
+    assert m.rules[0].source_path == "rules/be-concise.md"
+    assert m.rules[0].content_hash is not None
+
+
+def test_install_mirrors_to_declarations(home: Path, tmp_path: Path, project_root: Path) -> None:
+    from aim.core import declarations
+
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+    decl = declarations.load(project_root)
+    assert [r.qualified_name for r in decl.rules] == [qn]
+    assert decl.repos["anth"]
+
+
+def test_update_refreshes_rule(home: Path, tmp_path: Path, project_root: Path) -> None:
+    bare, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+
+    working = tmp_path / "src"
+    git_fixtures.add_commit(working, {"rules/be-concise.md": "Updated rule.\n"}, "update rule")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("anth")
+
+    result = rule_install.update(project_root, qn)
+    assert result.current.sha != result.history[0].sha
+    assert "Updated rule." in (project_root / ".claude" / "rules" / "be-concise.md").read_text()
+
+
+def test_update_skips_when_unchanged(home: Path, tmp_path: Path, project_root: Path) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    first = rule_install.install(project_root, qn)
+    second = rule_install.update(project_root, qn)
+    assert first.current.sha == second.current.sha
+    assert second.history == []
+
+
+def test_update_detects_local_edits(home: Path, tmp_path: Path, project_root: Path) -> None:
+    bare, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+
+    working = tmp_path / "src"
+    git_fixtures.add_commit(working, {"rules/be-concise.md": "Upstream edit.\n"}, "upstream edit")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("anth")
+
+    target = project_root / ".claude" / "rules" / "be-concise.md"
+    target.write_text("tampered")
+    with pytest.raises(rule_install.RuleLocalEditsError):
+        rule_install.update(project_root, qn)
+    rule_install.update(project_root, qn, force=True)
+
+
+def test_remove_deletes_file_and_manifest_entry(
+    home: Path, tmp_path: Path, project_root: Path
+) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+    rule_install.delete(project_root, qn)
+    assert not (project_root / ".claude" / "rules" / "be-concise.md").exists()
+    assert manifest.load(project_root).rules == []
+
+
+def test_rollback_restores_previous_version(home: Path, tmp_path: Path, project_root: Path) -> None:
+    bare, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+
+    working = tmp_path / "src"
+    git_fixtures.add_commit(working, {"rules/be-concise.md": "V2 rule.\n"}, "v2")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("anth")
+
+    rule_install.update(project_root, qn)
+    assert "V2 rule." in (project_root / ".claude" / "rules" / "be-concise.md").read_text()
+
+    rule_install.rollback(project_root, qn)
+    assert "Be concise." in (project_root / ".claude" / "rules" / "be-concise.md").read_text()
+
+
+def test_update_many_only_outdated(home: Path, tmp_path: Path, project_root: Path) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root)
+    rule_install.install(project_root, qn)
+    outcomes = rule_install.update_many(project_root, only_outdated=True)
+    assert len(outcomes) == 1
+    assert outcomes[0]["status"] == "noop"
+
+
+def test_install_uses_tag(home: Path, tmp_path: Path, project_root: Path) -> None:
+    bare, qn = _make_project_and_repo(tmp_path, project_root)
+    working = tmp_path / "src"
+    git_fixtures.add_tag(working, "v1.0.0")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("anth")
+
+    installed = rule_install.install(project_root, qn)
+    assert installed.current.tag == "v1.0.0"
+
+
+def test_install_rejects_hidden_unicode(home: Path, tmp_path: Path, project_root: Path) -> None:
+    _, qn = _make_project_and_repo(tmp_path, project_root, body="Be concise.\n\nhidden​\n")
     with pytest.raises(content_guard.HiddenUnicodeError):
-        rules.add("bad", "behave​")
-    assert not rules.body_path("bad").exists()
-
-
-def test_apply_to_project_rejects_hidden_unicode(home: Path, project_root: Path) -> None:
-    rules.add("clean", "safe body")
-    rules.add("bad", "safe for now")
-    # Bypass the library add() gate so we can test the project-write gate.
-    rules.body_path("bad").write_text("bad​body")
-    with pytest.raises(content_guard.HiddenUnicodeError):
-        rules.apply_to_project(project_root, ["clean", "bad"])
-    assert not (project_root / ".claude" / "rules" / "bad.md").exists()
-
-
-def test_agents_md_renders_inline_rule_bodies(home: Path, project_root: Path) -> None:
-    from aim.core import layout_profiles
-
-    rules.add("style", "Be terse.")
-    profile = layout_profiles.LayoutProfile(
-        name="inline",
-        skills_dir=".claude/skills",
-        rules_dir=".claude/rules",
-        agents_dir=".claude/agents",
-        agents_md="AGENTS.md",
-        mcp_json=".mcp.json",
-        rules_mode="inline",
-    )
-    m = Manifest(rules=["style"])
-    agent_files.write_agent_files(project_root, m, profile)
-    text = (project_root / "AGENTS.md").read_text()
-    assert "Be terse." in text
-    assert not (project_root / ".claude" / "rules" / "style.md").exists()
-
-
-def test_agents_md_files_mode_omits_rules_section(home: Path, project_root: Path) -> None:
-    from aim.core import layout_profiles
-
-    rules.add("style", "Be terse.")
-    profile = layout_profiles.LayoutProfile(
-        name="files",
-        skills_dir=".claude/skills",
-        rules_dir=".claude/rules",
-        agents_dir=".claude/agents",
-        agents_md="AGENTS.md",
-        mcp_json=".mcp.json",
-        rules_mode="files",
-    )
-    m = Manifest(rules=["style"])
-    agent_files.write_agent_files(project_root, m, profile)
-    text = (project_root / "AGENTS.md").read_text()
-    assert "aim: rules" not in text
-    assert "Be terse." not in text
+        rule_install.install(project_root, qn)
+    assert not (project_root / ".claude" / "rules" / "be-concise.md").exists()

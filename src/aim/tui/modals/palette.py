@@ -21,7 +21,7 @@ from textual.widgets.option_list import Option
 
 from aim.core import agents as agents_mod
 from aim.core import profiles as profiles_mod
-from aim.core import repos, rules, skills
+from aim.core import repo_rules, repos, skills
 
 
 @dataclass
@@ -149,11 +149,11 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
                 lambda: app.push_screen(AgentsScreen()),
             )
         )
-    for rule in rules.list_all():
+    for rule in repo_rules.list_rules():
         entries.append(
             PaletteEntry(
                 "rule",
-                rule.name,
+                rule.qualified_name,
                 lambda: app.push_screen(RulesScreen()),
             )
         )

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from aim.core import declarations as declarations_mod
 from aim.core import init as init_mod
-from aim.core import rules
+from aim.core.models import DeclaredRule
 
 
 def test_first_init_creates_aim_toml(home: Path, project_root: Path) -> None:
@@ -58,52 +56,27 @@ def test_re_init_clear_symlinks_replaces_them(home: Path, project_root: Path) ->
     assert decl.symlinks == ["OPENCODE.md"]
 
 
-def test_re_init_preserves_rules_in_declarations(home: Path, project_root: Path) -> None:
-    rules.add("first", "First rule.")
-    init_mod.run(init_mod.InitOptions(project_root=project_root, extra_rules=["first"]))
+def test_re_init_preserves_repo_sourced_rules(home: Path, project_root: Path) -> None:
+    # Rules are repo-sourced and added via `aim rule add`; init must preserve
+    # any rule declarations already present on re-init.
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
     decl = declarations_mod.load(project_root)
-    assert decl.rules == ["first"]
+    decl.rules = [
+        DeclaredRule(qualified_name="anth/first", repo_alias="anth", source_path="rules/first.md")
+    ]
+    decl.repos["anth"] = "file:///tmp/anth"
+    declarations_mod.save(project_root, decl)
 
-    rules.add("second", "Second rule.")
-    init_mod.run(init_mod.InitOptions(project_root=project_root, extra_rules=["second"]))
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
     decl = declarations_mod.load(project_root)
-    assert "first" in decl.rules
-    assert "second" in decl.rules
+    assert [r.qualified_name for r in decl.rules] == ["anth/first"]
 
 
-def test_init_does_not_seed_default_rules(home: Path, project_root: Path) -> None:
-    rules.add("would-be-default", "body", is_default=True)
+def test_init_does_not_seed_rules(home: Path, project_root: Path) -> None:
     result = init_mod.run(init_mod.InitOptions(project_root=project_root))
     assert result.applied_rules == []
     decl = declarations_mod.load(project_root)
     assert decl.rules == []
-
-
-def test_init_seeds_rule_from_file(home: Path, project_root: Path) -> None:
-    rule_file = home / "my-rule.md"
-    rule_file.write_text("# My rule\n\nAlways add tests.\n")
-    result = init_mod.run(
-        init_mod.InitOptions(
-            project_root=project_root,
-            extra_rule_files={"my-rule": rule_file},
-        )
-    )
-    assert "my-rule" in result.applied_rules
-    decl = declarations_mod.load(project_root)
-    assert "my-rule" in decl.rules
-    assert rules.get("my-rule").body == "# My rule\n\nAlways add tests.\n"
-
-
-def test_init_rejects_invalid_rule_file_name(home: Path, project_root: Path) -> None:
-    rule_file = home / "bad rule.md"
-    rule_file.write_text("# Bad\n")
-    with pytest.raises(rules.RuleNameError):
-        init_mod.run(
-            init_mod.InitOptions(
-                project_root=project_root,
-                extra_rule_files={"bad rule": rule_file},
-            )
-        )
 
 
 def test_init_records_layout_profile(home: Path, project_root: Path) -> None:

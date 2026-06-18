@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aim.core import agents_md, content_guard, hashing, layout_profiles, templates
-from aim.core import rules as rules_mod
+from aim.core import agents_md, content_guard, hashing, layout_profiles, repo_rules, templates
+from aim.core.models import RenderRule
 
 _AGENT_FROM_FILENAME = {
     "AGENTS.md": None,
@@ -45,7 +45,7 @@ def _detect_region_drift(filename: str, body: str, stored_hashes: dict[str, str]
 
 def _render_regions(
     template_name: str,
-    applied_rules: list[rules_mod.Rule],
+    applied_rules: list[RenderRule],
     *,
     rules_mode: str,
 ) -> dict[str, str]:
@@ -59,7 +59,7 @@ def _render_regions(
 
 def _render_for_template(
     template_name: str,
-    applied_rules: list[rules_mod.Rule],
+    applied_rules: list[RenderRule],
     *,
     rules_mode: str,
 ) -> str:
@@ -81,7 +81,7 @@ def write_agent_files(
 
     assert isinstance(m, Manifest)
 
-    applied = [rules_mod.get(name) for name in m.rules]
+    applied = [repo_rules.render_rule(r) for r in m.rules]
     fresh_regions_canonical = _render_regions(
         m.instruction_template,
         applied,

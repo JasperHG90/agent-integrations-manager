@@ -1,9 +1,7 @@
-manifest_version = 7
+manifest_version = 8
 instruction_template = "default"
 mcp_servers = []
-rules = [
-    "pre-existing-issues",
-]
+rules = []
 managed_files = [
     "AGENTS.md",
     "CLAUDE.md",

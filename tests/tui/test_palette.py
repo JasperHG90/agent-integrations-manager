@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import repos, rules
+from aim.core import repos
 from aim.tui.app import AimApp
 from aim.tui.modals.palette import PaletteModal
 from tests.fixtures import git_fixtures
@@ -23,11 +23,14 @@ async def test_palette_opens(home: Path) -> None:
 @pytest.mark.asyncio
 async def test_palette_filters_by_substring(home: Path, tmp_path: Path) -> None:
     working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={"skills/code-review/SKILL.md": "# code-review\n"}
+        tmp_path / "src",
+        files={
+            "skills/code-review/SKILL.md": "# code-review\n",
+            "rules/be-concise.md": "Be concise.\n",
+        },
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("anth", f"file://{bare}")
-    rules.add("be-concise", "Be concise.", is_default=True)
 
     app = AimApp()
     async with app.run_test() as pilot:

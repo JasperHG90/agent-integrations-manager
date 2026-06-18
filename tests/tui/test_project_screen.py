@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import init, install, repos, rules
+from aim.core import init, install, repos, rule_install
 from aim.core import sync as sync_mod
 from aim.core.lock import LockOptions
 from aim.core.lock import run as lock_run
@@ -63,9 +63,16 @@ async def test_project_screen_shows_clean_and_edited(
 
 
 @pytest.mark.asyncio
-async def test_project_screen_rules_tab(home: Path, project_root: Path) -> None:
-    rules.add("be-concise", "Be concise.")
-    init.run(init.InitOptions(project_root=project_root, extra_rules=["be-concise"]))
+async def test_project_screen_rules_tab(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "rsrc", files={"rules/be-concise.md": "Be concise.\n", "README.md": "x\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    init.run(init.InitOptions(project_root=project_root))
+    repos.add("rr", f"file://{bare}")
+    rule_install.install(project_root, "rr/be-concise")
     await lock_run(LockOptions(project_root=project_root))
     await sync_mod.run(sync_mod.SyncOptions(project_root=project_root))
 
@@ -81,5 +88,5 @@ async def test_project_screen_rules_tab(home: Path, project_root: Path) -> None:
         table = app.screen.query_one("#rules-table", DataTable)
         assert table.row_count == 1
         row = table.get_row_at(0)
-        assert row[0] == "be-concise"
+        assert row[0] == "rr/be-concise"
         assert row[2] == "clean"

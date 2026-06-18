@@ -4,7 +4,7 @@ The DB stores:
 - RegisteredRepo: machine-local registry of skill source repos.
 - SkillIndex: cached search index over discovered skills.
 - Template: registered AGENTS.md templates (builtin + user).
-- RuleEntry: metadata for user-saved rule snippets.
+- RuleIndex: cached search index over discovered repo-sourced rules.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from aim.core.models import (  # noqa: F401
     LayoutProfile,
     McpServerCache,
     RegisteredRepo,
-    RuleEntry,
     RuleIndex,
     SkillIndex,
     Template,

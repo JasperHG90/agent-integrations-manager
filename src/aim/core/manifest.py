@@ -23,6 +23,7 @@ _TOML_READ_MAP = {
     "skill": "skills",
     "subagent": "agents",
     "mcp_server": "mcp_servers",
+    "rule": "rules",
 }
 _TOML_WRITE_MAP = {v: k for k, v in _TOML_READ_MAP.items()}
 
@@ -90,10 +91,11 @@ def load_or_create(project_root: Path) -> Manifest:
         from aim.core import declarations as declarations_mod
 
         decl = declarations_mod.load_or_default(project_root)
+        # Rules, like skills/agents, are resolved by `lock`; a freshly seeded
+        # manifest starts with none and the install path appends the new one.
         m = Manifest(
             instruction_template=decl.instruction_template,
             layout_profile=decl.layout_profile,
-            rules=list(decl.rules),
             symlinks=list(decl.symlinks),
         )
         return m

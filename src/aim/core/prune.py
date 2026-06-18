@@ -156,7 +156,7 @@ def _drift(
     declared_skill_qnames = {s.qualified_name for s in decl.skills}
     declared_agent_qnames = {a.qualified_name for a in decl.agents}
     declared_mcp_aliases = {mc.alias for mc in decl.mcp_servers}
-    declared_rule_names = set(decl.rules)
+    declared_rule_qnames = {r.qualified_name for r in decl.rules}
     declared_symlinks = set(decl.symlinks)
 
     # Patterns that matched at least one drift candidate OR kept item.
@@ -185,8 +185,9 @@ def _drift(
         _maybe("skill", s.target_dir, s.qualified_name in declared_skill_qnames)
     for a in m.agents:
         _maybe("agent", a.target_path, a.qualified_name in declared_agent_qnames)
-    for rule_name in m.rules:
-        _maybe("rule", _rule_rel(profile, rule_name), rule_name in declared_rule_names)
+    for rule in m.rules:
+        rule_name = rule.qualified_name.split("/", 1)[-1]
+        _maybe("rule", _rule_rel(profile, rule_name), rule.qualified_name in declared_rule_qnames)
     for sym in m.symlinks:
         _maybe("symlink", sym, sym in declared_symlinks)
     for mc in m.mcp_servers:
@@ -362,7 +363,9 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
     rule_names_to_remove = {_rule_name_from_rel(rel) for rel in rule_rels}
     m.skills = [s for s in m.skills if s.target_dir not in skill_paths]
     m.agents = [a for a in m.agents if a.target_path not in agent_paths]
-    m.rules = [r for r in m.rules if r not in rule_names_to_remove]
+    m.rules = [
+        r for r in m.rules if r.qualified_name.split("/", 1)[-1] not in rule_names_to_remove
+    ]
     m.symlinks = [s for s in m.symlinks if s not in symlink_paths]
     m.mcp_servers = [mc for mc in m.mcp_servers if mc.alias not in mcp_aliases]
     # Inline rules are rendered into AGENTS.md managed regions; removing a rule

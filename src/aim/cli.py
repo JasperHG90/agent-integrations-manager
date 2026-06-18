@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -28,10 +29,10 @@ from aim.core import mcp_install as mcp_install_mod
 from aim.core import mcp_registry as mcp_registry_mod
 from aim.core import profiles as profiles_mod
 from aim.core import prune as prune_mod
+from aim.core import repo_rules as repo_rules_mod
 from aim.core import repos as repos_mod
 from aim.core import roots as roots_mod
-from aim.core import rule_repos as rule_repos_mod
-from aim.core import rules as rules_mod
+from aim.core import rule_install as rule_install_mod
 from aim.core import skills as skills_mod
 from aim.core import sync as sync_mod
 from aim.core import templates as templates_mod
@@ -41,8 +42,8 @@ app = typer.Typer(
     help="Scaffold agent-engineering projects. Run with no arguments to launch the TUI.",
     invoke_without_command=True,
 )
-rule_app = typer.Typer(no_args_is_help=True, help="Manage the global rule library.")
-repo_app = typer.Typer(no_args_is_help=True, help="Manage skill source repositories.")
+rule_app = typer.Typer(no_args_is_help=True, help="Discover and manage repo-sourced rules.")
+repo_app = typer.Typer(no_args_is_help=True, help="Manage skill/agent/rule source repositories.")
 skill_app = typer.Typer(no_args_is_help=True, help="Discover and manage skills.")
 subagent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
 app.add_typer(rule_app, name="rule")
@@ -64,8 +65,12 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     repos_mod.RepoHasNoSkillsError,
     repos_mod.RepoHasNoArtifactsError,
     repos_mod.RefDisappearedError,
-    rules_mod.RuleNameError,
-    rules_mod.RuleNotFoundError,
+    rule_install_mod.RuleNotIndexedError,
+    rule_install_mod.RuleNotInstalledError,
+    rule_install_mod.RuleSourcePathChangedError,
+    rule_install_mod.RuleLocalEditsError,
+    rule_install_mod.RuleNoHistoryToRollbackError,
+    repo_rules_mod.RuleNotIndexedError,
     content_guard_mod.InsecureTransportError,
     content_guard_mod.HiddenUnicodeError,
     install_mod.SkillNotIndexedError,
@@ -91,9 +96,6 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     manifest_mod.ManifestNotFoundError,
     profiles_mod.ProfileNameError,
     profiles_mod.ProfileNotFoundError,
-    rule_repos_mod.RuleRepoAliasError,
-    rule_repos_mod.RuleRepoExistsError,
-    rule_repos_mod.RuleRepoNotFoundError,
     sync_mod.SyncError,
     sync_mod.SyncDriftError,
     prune_mod.PruneError,
@@ -152,6 +154,51 @@ def _get_allow_insecure(ctx: typer.Context) -> bool:
     return bool((ctx.obj or {}).get("allow_insecure", False))
 
 
+def _normalize_repo_url(url: str) -> str:
+    """Canonicalize a git URL for equality comparison: drop a trailing `.git`,
+    rewrite `git@host:path` to `https://host/path`, and lowercase."""
+    u = url.strip()
+    if u.startswith("git@") and ":" in u:
+        host, _, path = u[len("git@") :].partition(":")
+        u = f"https://{host}/{path}"
+    if u.endswith(".git"):
+        u = u[:-4]
+    return u.rstrip("/").lower()
+
+
+def _alias_from_url(url: str) -> str:
+    """Derive a repo alias from the last path segment of a git URL."""
+    u = url.strip()
+    if u.endswith(".git"):
+        u = u[:-4]
+    segment = u.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    alias = re.sub(r"[^a-z0-9_-]", "-", segment.lower()).strip("-")
+    return alias or "repo"
+
+
+def _resolve_or_register_repo(url: str, *, alias: str | None, allow_insecure: bool) -> str:
+    """Resolve a full git URL to a registered repo alias, registering it if
+    necessary. Reuses an existing alias when the URL is already registered;
+    otherwise registers under `alias` (or one derived from the URL)."""
+    target = _normalize_repo_url(url)
+    for repo in repos_mod.list_repos():
+        if _normalize_repo_url(repo.url) == target:
+            return repo.alias
+    chosen = alias or _alias_from_url(url)
+    try:
+        existing = repos_mod.get(chosen)
+    except repos_mod.RepoNotFoundError:
+        existing = None
+    if existing is not None and _normalize_repo_url(existing.url) != target:
+        raise typer.BadParameter(
+            f"alias {chosen!r} already maps to {existing.url}; pass --alias to choose another"
+        )
+    if existing is None:
+        typer.echo(f"registering repo {chosen!r} -> {url}")
+        repos_mod.add(chosen, url, allow_empty=True, allow_insecure=allow_insecure)
+    return chosen
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -193,7 +240,7 @@ def main(
     allow_insecure: bool = typer.Option(
         False,
         "--allow-insecure",
-        help="Allow plain http:// transports for repos, rule-repos, and MCP servers.",
+        help="Allow plain http:// transports for repos and MCP servers.",
         callback=_allow_insecure_callback,
         is_eager=True,
     ),
@@ -354,6 +401,7 @@ app.add_typer(root_app, name="root")
 @root_app.command("add")
 @_friendly
 def root_add(path: Path = typer.Argument(..., help="Project root path.")) -> None:
+    """Track a project root so `aim doctor` and global commands can find it."""
     roots_mod.add_root(path.expanduser())
     typer.echo(f"added root {path.expanduser().resolve()}")
 
@@ -375,66 +423,10 @@ def root_list(ctx: typer.Context) -> None:
 
 @root_app.command("remove")
 @_friendly
-def root_remove(path: Path = typer.Argument(...)) -> None:
+def root_remove(path: Path = typer.Argument(..., help="Project root path.")) -> None:
+    """Stop tracking a project root."""
     removed = roots_mod.remove_root(path.expanduser())
     typer.echo(f"removed {path}" if removed else f"not in roots: {path}")
-
-
-rule_repo_app = typer.Typer(
-    no_args_is_help=True, help="Manage shared rule library overlays (git-backed)."
-)
-app.add_typer(rule_repo_app, name="rule-repo")
-
-
-@rule_repo_app.command("add")
-@_friendly
-def rule_repo_add(
-    ctx: typer.Context,
-    alias: str = typer.Argument(...),
-    url: str = typer.Argument(...),
-    default_ref: str = typer.Option("HEAD", "--ref"),
-) -> None:
-    entry = rule_repos_mod.add(
-        alias, url, default_ref=default_ref, allow_insecure=_get_allow_insecure(ctx)
-    )
-    typer.echo(f"added rule-repo {entry.alias} -> {entry.url}")
-
-
-@rule_repo_app.command("list")
-@_friendly
-def rule_repo_list(ctx: typer.Context) -> None:
-    """List registered rule library overlays."""
-    entries = rule_repos_mod.list_repos()
-    format_mod.render(
-        entries,
-        _get_format(ctx),
-        title="rule-repos registered",
-        columns=["alias", "url", "default_ref", "head"],
-        row_extractor={
-            "alias": "alias",
-            "url": "url",
-            "default_ref": "default_ref",
-            "head": "last_sha",
-        },
-        compact_columns=["alias", "url", "default_ref"],
-    )
-
-
-@rule_repo_app.command("refresh")
-@_friendly
-def rule_repo_refresh(
-    ctx: typer.Context,
-    alias: str,
-) -> None:
-    entry = rule_repos_mod.refresh(alias, allow_insecure=_get_allow_insecure(ctx))
-    typer.echo(f"refreshed {alias}: HEAD={(entry.last_sha or '?')[:12]}")
-
-
-@rule_repo_app.command("remove")
-@_friendly
-def rule_repo_remove(alias: str) -> None:
-    rule_repos_mod.remove(alias)
-    typer.echo(f"removed rule-repo {alias}")
 
 
 profile_app = typer.Typer(
@@ -450,6 +442,7 @@ def profile_save(
     name: str,
     project: Path | None = typer.Argument(None, help="Project to snapshot as a reusable template."),
 ) -> None:
+    """Snapshot a project's declarations into a reusable named profile."""
     profile = profiles_mod.from_project(name, _here(project))
     path = profiles_mod.save(profile)
     typer.echo(f"saved project template {name} to {path}")
@@ -484,6 +477,7 @@ def profile_list(ctx: typer.Context) -> None:
 @profile_app.command("show")
 @_friendly
 def profile_show(name: str) -> None:
+    """Print a saved profile as JSON."""
     p = profiles_mod.load(name)
     typer.echo(p.model_dump_json(indent=2))
 
@@ -491,6 +485,7 @@ def profile_show(name: str) -> None:
 @profile_app.command("delete")
 @_friendly
 def profile_delete(name: str) -> None:
+    """Delete a saved profile."""
     removed = profiles_mod.delete(name)
     typer.echo(f"deleted {name}" if removed else f"not found: {name}")
 
@@ -502,6 +497,7 @@ def profile_apply(
     name: str,
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
+    """Apply a saved profile to a project: init, lock, install artifacts, sync."""
     result = profiles_mod.apply(name, _here(project), allow_insecure=_get_allow_insecure(ctx))
     typer.echo(f"applied project template {name} to {result.project_root}")
     for qn in result.installed_skills:
@@ -561,9 +557,10 @@ def mcp_list_cmd(
     )
 
 
-@mcp_app.command("install")
+@mcp_app.command("add")
+@mcp_app.command("install", hidden=True)
 @_friendly
-def mcp_install_cmd(
+def mcp_add_cmd(
     ctx: typer.Context,
     registry_name: str = typer.Argument(..., help="Canonical registry server name."),
     alias: str = typer.Argument(..., help="Local alias for .mcp.json -> mcpServers."),
@@ -580,7 +577,7 @@ def mcp_install_cmd(
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing alias."),
 ) -> None:
-    """Install an MCP server into the project's .mcp.json."""
+    """Add an MCP server to the project's .mcp.json (by registry name)."""
     overrides: dict[str, object] = {}
     if command:
         overrides["command"] = command
@@ -601,7 +598,7 @@ def mcp_install_cmd(
         force=force,
         allow_insecure=_get_allow_insecure(ctx),
     )
-    typer.echo(f"installed MCP server {installed.registry_name} as {installed.alias}")
+    typer.echo(f"added MCP server {installed.registry_name} as {installed.alias}")
 
 
 @mcp_app.command("update")
@@ -619,25 +616,17 @@ def mcp_update_cmd(
     typer.echo(f"updated MCP server {updated.alias} -> {updated.current.registry_version or '?'}")
 
 
-@mcp_app.command("uninstall")
+@mcp_app.command("remove")
+@mcp_app.command("uninstall", hidden=True)
+@mcp_app.command("delete", hidden=True)
 @_friendly
-def mcp_uninstall_cmd(
+def mcp_remove_cmd(
     alias: str = typer.Argument(..., help="Local alias."),
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
     """Remove a managed MCP server from .mcp.json."""
     mcp_install_mod.delete(_here(project), alias)
-    typer.echo(f"uninstalled MCP server {alias}")
-
-
-@mcp_app.command("delete", hidden=True)
-@_friendly
-def mcp_delete_cmd(
-    alias: str = typer.Argument(..., help="Local alias."),
-    project: Path | None = typer.Argument(None, help="Project root."),
-) -> None:
-    """Deprecated alias for "uninstall"."""
-    mcp_uninstall_cmd(alias, project)
+    typer.echo(f"removed MCP server {alias}")
 
 
 @app.command("tui")
@@ -672,39 +661,18 @@ def init_cmd(
         "--symlink",
         help="Symlink to create pointing at AGENTS.md (repeatable, e.g. CLAUDE.md).",
     ),
-    rule: list[str] = typer.Option(
-        [], "--rule", "-r", help="Additional rule name to apply (repeatable)."
-    ),
-    rule_file: list[str] = typer.Option(
-        [],
-        "--rule-file",
-        help="Seed a rule from FILE. Format name=path or just path (stem becomes name). Repeatable.",
-    ),
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),
 ) -> None:
-    """Create or update the user-editable aim.toml declarations file."""
-    extra_rule_files: dict[str, Path] = {}
-    for rf in rule_file:
-        if "=" in rf:
-            name, _, path_str = rf.partition("=")
-        else:
-            path_str = rf
-            name = Path(path_str).stem
-        if not name:
-            raise typer.BadParameter(f"rule-file {rf!r} has no name")
-        path = Path(path_str).expanduser()
-        if not path.is_file():
-            raise typer.BadParameter(f"rule-file not found: {path}")
-        extra_rule_files[name] = path
+    """Create or update the user-editable aim.toml declarations file.
 
+    Rules are repo-sourced; add them after init with `aim rule add <git-url> <name>`.
+    """
     options = init_mod.InitOptions(
         project_root=_here(project),
         instruction_template=instruction_template,
         symlinks=tuple(symlink),
-        extra_rules=list(rule),
-        extra_rule_files=extra_rule_files,
         layout_profile=layout_profile,
     )
     result = init_mod.run(options)
@@ -927,99 +895,126 @@ def _print_diffs(changes: list) -> None:  # type: ignore[type-arg]
 # ---------- rule ----------
 
 
-@rule_app.command("add")
-@_friendly
-def rule_add(
-    name: str = typer.Argument(..., help="Rule name (lowercase, alphanumeric + - _)."),
-    body_file: Path | None = typer.Option(
-        None,
-        "--from",
-        "-f",
-        help="Read rule body from FILE (defaults to '-' for stdin).",
-    ),
-    body: str | None = typer.Option(None, "--body", "-b", help="Inline rule body."),
-    description: str | None = typer.Option(None, "--description", "-d"),
-    default: bool = typer.Option(
-        False, "--default", help="Mark as a global default (seeded by `init`)."
-    ),
-) -> None:
-    """Add or replace a rule in the global library."""
-    text = _resolve_body(body, body_file)
-    rule = rules_mod.add(name, text, description=description, is_default=default)
-    flag = " [default]" if rule.is_default else ""
-    typer.echo(f"added rule {rule.name}{flag}")
-
-
 @rule_app.command("list")
 @_friendly
-def rule_list(ctx: typer.Context) -> None:
-    """List rules in the global library."""
-    entries = rules_mod.list_all()
-    rows = [
-        {"name": r.name, "default": r.is_default, "source": r.source, "description": r.description}
-        for r in entries
-    ]
+def rule_list(
+    ctx: typer.Context,
+    repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+) -> None:
+    """List indexed rules."""
+    rows = repo_rules_mod.list_rules(repo)
     format_mod.render(
         rows,
         _get_format(ctx),
-        title="rules registered",
-        columns=["name", "default", "source", "description"],
-        compact_columns=["name", "default", "source", "description"],
+        title="rules indexed",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+        compact_columns=["qualified_name", "title", "description"],
     )
 
 
-@rule_app.command("edit")
+@rule_app.command("search")
 @_friendly
-def rule_edit(name: str) -> None:
-    """Print the path to the rule body file (use $EDITOR on the result)."""
-    rule = rules_mod.get(name)
-    typer.echo(rules_mod.body_path(rule.name))
+def rule_search(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="Substring to match."),
+) -> None:
+    """Search indexed rules by substring."""
+    rows = repo_rules_mod.search(query)
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title=f"rules matching {query!r}",
+        columns=["qualified_name", "repo_alias", "title", "description"],
+        compact_columns=["qualified_name", "title", "description"],
+    )
 
 
-@rule_app.command("set-default")
+@rule_app.command("add")
 @_friendly
-def rule_set_default(
-    name: str,
-    enable: bool = typer.Option(
-        True,
-        "--default/--no-default",
-        help="Flag (or unflag) the rule as a global default.",
+def rule_add(
+    ctx: typer.Context,
+    url: str = typer.Argument(..., help="Full git URL of the source repository."),
+    name: str = typer.Argument(..., help="Rule name within the repository."),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Repo alias to register under (default: derived from the URL)."
+    ),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
     ),
 ) -> None:
-    rules_mod.set_default(name, is_default=enable)
-    state = "default" if enable else "not default"
-    typer.echo(f"{name}: {state}")
+    """Add a rule from a git repository, registering the repo if needed."""
+    repo_alias = _resolve_or_register_repo(
+        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
+    )
+    qualified_name = f"{repo_alias}/{name}"
+    installed = rule_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
+    typer.echo(f"added rule {qualified_name} {installed.current.identifier()}")
 
 
-@rule_app.command("delete")
+@rule_app.command("update")
 @_friendly
-def rule_delete(name: str) -> None:
-    rules_mod.delete(name)
-    typer.echo(f"deleted rule {name}")
-
-
-@rule_app.command("apply")
-@_friendly
-def rule_apply(
-    name: str,
-    project: Path | None = typer.Argument(None, help="Project root."),
+def rule_update(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name>"),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
-    """Low-level: copy rule body into a project's .aim/rules/ dir
-    without touching the manifest. Use `install` for the full flow."""
-    rules_mod.apply_to_project(_here(project), [name])
-    typer.echo(f"applied {name} to {_here(project)}")
+    """Refresh an installed rule from its source repo."""
+    updated = rule_install_mod.update(_here(project), qualified_name, force=force)
+    typer.echo(f"updated rule {qualified_name} -> {updated.current.identifier()}")
 
 
-@rule_app.command("install")
+@rule_app.command("update-many")
 @_friendly
-def rule_install(
-    name: str,
-    project: Path | None = typer.Argument(None, help="Project root."),
+def rule_update_many(
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    all_rules: bool = typer.Option(False, "--all", help="Update every installed rule."),
+    repo: str | None = typer.Option(None, "--repo", help="Limit to a single repo alias."),
+    only_outdated: bool = typer.Option(False, "--outdated", help="Skip rules already at HEAD."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
-    """Add a rule to a project's aim.toml declarations."""
-    result = rules_mod.install_to_project(_here(project), name)
-    typer.echo(f"added rule {name} to {result.project_root}/aim.toml")
-    typer.echo("Run `aim lock` and `aim sync` to apply the change to disk.")
+    """Update installed rules in bulk."""
+    if not all_rules and repo is None:
+        raise typer.BadParameter("pass --all or --repo <alias>")
+    outcomes = rule_install_mod.update_many(
+        _here(project),
+        repo_alias=repo,
+        only_outdated=only_outdated,
+        force=force,
+    )
+    for o in outcomes:
+        typer.echo(f"{o['status']:>12}  {o['qualified_name']}  {o['detail']}")
+    errors = [o for o in outcomes if o["status"] == "error"]
+    if errors:
+        raise typer.Exit(code=1)
+
+
+@rule_app.command("remove")
+@_friendly
+def rule_remove(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name>"),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+) -> None:
+    """Remove an installed rule from the project."""
+    rule_install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"removed rule {qualified_name}")
+
+
+@rule_app.command("rollback")
+@_friendly
+def rule_rollback(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name>"),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
+) -> None:
+    """Restore the previous installed version of a rule."""
+    rolled = rule_install_mod.rollback(_here(project), qualified_name, force=force)
+    typer.echo(f"rolled back rule {qualified_name} -> {rolled.current.identifier()}")
 
 
 # ---------- repo ----------
@@ -1075,6 +1070,7 @@ def repo_list(ctx: typer.Context) -> None:
 @repo_app.command("remove")
 @_friendly
 def repo_remove(alias: str) -> None:
+    """Unregister a source repo and delete its local clone."""
     repos_mod.remove(alias)
     typer.echo(f"removed repo {alias}")
 
@@ -1082,6 +1078,7 @@ def repo_remove(alias: str) -> None:
 @repo_app.command("rename")
 @_friendly
 def repo_rename(old: str, new: str) -> None:
+    """Rename a registered repo alias (moves its clone and index rows)."""
     repos_mod.rename(old, new)
     typer.echo(f"renamed {old} -> {new}")
 
@@ -1092,6 +1089,7 @@ def repo_refresh(
     ctx: typer.Context,
     alias: str,
 ) -> None:
+    """Fetch the latest commits for a registered repo and re-index its artifacts."""
     repo = repos_mod.refresh(alias, allow_insecure=_get_allow_insecure(ctx))
     sha = repo.last_sha[:12] if repo.last_sha else "?"
     typer.echo(f"refreshed {alias}: HEAD={sha}")
@@ -1134,7 +1132,39 @@ def skill_search(
     )
 
 
-@skill_app.command("install")
+@skill_app.command("add")
+@_friendly
+def skill_add(
+    ctx: typer.Context,
+    url: str = typer.Argument(..., help="Full git URL of the source repository."),
+    name: str = typer.Argument(..., help="Skill name within the repository."),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Repo alias to register under (default: derived from the URL)."
+    ),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
+    ),
+) -> None:
+    """Add a skill from a git repository, registering the repo if needed."""
+    repo_alias = _resolve_or_register_repo(
+        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
+    )
+    qualified_name = f"{repo_alias}/{name}"
+    installed = install_mod.install(_here(project), qualified_name, pin=pin, track=track)
+    typer.echo(
+        f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
+    )
+    for warn in install_mod.take_install_warnings():
+        typer.echo(f"  warning: {warn}", err=True)
+
+
+@skill_app.command("install", hidden=True)
 @_friendly
 def skill_install(
     qualified_name: str = typer.Argument(..., help="<repo_alias>/<skill_name>"),
@@ -1148,6 +1178,7 @@ def skill_install(
         help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
     ),
 ) -> None:
+    """Deprecated: install an already-registered skill by qualified name. Use `add`."""
     installed = install_mod.install(_here(project), qualified_name, pin=pin, track=track)
     typer.echo(
         f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
@@ -1164,6 +1195,7 @@ def skill_update(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
     diff: bool = typer.Option(False, "--diff", help="Show proposed version change; don't apply."),
 ) -> None:
+    """Refresh an installed skill from its source repo."""
     if diff:
         preview = install_mod.update(_here(project), qualified_name, dry_run=True)
         assert isinstance(preview, install_mod.UpdatePreview)
@@ -1207,15 +1239,25 @@ def skill_update_many(
         raise typer.Exit(code=1)
 
 
-@skill_app.command("uninstall")
+@skill_app.command("remove")
+@_friendly
+def skill_remove(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<skill_name>"),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+) -> None:
+    """Remove an installed skill from the project."""
+    install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"removed {qualified_name}")
+
+
+@skill_app.command("uninstall", hidden=True)
 @_friendly
 def skill_uninstall(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    """Remove an installed skill from the project."""
-    install_mod.delete(_here(project), qualified_name)
-    typer.echo(f"uninstalled {qualified_name}")
+    """Deprecated alias for "remove"."""
+    skill_remove(qualified_name, project)
 
 
 @skill_app.command("delete", hidden=True)
@@ -1224,8 +1266,8 @@ def skill_delete(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    """Deprecated alias for "uninstall"."""
-    skill_uninstall(qualified_name, project)
+    """Deprecated alias for "remove"."""
+    skill_remove(qualified_name, project)
 
 
 @skill_app.command("rollback")
@@ -1235,6 +1277,7 @@ def skill_rollback(
     project: Path | None = typer.Argument(None),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
+    """Restore the previous installed version of a skill."""
     rolled = install_mod.rollback(_here(project), qualified_name, force=force)
     typer.echo(f"rolled back {qualified_name} -> {rolled.current.identifier()}")
 
@@ -1276,7 +1319,39 @@ def agent_search(
     )
 
 
-@subagent_app.command("install")
+@subagent_app.command("add")
+@_friendly
+def agent_add(
+    ctx: typer.Context,
+    url: str = typer.Argument(..., help="Full git URL of the source repository."),
+    name: str = typer.Argument(..., help="Sub-agent name within the repository."),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Repo alias to register under (default: derived from the URL)."
+    ),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
+    ),
+) -> None:
+    """Add a sub-agent from a git repository, registering the repo if needed."""
+    repo_alias = _resolve_or_register_repo(
+        url, alias=alias, allow_insecure=_get_allow_insecure(ctx)
+    )
+    qualified_name = f"{repo_alias}/{name}"
+    installed = agent_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
+    typer.echo(
+        f"added {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
+    )
+    for warn in agent_install_mod.take_install_warnings():
+        typer.echo(f"  warning: {warn}", err=True)
+
+
+@subagent_app.command("install", hidden=True)
 @_friendly
 def agent_install_cmd(
     qualified_name: str = typer.Argument(..., help="<repo_alias>/<agent_name>"),
@@ -1290,6 +1365,7 @@ def agent_install_cmd(
         help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
     ),
 ) -> None:
+    """Deprecated: install an already-registered sub-agent by qualified name. Use `add`."""
     installed = agent_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
     typer.echo(
         f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
@@ -1305,6 +1381,7 @@ def agent_update(
     project: Path | None = typer.Argument(None),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
+    """Refresh an installed sub-agent from its source repo."""
     updated = agent_install_mod.update(_here(project), qualified_name, force=force)
     typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
 
@@ -1334,15 +1411,25 @@ def agent_update_many(
         raise typer.Exit(code=1)
 
 
-@subagent_app.command("uninstall")
+@subagent_app.command("remove")
+@_friendly
+def agent_remove(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<agent_name>"),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+) -> None:
+    """Remove an installed sub-agent from the project."""
+    agent_install_mod.delete(_here(project), qualified_name)
+    typer.echo(f"removed {qualified_name}")
+
+
+@subagent_app.command("uninstall", hidden=True)
 @_friendly
 def agent_uninstall(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    """Remove an installed sub-agent from the project."""
-    agent_install_mod.delete(_here(project), qualified_name)
-    typer.echo(f"uninstalled {qualified_name}")
+    """Deprecated alias for "remove"."""
+    agent_remove(qualified_name, project)
 
 
 @subagent_app.command("delete", hidden=True)
@@ -1351,8 +1438,8 @@ def agent_delete(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
 ) -> None:
-    """Deprecated alias for "uninstall"."""
-    agent_uninstall(qualified_name, project)
+    """Deprecated alias for "remove"."""
+    agent_remove(qualified_name, project)
 
 
 @subagent_app.command("rollback")
@@ -1362,6 +1449,7 @@ def agent_rollback(
     project: Path | None = typer.Argument(None),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
+    """Restore the previous installed version of a sub-agent."""
     rolled = agent_install_mod.rollback(_here(project), qualified_name, force=force)
     typer.echo(f"rolled back {qualified_name} -> {rolled.current.identifier()}")
 
@@ -1384,20 +1472,6 @@ def _parse_header_list(items: list[str]) -> dict[str, str]:
         name, _, value = item.partition(":")
         out[name.strip()] = value.strip()
     return out
-
-
-def _resolve_body(body: str | None, body_file: Path | None) -> str:
-    if body is not None and body_file is not None:
-        raise typer.BadParameter("pass --body or --from, not both")
-    if body is not None:
-        return body
-    if body_file is not None:
-        if str(body_file) == "-":
-            import sys
-
-            return sys.stdin.read()
-        return body_file.read_text()
-    raise typer.BadParameter("must pass --body or --from")
 
 
 if __name__ == "__main__":

@@ -15,13 +15,12 @@ def test_derived_paths(home: Path) -> None:
     assert paths.db_path() == home / "data" / "aim.sqlite"
     assert paths.repos_cache_dir() == home / "cache" / "repos"
     assert paths.snapshots_cache_dir() == home / "cache" / "snapshots"
-    assert paths.rules_library_dir() == home / "config" / "rules"
     assert paths.templates_library_dir() == home / "config" / "templates"
 
 
 def test_ensure_global_dirs_creates_them(home: Path) -> None:
     # home fixture already calls ensure_global_dirs once
-    for sub in ("data", "cache", "cache/repos", "cache/snapshots", "config", "config/rules"):
+    for sub in ("data", "cache", "cache/repos", "cache/snapshots", "config", "config/templates"):
         assert (home / sub).is_dir(), f"expected {sub} to exist"
 
 

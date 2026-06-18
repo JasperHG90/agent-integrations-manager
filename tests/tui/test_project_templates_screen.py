@@ -5,12 +5,21 @@ from pathlib import Path
 import pytest
 from textual.widgets import DataTable, Input, Static
 
-from aim.core import init, profiles, rules
+from aim.core import init, profiles, repos
 from aim.tui.app import AimApp
 from aim.tui.modals.template_edit import TemplateEditModal
 from aim.tui.modals.template_save import TemplateSaveModal
 from aim.tui.screens.project_templates_screen import ProjectTemplatesScreen
 from aim.tui.widgets import ToggleRow
+from tests.fixtures import git_fixtures
+
+
+def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
+    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
+    files["README.md"] = "x\n"
+    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    repos.add("rr", f"file://{bare}")
 
 
 @pytest.mark.asyncio
@@ -63,14 +72,16 @@ async def test_templates_screen_edits_template(home: Path, project_root: Path) -
 
 
 @pytest.mark.asyncio
-async def test_template_edit_checkbox_toggles_uncheck_all(home: Path, project_root: Path) -> None:
+async def test_template_edit_checkbox_toggles_uncheck_all(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     """Checkboxes in the edit modal must be clickable and uncheckable."""
-    rules.add("rule-one", "First rule", is_default=True)
+    _register_rule_repo(tmp_path, ["rule-one"])
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
         instruction_template="default",
-        rules=["rule-one"],
+        rules=["rr/rule-one"],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill")],
         agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
         mcp_servers=[profiles.ProfileMcpServer(registry_name="srv", alias="srv")],
@@ -86,7 +97,7 @@ async def test_template_edit_checkbox_toggles_uncheck_all(home: Path, project_ro
         await pilot.pause()
         assert isinstance(app.screen, TemplateEditModal)
 
-        rule_cb = app.screen.query_one("#rule-rule-one", ToggleRow)
+        rule_cb = app.screen.query_one("#rule-rr-rule-one", ToggleRow)
         skill_cb = app.screen.query_one("#skill-repo-skill", ToggleRow)
         agent_cb = app.screen.query_one("#agent-repo-agent", ToggleRow)
         mcp_cb = app.screen.query_one("#mcp-srv", ToggleRow)
@@ -97,7 +108,7 @@ async def test_template_edit_checkbox_toggles_uncheck_all(home: Path, project_ro
         assert mcp_cb.value is True
 
         # Uncheck every item by clicking it.
-        await pilot.click("#rule-rule-one")
+        await pilot.click("#rule-rr-rule-one")
         await pilot.click("#skill-repo-skill")
         await pilot.click("#agent-repo-agent")
         await pilot.click("#mcp-srv")
@@ -119,14 +130,14 @@ async def test_template_edit_checkbox_toggles_uncheck_all(home: Path, project_ro
 
 
 @pytest.mark.asyncio
-async def test_template_edit_togglerow_space_toggles(home: Path, project_root: Path) -> None:
+async def test_template_edit_togglerow_space_toggles(home: Path, project_root: Path, tmp_path: Path) -> None:
     """Focused ToggleRow must toggle on Space."""
-    rules.add("rule-one", "First rule", is_default=True)
+    _register_rule_repo(tmp_path, ["rule-one"])
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
         instruction_template="default",
-        rules=["rule-one"],
+        rules=["rr/rule-one"],
     )
     profiles.save(profile)
 
@@ -139,7 +150,7 @@ async def test_template_edit_togglerow_space_toggles(home: Path, project_root: P
         await pilot.pause()
         assert isinstance(app.screen, TemplateEditModal)
 
-        rule_cb = app.screen.query_one("#rule-rule-one", ToggleRow)
+        rule_cb = app.screen.query_one("#rule-rr-rule-one", ToggleRow)
         assert rule_cb.value is True
         rule_cb.focus()
         await pilot.press("space")
@@ -151,14 +162,14 @@ async def test_template_edit_togglerow_space_toggles(home: Path, project_root: P
 
 
 @pytest.mark.asyncio
-async def test_template_edit_togglerow_reaches_by_tab(home: Path, project_root: Path) -> None:
+async def test_template_edit_togglerow_reaches_by_tab(home: Path, project_root: Path, tmp_path: Path) -> None:
     """Tab navigation must reach ToggleRow and Space must toggle it."""
-    rules.add("rule-tab", "Tab rule", is_default=True)
+    _register_rule_repo(tmp_path, ["rule-tab"])
     init.run(init.InitOptions(project_root=project_root))
     profile = profiles.Profile(
         name="tpl",
         instruction_template="default",
-        rules=["rule-tab"],
+        rules=["rr/rule-tab"],
     )
     profiles.save(profile)
 
@@ -171,7 +182,7 @@ async def test_template_edit_togglerow_reaches_by_tab(home: Path, project_root: 
         await pilot.pause()
         assert isinstance(app.screen, TemplateEditModal)
 
-        rule_cb = app.screen.query_one("#rule-rule-tab", ToggleRow)
+        rule_cb = app.screen.query_one("#rule-rr-rule-tab", ToggleRow)
         assert rule_cb.value is True
         # Tab from the focused name input down to the rule toggle.
         for _ in range(6):

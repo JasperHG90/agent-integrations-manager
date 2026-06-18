@@ -15,17 +15,25 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input
 
-from aim.core import repos, rules
+from aim.core import repos
 from aim.tui.app import AimApp
 from aim.tui.modals.agent_install import AgentInstallModal
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.init_modal import InitModal
 from aim.tui.modals.project_picker import ProjectPickerModal
 from aim.tui.modals.repo_add import RepoAddModal
-from aim.tui.modals.rule_add import RuleAddModal
+from aim.tui.modals.rule_install import RuleInstallModal
 from aim.tui.modals.skill_install import SkillInstallModal
 from aim.tui.widgets import ToggleRow
 from tests.fixtures import git_fixtures
+
+
+def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
+    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
+    files["README.md"] = "x\n"
+    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    repos.add("rr", f"file://{bare}")
 
 
 def _bare_with_skills(tmp_path: Path) -> Path:
@@ -76,7 +84,8 @@ async def test_repos_screen_remove_opens_confirm(home: Path, tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_rules_screen_opens_add_modal(home: Path) -> None:
+async def test_rules_screen_opens_add_modal(home: Path, tmp_path: Path) -> None:
+    _register_rule_repo(tmp_path, ["be-concise"])
     app = AimApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -84,33 +93,7 @@ async def test_rules_screen_opens_add_modal(home: Path) -> None:
         await pilot.pause()
         await pilot.press("a")
         await pilot.pause()
-        assert isinstance(app.screen, RuleAddModal)
-
-
-@pytest.mark.asyncio
-async def test_rules_screen_edit_opens_modal(home: Path) -> None:
-    rules.add("existing", "body", is_default=True)
-    app = AimApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("u")
-        await pilot.pause()
-        await pilot.press("e")
-        await pilot.pause()
-        assert isinstance(app.screen, RuleAddModal)
-
-
-@pytest.mark.asyncio
-async def test_rules_screen_delete_opens_confirm(home: Path) -> None:
-    rules.add("doomed", "body")
-    app = AimApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("u")
-        await pilot.pause()
-        await pilot.press("x")
-        await pilot.pause()
-        assert isinstance(app.screen, ConfirmModal)
+        assert isinstance(app.screen, RuleInstallModal)
 
 
 @pytest.mark.asyncio
@@ -196,37 +179,8 @@ async def test_repo_add_modal_creates_repo(home: Path, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rule_add_modal_creates_rule(home: Path) -> None:
-    app = AimApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("u")
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        modal = app.screen
-        assert isinstance(modal, RuleAddModal)
-        from textual.widgets import Button, Input, TextArea
-
-        modal.query_one("#name", Input).value = "from-tui"
-        modal.query_one("#body", TextArea).text = "Body from the TUI."
-        modal.query_one("#default", ToggleRow).value = True
-        await pilot.pause()
-        for btn in modal.query(Button):
-            if btn.id == "save":
-                btn.press()
-                break
-        await pilot.pause()
-
-    saved = rules.get("from-tui")
-    assert saved.body == "Body from the TUI."
-    assert saved.is_default is True
-
-
-@pytest.mark.asyncio
 async def test_init_modal_submits_on_enter_from_input(home: Path, project_root: Path) -> None:
     """Pressing Enter inside a focused Input must submit the modal."""
-    rules.add("enter-rule", "Rule.", is_default=True)
     app = AimApp()
     async with app.run_test(size=(80, 40)) as pilot:
         await pilot.pause()

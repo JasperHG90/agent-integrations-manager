@@ -40,6 +40,19 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
         # v2 drops agent_dialect and adds rules_mode default on the active layout profile.
         raw.pop("agent_dialect", None)
         raw["manifest_version"] = 2
+        version = 2
+    if version < 3:
+        # v3 makes rules repo-sourced, SHA-pinned artifacts. The pre-v3 format
+        # listed rules by name (`rule = ["..."]`) against a local library that no
+        # longer exists. Rule-less projects upgrade cleanly; projects that listed
+        # rules by name must re-add them (there is no automatic migration).
+        if raw.get("rules"):
+            raise DeclarationsVersionError(
+                "aim.toml lists rules by name (pre-v3). v3 makes rules repo-sourced. "
+                "Re-add each rule via `aim rule add <git-url> <name>`."
+            )
+        raw["rules"] = []
+        raw["manifest_version"] = 3
     return raw
 
 
@@ -145,6 +158,31 @@ def _update_agent(project_root: Path, installed: object) -> None:
 def _remove_agent(project_root: Path, qualified_name: str) -> None:
     decl = load_or_default(project_root)
     decl.agents = [a for a in decl.agents if a.qualified_name != qualified_name]
+    save(project_root, decl)
+
+
+def _update_rule(project_root: Path, installed: object) -> None:
+    """Mirror an installed rule into the declarations file."""
+    from aim.core.models import DeclaredRule, InstalledRule
+
+    assert isinstance(installed, InstalledRule)
+    decl = load_or_default(project_root)
+    declared = DeclaredRule(
+        qualified_name=installed.qualified_name,
+        repo_alias=installed.repo_alias,
+        source_path=installed.source_path,
+        pin=installed.pin,
+        track=installed.track,
+    )
+    decl.rules = [r for r in decl.rules if r.qualified_name != installed.qualified_name]
+    decl.rules.append(declared)
+    decl.repos[installed.repo_alias] = installed.repo_url
+    save(project_root, decl)
+
+
+def _remove_rule(project_root: Path, qualified_name: str) -> None:
+    decl = load_or_default(project_root)
+    decl.rules = [r for r in decl.rules if r.qualified_name != qualified_name]
     save(project_root, decl)
 
 

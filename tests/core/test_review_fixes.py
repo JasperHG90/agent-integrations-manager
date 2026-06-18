@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from aim.core import init as init_mod
-from aim.core import install, manifest, paths, repos, rules
+from aim.core import install, manifest, paths, repos, rule_install
 from aim.core import sync as sync_mod
 from aim.core.install import _SNAPSHOT_SENTINEL
 from aim.core.lock import LockOptions
@@ -98,10 +98,13 @@ def test_update_with_force_overrides_local_edits(
 # ---------- #3: in-region drift warning on re-init ----------
 
 
-def test_sync_warns_on_in_region_drift(home: Path, project_root: Path) -> None:
+def test_sync_warns_on_in_region_drift(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     from aim.core import layout_profiles
 
-    rules.add("focus", "Focus.")
+    _, bare = _build_repo(tmp_path, {"rules/focus.md": "Focus.\n", "README.md": "x\n"})
+    repos.add("a", f"file://{bare}")
     # Use inline rules mode so the rule body lives inside the managed rules region.
     layout_profiles.save_project_profile(
         project_root,
@@ -116,10 +119,9 @@ def test_sync_warns_on_in_region_drift(home: Path, project_root: Path) -> None:
         ),
     )
     init_mod.run(
-        init_mod.InitOptions(
-            project_root=project_root, layout_profile="inline", extra_rules=["focus"]
-        )
+        init_mod.InitOptions(project_root=project_root, layout_profile="inline")
     )
+    rule_install.install(project_root, "a/focus")
     asyncio.run(lock_run(LockOptions(project_root=project_root)))
     asyncio.run(
         sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline"))
@@ -292,19 +294,6 @@ def test_multi_skill_install_and_update_independence(
     assert foo_after.current.sha == foo_sha  # untouched, history empty
     assert foo_after.history == []
     assert bar_after.current.sha != bar_sha
-
-
-# ---------- #16: rule library tolerates orphaned body files ----------
-
-
-def test_rule_get_when_body_file_deleted(home: Path) -> None:
-    rules.add("orphan", "body")
-    rules.body_path("orphan").unlink()
-    with pytest.raises(rules.RuleNotFoundError):
-        rules.get("orphan")
-    # list_all silently skips orphans so it stays usable.
-    names = [r.name for r in rules.list_all()]
-    assert "orphan" not in names
 
 
 # ---------- snapshot remains valid across rename of repo ----------

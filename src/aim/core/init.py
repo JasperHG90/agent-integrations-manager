@@ -6,17 +6,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from aim.core import (
     declarations,
     layout_profiles,
     paths,
-    rule_compose,
-    rules,
     templates,
-    validation,
 )
 from aim.core.models import ProjectDeclarations
 from aim.core.validation import MirrorNameError, is_valid_mirror_name
@@ -30,9 +27,7 @@ class InitOptions:
     instruction_template: str = templates.BUILTIN_DEFAULT
     symlinks: tuple[str, ...] = ()
     clear_symlinks: bool = False
-    extra_rules: list[str] = field(default_factory=list)
     layout_profile: str | None = None
-    extra_rule_files: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass
@@ -84,39 +79,16 @@ def run(options: InitOptions) -> InitResult:
         existing_symlinks = list(decl.symlinks)
         requested_symlinks = list(dict.fromkeys([*existing_symlinks, *requested_symlinks]))
 
-    # Seed rules from explicit files into the global library so re-init works.
-    for name, path in options.extra_rule_files.items():
-        if not validation.is_valid_rule_name(name):
-            raise rules.RuleNameError(
-                f"rule-file name {name!r} invalid: must be lowercase alphanumeric, _, or -"
-            )
-        body = path.read_text(encoding="utf-8")
-        rules.add(name, body, description=None, is_default=False)
-
-    # Resolve which rules to record.
-    rule_names: list[str] = []
-    if re_init:
-        rule_names = list(decl.rules)
-    for name in options.extra_rules:
-        if name not in rule_names:
-            rule_names.append(name)
-    for name in options.extra_rule_files:
-        if name not in rule_names:
-            rule_names.append(name)
-
-    expanded_names = rule_compose.resolve(rule_names, lambda n: rules.get(n).body)
-    rule_names = expanded_names
-
-    # Update declaration model.
+    # Rules are repo-sourced artifacts managed by `aim rule add`; init only
+    # preserves any already-declared rules (it never resolves or seeds them).
     decl.instruction_template = options.instruction_template
     decl.layout_profile = options.layout_profile or decl.layout_profile
-    decl.rules = rule_names
     decl.symlinks = requested_symlinks
 
     declarations.save(proj, decl)
     return InitResult(
         project_root=proj,
         declarations_path=decl_path,
-        applied_rules=rule_names,
+        applied_rules=[r.qualified_name for r in decl.rules],
         re_init=re_init,
     )

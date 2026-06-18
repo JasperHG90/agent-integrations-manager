@@ -20,7 +20,7 @@ from typing import Any, NamedTuple
 from sqlmodel import delete, select
 
 from aim.core import db, git, repos, validation
-from aim.core.models import RuleIndex
+from aim.core.models import RenderRule, RuleIndex
 
 try:
     import yaml
@@ -49,13 +49,15 @@ _RULE_DENYLIST = {
 _RULE_RE = re.compile(r"^(?:(?P<path>.*)/)?(?P<name>[^/]+)\.md$")
 
 
-# Canonical paths win at the same depth; arbitrary paths are still discovered.
+# Only canonical rule locations are discovered. Arbitrary `*.md` elsewhere in a
+# repo (docs, notes) must not surface as installable rules.
+_RULE_PREFIXES = ("rules/", ".claude/rules/")
+
+
 def _prefix_rank(path: str) -> int:
     if path.startswith("rules/"):
         return 0
-    if path.startswith(".claude/rules/"):
-        return 1
-    return 2
+    return 1  # ".claude/rules/"
 
 
 class DiscoveredRule(NamedTuple):
@@ -77,11 +79,13 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    # Group candidates by rule name. Precedence: shallower path wins; at the
-    # same depth, canonical prefixes (`rules/`, `.claude/rules/`) win over
-    # arbitrary paths. Ties break by lexicographic path.
+    # Group candidates by rule name. Only `rules/` and `.claude/rules/` are
+    # considered. Precedence: shallower path wins; at the same depth `rules/`
+    # wins over `.claude/rules/`. Ties break by lexicographic path.
     by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredRule]]] = {}
     for p in paths:
+        if not p.startswith(_RULE_PREFIXES):
+            continue
         match = _RULE_RE.match(p)
         if not match:
             continue
@@ -192,6 +196,30 @@ def _as_str(value: Any) -> str | None:
 
 class RuleNotIndexedError(KeyError):
     """The requested qualified_name doesn't appear in the rule index."""
+
+
+def render_rule(installed: object) -> RenderRule:
+    """Build the AGENTS.md render view of an installed rule, reading its body at
+    the pinned SHA. Frontmatter (if any) is stripped from the rendered body and
+    its `description`/`title` surfaced separately."""
+    from aim.core.models import InstalledRule
+
+    assert isinstance(installed, InstalledRule)
+    repo_dir = repos.clone_dir(installed.repo_alias)
+    raw = git.get_backend().cat_file(repo_dir, installed.current.sha, installed.source_path)
+    frontmatter, body = _extract_frontmatter(raw)
+    description = _as_str(frontmatter.get("description") or frontmatter.get("title"))
+    name = installed.qualified_name.split("/", 1)[-1]
+    return RenderRule(name=name, body=body, description=description)
+
+
+def index_row(qualified_name: str) -> RuleIndex:
+    """Return the RuleIndex row for an indexed rule, or raise."""
+    with db.session() as session:
+        row = session.get(RuleIndex, qualified_name)
+    if row is None:
+        raise RuleNotIndexedError(qualified_name)
+    return row
 
 
 def read_rule_content(qualified_name: str) -> str:

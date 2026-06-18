@@ -28,12 +28,9 @@ from aim.core import (
     prune as prune_mod,
 )
 from aim.core import (
-    rules as rules_mod,
-)
-from aim.core import (
     sync as sync_mod,
 )
-from aim.core.models import InstalledAgent, InstalledMcpServer, InstalledSkill
+from aim.core.models import InstalledAgent, InstalledMcpServer, InstalledRule, InstalledSkill
 from aim.tui.modals.confirm import ConfirmModal
 
 
@@ -161,13 +158,13 @@ class ProjectScreen(Screen[None]):
         rules_table = self.query_one("#rules-table", DataTable)
         rules_key = self._selected_in("#rules-table")
         rules_table.clear()
-        for rule_name in m.rules:
-            drift, source = self._rule_drift(rule_name)
+        for rule in m.rules:
+            drift, source = self._rule_drift(rule)
             rules_table.add_row(
-                rule_name,
+                rule.qualified_name,
                 source,
                 drift,
-                key=rule_name,
+                key=rule.qualified_name,
             )
 
         for table_id, key in (
@@ -223,18 +220,21 @@ class ProjectScreen(Screen[None]):
         current_hash = hashing.hash_text(mcp_registry._canonical_json(servers[mc.alias]))
         return "clean" if current_hash == mc.entry_hash else "edited"
 
-    def _rule_drift(self, rule_name: str) -> tuple[str, str]:
+    def _rule_drift(self, rule: InstalledRule) -> tuple[str, str]:
         profile = layout_profiles.resolve_active(self._project_root)
+        source = rule.repo_alias
+        if profile.rules_mode != "files":
+            # Inline-mode rules render into AGENTS.md; there is no per-rule file.
+            return "inline", source
+        rule_name = rule.qualified_name.split("/", 1)[-1]
         target = paths.safe_project_path(self._project_root, f"{profile.rules_dir}/{rule_name}.md")
         if target is None or not target.exists():
-            return "missing", "—"
-        try:
-            expected = rules_mod.get(rule_name)
-        except rules_mod.RuleNotFoundError:
-            return "unknown source", "—"
-        current = target.read_text(encoding="utf-8")
-        drift = "clean" if current == expected.body else "edited"
-        return drift, expected.source
+            return "missing", source
+        if rule.content_hash is None:
+            return "(no hash)", source
+        current = hashing.hash_text(target.read_text(encoding="utf-8"))
+        drift = "clean" if current == rule.content_hash else "edited"
+        return drift, source
 
     def _active_table(self) -> DataTable:
         active = self.query_one(TabbedContent).active

@@ -30,20 +30,23 @@ from aim.core import (
     manifest,
     mcp_install,
     mcp_registry,
+    repo_rules,
     repos,
-    rules,
     skills,
     templates,
 )
 from aim.core.models import (
     DeclaredAgent,
     DeclaredMcpServer,
+    DeclaredRule,
     DeclaredSkill,
     InstalledAgent,
     InstalledMcpServer,
+    InstalledRule,
     InstalledSkill,
     Manifest,
     ProjectDeclarations,
+    RenderRule,
     SkillVersion,
 )
 
@@ -66,6 +69,7 @@ class LockResult:
     locked_skills: list[str] = field(default_factory=list)
     locked_agents: list[str] = field(default_factory=list)
     locked_mcp: list[str] = field(default_factory=list)
+    locked_rules: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     unchanged: bool = False
@@ -280,6 +284,76 @@ async def _lock_agents(
     return locked, errors
 
 
+def _resolve_rule_version(rule: DeclaredRule) -> SkillVersion:
+    repo_dir = repos.clone_dir(rule.repo_alias)
+    sha = git.get_backend().resolve_ref(repo_dir, rule.pin or rule.track or "HEAD")
+    return SkillVersion(
+        tag=rule.pin,
+        sha=sha,
+        installed_at=datetime.now(UTC),
+    )
+
+
+def _read_rule_at_sha(rule: DeclaredRule, sha: str) -> str:
+    repo_dir = repos.clone_dir(rule.repo_alias)
+    return git.get_backend().cat_file(repo_dir, sha, rule.source_path)
+
+
+def _lock_rule(
+    rule: DeclaredRule, cached: InstalledRule | None = None
+) -> tuple[InstalledRule | None, str | None]:
+    try:
+        version = _resolve_rule_version(rule)
+        if (
+            cached is not None
+            and cached.current.sha == version.sha
+            and cached.source_path == rule.source_path
+        ):
+            content_hash = cached.content_hash
+        else:
+            content = _read_rule_at_sha(rule, version.sha)
+            content_hash = hashing.hash_text(content)
+    except Exception as exc:
+        return None, f"{rule.qualified_name}: {exc}"
+    repo_url = repos.get(rule.repo_alias).url
+    installed = InstalledRule(
+        qualified_name=rule.qualified_name,
+        repo_alias=rule.repo_alias,
+        repo_url=repo_url,
+        source_path=rule.source_path,
+        current=version,
+        content_hash=content_hash,
+        pin=rule.pin,
+        track=rule.track,
+    )
+    return installed, None
+
+
+async def _lock_rules(
+    rules: list[DeclaredRule],
+    callback: Callable[[str, str, str], object] | None,
+    cached_by_name: dict[str, InstalledRule] | None = None,
+) -> tuple[list[InstalledRule], list[str]]:
+    if not rules:
+        return [], []
+
+    lookup = cached_by_name or {}
+
+    async def _one(rule: DeclaredRule) -> tuple[InstalledRule | None, str | None]:
+        _notify(callback, "rule", rule.qualified_name, "locking")
+        installed, error = await asyncio.to_thread(_lock_rule, rule, lookup.get(rule.qualified_name))
+        if error:
+            _notify(callback, "rule", rule.qualified_name, "error")
+        else:
+            _notify(callback, "rule", rule.qualified_name, "ok")
+        return installed, error
+
+    results = await asyncio.gather(*(_one(r) for r in rules))
+    locked = [r[0] for r in results if r[0] is not None]
+    errors = [r[1] for r in results if r[1] is not None]
+    return locked, errors
+
+
 def _lock_mcp(mcp: DeclaredMcpServer) -> tuple[InstalledMcpServer | None, str | None]:
     try:
         server = mcp_registry.find_server(mcp.registry_name, exact_name=mcp.registry_name)
@@ -324,10 +398,13 @@ async def _lock_mcps(
 
 
 def _compute_region_hashes(
-    decl: ProjectDeclarations, profile: layout_profiles.LayoutProfile
+    decl: ProjectDeclarations,
+    profile: layout_profiles.LayoutProfile,
+    locked_rules: list[InstalledRule],
 ) -> dict[str, str]:
-    """Compute hashes for the rendered AGENTS.md regions from current rules/template."""
-    applied = [rules.get(name) for name in decl.rules]
+    """Compute hashes for the rendered AGENTS.md regions from the locked rule
+    bodies (read at their pinned SHAs) and the template."""
+    applied: list[RenderRule] = [repo_rules.render_rule(r) for r in locked_rules]
 
     def _render_for_agent(agent: str | None) -> str:
         return templates.render(
@@ -375,6 +452,20 @@ def _agent_key(a: InstalledAgent) -> tuple:
     )
 
 
+def _rule_key(r: InstalledRule) -> tuple:
+    return (
+        r.qualified_name,
+        r.repo_alias,
+        r.repo_url,
+        r.source_path,
+        r.content_hash,
+        r.current.sha,
+        r.current.tag,
+        r.pin,
+        r.track,
+    )
+
+
 def _mcp_key(m: InstalledMcpServer) -> tuple:
     return (
         m.alias,
@@ -391,7 +482,6 @@ def _top_level_key(m: Manifest) -> tuple:
     return (
         m.instruction_template,
         m.layout_profile,
-        tuple(m.rules),
         tuple(m.symlinks),
         tuple(m.managed_files),
         tuple(sorted(m.managed_region_hashes.items())),
@@ -406,6 +496,8 @@ def _lockfile_unchanged(existing: Manifest, new: Manifest) -> bool:
     if [_agent_key(a) for a in existing.agents] != [_agent_key(a) for a in new.agents]:
         return False
     if [_mcp_key(m) for m in existing.mcp_servers] != [_mcp_key(m) for m in new.mcp_servers]:
+        return False
+    if [_rule_key(r) for r in existing.rules] != [_rule_key(r) for r in new.rules]:
         return False
     return True
 
@@ -439,6 +531,13 @@ def _preserve_unchanged_metadata(existing: Manifest | None, new: Manifest) -> No
             m.current = prev_mcp.current
             m.history = list(prev_mcp.history)
 
+    rule_by_key = {_rule_key(r): r for r in existing.rules}
+    for r in new.rules:
+        prev_rule = rule_by_key.get(_rule_key(r))
+        if prev_rule is not None:
+            r.current = prev_rule.current
+            r.history = list(prev_rule.history)
+
 
 async def run(options: LockOptions) -> LockResult:
     project_root = options.project_root.resolve()
@@ -458,28 +557,39 @@ async def run(options: LockOptions) -> LockResult:
     cached_agents: dict[str, InstalledAgent] = {} if options.force else {
         a.qualified_name: a for a in (existing.agents if existing else [])
     }
+    cached_rules: dict[str, InstalledRule] = {} if options.force else {
+        r.qualified_name: r for r in (existing.rules if existing else [])
+    }
 
     _notify(options.progress_callback, "repos", "all", "locking")
     result.errors = await _ensure_repos(decl, options.allow_insecure)
     _notify(options.progress_callback, "repos", "all", "ok")
 
-    # Skills, agents, MCPs, and region hashes only depend on repos being
-    # available, so lock them concurrently instead of sequentially.
+    # Skills, agents, MCPs, and rules only depend on repos being available, so
+    # lock them concurrently instead of sequentially.
     skills_task = _lock_skills(decl.skills, options.progress_callback, cached_skills)
     agents_task = _lock_agents(decl.agents, options.progress_callback, cached_agents)
     mcps_task = _lock_mcps(decl.mcp_servers, options.progress_callback)
-    regions_task = asyncio.to_thread(_compute_region_hashes, decl, profile)
+    rules_task = _lock_rules(decl.rules, options.progress_callback, cached_rules)
 
     (
         (skills_locked, skill_errors),
         (agents_locked, agent_errors),
         (mcps_locked, mcp_errors),
-        region_hashes,
-    ) = await asyncio.gather(skills_task, agents_task, mcps_task, regions_task)
+        (rules_locked, rule_errors),
+    ) = await asyncio.gather(skills_task, agents_task, mcps_task, rules_task)
 
     result.locked_skills = [s.qualified_name for s in skills_locked]
     result.locked_agents = [a.qualified_name for a in agents_locked]
     result.locked_mcp = [m.alias for m in mcps_locked]
+    result.locked_rules = [r.qualified_name for r in rules_locked]
+
+    # Region hashes depend on the locked rule bodies (read at their pinned
+    # SHAs), so compute them after the rule lock — not concurrently — to avoid a
+    # moving-HEAD race between the region hash and each rule's content_hash.
+    region_hashes = await asyncio.to_thread(
+        _compute_region_hashes, decl, profile, rules_locked
+    )
 
     managed_files = [
         profile.agents_md,
@@ -489,7 +599,7 @@ async def run(options: LockOptions) -> LockResult:
     lock = Manifest(
         instruction_template=decl.instruction_template,
         layout_profile=decl.layout_profile or profile.name,
-        rules=decl.rules,
+        rules=rules_locked,
         symlinks=decl.symlinks,
         managed_files=list(dict.fromkeys(managed_files)),
         managed_region_hashes=region_hashes,
@@ -501,7 +611,7 @@ async def run(options: LockOptions) -> LockResult:
     if not options.force:
         _preserve_unchanged_metadata(existing, lock)
 
-    all_errors = result.errors + skill_errors + agent_errors + mcp_errors
+    all_errors = result.errors + skill_errors + agent_errors + mcp_errors + rule_errors
     if (
         existing is not None
         and not options.force

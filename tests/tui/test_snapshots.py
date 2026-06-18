@@ -16,9 +16,17 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import repos, rules
+from aim.core import repos
 from aim.tui.app import AimApp
 from tests.fixtures import git_fixtures
+
+
+def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
+    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
+    files["README.md"] = "x\n"
+    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
+    repos.add("rr", f"file://{bare}")
 
 
 def _setup_repo_with_skills(tmp_path: Path, files: dict[str, str]) -> None:
@@ -97,10 +105,10 @@ async def test_skills_screen_structure_two_skills(home: Path, tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_rules_screen_structure_with_rule(home: Path) -> None:
+async def test_rules_screen_structure_with_rule(home: Path, tmp_path: Path) -> None:
     from textual.widgets import DataTable
 
-    rules.add("be-concise", "Be concise.", description="brevity", is_default=True)
+    _register_rule_repo(tmp_path, ["be-concise"])
     app = AimApp()
     async with app.run_test() as pilot:
         await pilot.pause()

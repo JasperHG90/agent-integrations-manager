@@ -14,7 +14,7 @@ from aim.core import (
     mcp_registry,
     profiles,
     repos,
-    rules,
+    rule_install,
 )
 from aim.core import init as init_mod
 from tests.fixtures import git_fixtures
@@ -22,7 +22,7 @@ from tests.fixtures import git_fixtures
 
 def test_save_and_load_round_trip(home: Path) -> None:
     p = profiles.Profile(
-        name="x", instruction_template="default", symlinks=["CLAUDE.md"], rules=["a"]
+        name="x", instruction_template="default", symlinks=["CLAUDE.md"], rules=["repo/a"]
     )
     profiles.save(p)
     loaded = profiles.load("x")
@@ -75,24 +75,24 @@ def _clear_mcp_cache():
 
 def test_from_project_snapshots(home: Path, project_root: Path, tmp_path: Path) -> None:
     working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
+        tmp_path / "src",
+        files={"skills/foo/SKILL.md": "# foo\n", "rules/be-concise.md": "Be concise.\n"},
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("anth", f"file://{bare}")
-    rules.add("be-concise", "Be concise.", is_default=True)
     init_mod.run(
         init_mod.InitOptions(
             project_root=project_root,
             symlinks=("CLAUDE.md",),
-            extra_rules=["be-concise"],
         )
     )
     install.install(project_root, "anth/foo")
+    rule_install.install(project_root, "anth/be-concise")
 
     snap = profiles.from_project("python-tui", project_root)
     assert snap.name == "python-tui"
     assert "CLAUDE.md" in snap.symlinks
-    assert "be-concise" in snap.rules
+    assert "anth/be-concise" in snap.rules
     assert [s.qualified_name for s in snap.skills] == ["anth/foo"]
 
 
@@ -107,8 +107,7 @@ def test_from_project_captures_agents_and_mcp(
     agent_bare = _agent_repo(tmp_path)
     repos.add("anth", f"file://{skill_bare}")
     repos.add("agents", f"file://{agent_bare}")
-    rules.add("be-concise", "Be concise.")
-    init_mod.run(init_mod.InitOptions(project_root=project_root, extra_rules=["be-concise"]))
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
     install.install(project_root, "anth/foo")
     agent_install.install(project_root, "agents/review")
     respx.get(f"{mcp_registry._REGISTRY_BASE}").mock(
@@ -126,17 +125,16 @@ def test_from_project_captures_agents_and_mcp(
 def test_apply_reproduces_state(home: Path, project_root: Path, tmp_path: Path) -> None:
     # Build a source project, snapshot it, apply to a new project.
     working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
+        tmp_path / "src",
+        files={"skills/foo/SKILL.md": "# foo\n", "rules/be-concise.md": "Be concise.\n"},
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("anth", f"file://{bare}")
-    rules.add("be-concise", "Be concise.")
     init_mod.run(
-        init_mod.InitOptions(
-            project_root=project_root, symlinks=("CLAUDE.md",), extra_rules=["be-concise"]
-        )
+        init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md",))
     )
     install.install(project_root, "anth/foo")
+    rule_install.install(project_root, "anth/be-concise")
 
     profiles.save(profiles.from_project("source", project_root))
 
@@ -148,7 +146,7 @@ def test_apply_reproduces_state(home: Path, project_root: Path, tmp_path: Path) 
     from aim.core import manifest
 
     m = manifest.load(target)
-    assert "be-concise" in m.rules
+    assert [r.qualified_name for r in m.rules] == ["anth/be-concise"]
 
 
 def test_list_and_delete(home: Path) -> None:
@@ -194,13 +192,13 @@ def test_apply_reports_skipped_items(home: Path, project_root: Path, tmp_path: P
 
 
 def test_rename_profile(home: Path) -> None:
-    profiles.save(profiles.Profile(name="old", rules=["a"]))
+    profiles.save(profiles.Profile(name="old", rules=["repo/a"]))
     profile = profiles.load("old")
     renamed = profile.model_copy(update={"name": "new"})
     profiles.save(renamed)
     profiles.delete("old")
     assert [p.name for p in profiles.list_profiles()] == ["new"]
-    assert profiles.load("new").rules == ["a"]
+    assert profiles.load("new").rules == ["repo/a"]
 
 
 def test_toml_round_trip(home: Path) -> None:
@@ -208,7 +206,7 @@ def test_toml_round_trip(home: Path) -> None:
         name="my-template",
         instruction_template="default",
         symlinks=["CLAUDE.md"],
-        rules=["be-concise"],
+        rules=["repo/be-concise"],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill", pin="v1.0.0")],
         agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
         mcp_servers=[
@@ -229,7 +227,7 @@ def test_toml_multiple_items(home: Path) -> None:
     text = """
 name = "multi"
 instruction_template = "default"
-rules = ["a", "b"]
+rules = ["repo/a", "repo/b"]
 
 [[skill]]
 qualified_name = "repo/one"

@@ -34,9 +34,15 @@ from aim.core import (
     install as install_mod,
 )
 from aim.core import (
-    rules as rules_mod,
+    repo_rules as repo_rules_mod,
 )
-from aim.core.models import InstalledAgent, InstalledMcpServer, InstalledSkill, Manifest
+from aim.core.models import (
+    InstalledAgent,
+    InstalledMcpServer,
+    InstalledRule,
+    InstalledSkill,
+    Manifest,
+)
 
 
 class SyncError(RuntimeError):
@@ -102,12 +108,14 @@ def _resolve_profile(
 
 
 def _locked_repo_pairs(m: Manifest) -> dict[str, str]:
-    """Map repo_alias -> repo_url for every skill and agent in the lock."""
+    """Map repo_alias -> repo_url for every skill, agent, and rule in the lock."""
     pairs: dict[str, str] = {}
     for s in m.skills:
         pairs[s.repo_alias] = s.repo_url
     for a in m.agents:
         pairs[a.repo_alias] = a.repo_url
+    for r in m.rules:
+        pairs[r.repo_alias] = r.repo_url
     return pairs
 
 
@@ -118,6 +126,7 @@ def _register_repo(alias: str, url: str, allow_insecure: bool) -> str | None:
         # Already registered; just make sure indexes are current.
         skills.index_repo(alias)
         agents.index_repo(alias)
+        repo_rules_mod.index_repo(alias)
         return None
     except repos.RepoNotFoundError:
         pass
@@ -309,6 +318,96 @@ async def _sync_agents(
     return synced, errors
 
 
+def _read_rule_at_sha(installed: InstalledRule) -> str:
+    repo_dir = repos.clone_dir(installed.repo_alias)
+    return git.get_backend().cat_file(repo_dir, installed.current.sha, installed.source_path)
+
+
+def _sync_rule(
+    project_root: Path,
+    installed: InstalledRule,
+    profile: layout_profiles.LayoutProfile,
+    *,
+    force: bool,
+) -> tuple[str | None, str | None]:
+    """Reconcile a single rule. In inline mode the body is composed into
+    AGENTS.md by the render step, so there is nothing to deploy here. In files
+    mode the body is written to `<rules_dir>/<name>.md` with a drift guard."""
+    if profile.rules_mode != "files":
+        return installed.qualified_name, None
+
+    rule_name = installed.qualified_name.split("/", 1)[-1]
+    rel = f"{profile.rules_dir}/{rule_name}.md"
+    target = paths.safe_project_path(project_root, rel)
+    if target is None:
+        return None, f"{installed.qualified_name}: target path escapes project: {rel}"
+
+    try:
+        expected_content = _read_rule_at_sha(installed)
+    except Exception as exc:
+        return (
+            None,
+            f"{installed.qualified_name}: could not read source at {installed.current.sha[:12]}: {exc}",
+        )
+
+    expected_hash = hashing.hash_text(expected_content)
+
+    if target.exists() and installed.content_hash is not None:
+        current_hash = hashing.hash_text(target.read_text(encoding="utf-8"))
+        if current_hash == installed.content_hash:
+            return installed.qualified_name, None
+        if not force:
+            raise SyncDriftError(
+                f"{installed.qualified_name}: {rel} edited since install; "
+                "pass --force to overwrite"
+            )
+
+    try:
+        content_guard.assert_no_hidden_unicode(
+            expected_content, source=f"rule {installed.qualified_name}"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(expected_content, encoding="utf-8")
+    except Exception as exc:
+        return None, f"{installed.qualified_name}: failed to write {target}: {exc}"
+
+    installed.content_hash = expected_hash
+    return installed.qualified_name, None
+
+
+async def _sync_rules(
+    project_root: Path,
+    rules: list[InstalledRule],
+    profile: layout_profiles.LayoutProfile,
+    *,
+    force: bool,
+    callback: Callable[[str, str, str], object] | None,
+) -> tuple[list[str], list[str]]:
+    if not rules:
+        return [], []
+
+    async def _one(
+        rule: InstalledRule, cb: Callable[[str, str, str], object] | None
+    ) -> tuple[str | None, str | None]:
+        _notify(cb, "rule", rule.qualified_name, "syncing")
+        try:
+            synced, error = await asyncio.to_thread(
+                _sync_rule, project_root, rule, profile, force=force
+            )
+        except SyncDriftError as exc:
+            return None, str(exc)
+        if error:
+            _notify(cb, "rule", rule.qualified_name, "error")
+        else:
+            _notify(cb, "rule", rule.qualified_name, "ok")
+        return synced, error
+
+    results = await asyncio.gather(*(_one(r, callback) for r in rules))
+    synced = [r[0] for r in results if r[0] is not None]
+    errors = [r[1] for r in results if r[1] is not None]
+    return synced, errors
+
+
 def _sync_mcp(
     project_root: Path,
     installed: InstalledMcpServer,
@@ -380,14 +479,12 @@ async def run(options: SyncOptions) -> SyncResult:
     result.repo_errors = await _ensure_repos(repo_pairs, options.allow_insecure)
     _notify(options.progress_callback, "repos", "all", "ok")
 
-    # 2. Apply rules on the main thread (DB + small files).
-    _notify(options.progress_callback, "rules", "all", "syncing")
-    project_rules_dir = project_root / profile.rules_dir
-    applied = rules_mod.apply_to_project(
-        project_root, list(m.rules), rules_mode=profile.rules_mode, rules_dir=project_rules_dir
+    # 2. Reconcile rules (files mode deploys + drift-guards each file; inline
+    # mode renders into AGENTS.md in step 6).
+    rules_synced, rule_errors = await _sync_rules(
+        project_root, m.rules, profile, force=options.force, callback=options.progress_callback
     )
-    result.rules_applied = [r.name for r in applied]
-    _notify(options.progress_callback, "rules", "all", "ok")
+    result.rules_applied = rules_synced
 
     # 3. Reconcile skills.
     skills_synced, skill_errors = await _sync_skills(
@@ -418,7 +515,7 @@ async def run(options: SyncOptions) -> SyncResult:
     manifest.save(project_root, m)
 
     # Surface the first blocking error so callers get a clear failure.
-    all_errors = result.repo_errors + skill_errors + agent_errors + mcp_errors
+    all_errors = result.repo_errors + rule_errors + skill_errors + agent_errors + mcp_errors
     if all_errors:
         # We already saved the partial state so re-run picks up progress.
         raise SyncError("; ".join(all_errors))

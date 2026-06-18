@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from aim.core import doctor, install, repos, roots, rules
+from aim.core import doctor, install, repos, roots
 from aim.core import init as init_mod
 from aim.core import sync as sync_mod
 from aim.core.lock import LockOptions
@@ -82,16 +82,6 @@ def test_doctor_uses_configured_roots_when_none_passed(home: Path, project_root:
     roots.add_root(project_root)
     report = doctor.audit()
     assert report.projects_audited == 1
-
-
-def test_doctor_orphan_rule(home: Path) -> None:
-    rules.add("orphan", "body")
-    rules.body_path("orphan").unlink()
-    report = doctor.audit()
-    assert any(
-        "orphan" in f.message and "body file missing" in f.message
-        for f in report.by_severity("warning")
-    )
 
 
 def test_doctor_warns_on_partial_snapshot(home: Path, project_root: Path, tmp_path: Path) -> None:

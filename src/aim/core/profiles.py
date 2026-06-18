@@ -28,6 +28,7 @@ from aim.core import lock as lock_mod
 from aim.core import mcp_install as mcp_install_mod
 from aim.core import mcp_registry as mcp_registry_mod
 from aim.core import paths
+from aim.core import rule_install as rule_install_mod
 from aim.core import sync as sync_mod
 from aim.core.validation import is_valid_mirror_name, is_valid_rule_name
 
@@ -105,9 +106,11 @@ class Profile(BaseModel):
     @field_validator("rules")
     @classmethod
     def _validate_rule_names(cls, values: list[str]) -> list[str]:
+        # Rules are repo-sourced; each entry is a qualified name "<alias>/<rule>".
         for value in values:
-            if not is_valid_rule_name(value):
-                raise ValueError(f"rule name {value!r} invalid")
+            _alias, _, name = value.partition("/")
+            if not name or not is_valid_rule_name(name):
+                raise ValueError(f"rule qualified name {value!r} invalid (expected <alias>/<rule>)")
         return values
 
 
@@ -293,7 +296,7 @@ def from_project(name: str, project_root: Path) -> Profile:
         instruction_template=decl.instruction_template,
         layout_profile=decl.layout_profile,
         symlinks=list(decl.symlinks),
-        rules=list(decl.rules),
+        rules=[r.qualified_name for r in decl.rules],
         skills=[
             ProfileSkill(qualified_name=s.qualified_name, pin=s.pin, track=s.track)
             for s in skill_sources
@@ -328,6 +331,8 @@ class ProfileApplyResult:
     skipped_agents: list[str] = field(default_factory=list)
     installed_mcp: list[str] = field(default_factory=list)
     skipped_mcp: list[str] = field(default_factory=list)
+    installed_rules: list[str] = field(default_factory=list)
+    skipped_rules: list[str] = field(default_factory=list)
 
 
 def apply(name: str, project_root: Path, *, allow_insecure: bool = False) -> ProfileApplyResult:
@@ -339,7 +344,6 @@ def apply(name: str, project_root: Path, *, allow_insecure: bool = False) -> Pro
             instruction_template=profile.instruction_template,
             layout_profile=profile.layout_profile,
             symlinks=tuple(profile.symlinks),
-            extra_rules=list(profile.rules),
         )
     )
 
@@ -387,6 +391,15 @@ def apply(name: str, project_root: Path, *, allow_insecure: bool = False) -> Pro
         ):
             skipped_mcp.append(pm.alias)
 
+    installed_rules: list[str] = []
+    skipped_rules: list[str] = []
+    for qn in profile.rules:
+        try:
+            rule_install_mod.install(project_root, qn)
+            installed_rules.append(qn)
+        except rule_install_mod.RuleNotIndexedError:
+            skipped_rules.append(qn)
+
     # Reconcile agent instruction files so symlinks promised by the profile are
     # actually written to disk.
     asyncio.run(
@@ -409,4 +422,6 @@ def apply(name: str, project_root: Path, *, allow_insecure: bool = False) -> Pro
         skipped_agents=skipped_agents,
         installed_mcp=installed_mcp,
         skipped_mcp=skipped_mcp,
+        installed_rules=installed_rules,
+        skipped_rules=skipped_rules,
     )
