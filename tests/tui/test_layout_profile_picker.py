@@ -16,7 +16,9 @@ from aim.tui.screens.main_screen import MainScreen
 
 
 @pytest.mark.asyncio
-async def test_starts_on_main_screen_with_default_claude_profile(home: Path, project_root: Path) -> None:
+async def test_starts_on_main_screen_with_default_claude_profile(
+    home: Path, project_root: Path
+) -> None:
     app = AimApp(project_root=project_root)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -35,7 +37,9 @@ async def test_profile_override_sets_active_profile(home: Path, project_root: Pa
 
 
 @pytest.mark.asyncio
-async def test_invalid_profile_override_warns_and_uses_default(home: Path, project_root: Path) -> None:
+async def test_invalid_profile_override_warns_and_uses_default(
+    home: Path, project_root: Path
+) -> None:
     app = AimApp(project_root=project_root, profile_name="missing")
     async with app.run_test() as pilot:
         await pilot.pause()

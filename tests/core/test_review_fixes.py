@@ -116,17 +116,23 @@ def test_sync_warns_on_in_region_drift(home: Path, project_root: Path) -> None:
         ),
     )
     init_mod.run(
-        init_mod.InitOptions(project_root=project_root, layout_profile="inline", extra_rules=["focus"])
+        init_mod.InitOptions(
+            project_root=project_root, layout_profile="inline", extra_rules=["focus"]
+        )
     )
     asyncio.run(lock_run(LockOptions(project_root=project_root)))
-    asyncio.run(sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline")))
+    asyncio.run(
+        sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline"))
+    )
     agents = project_root / "AGENTS.md"
 
     text = agents.read_text()
     edited = text.replace("Focus.", "Focus. (edited inside marker)")
     agents.write_text(edited)
 
-    result = asyncio.run(sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline")))
+    result = asyncio.run(
+        sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline"))
+    )
     assert any("rules" in w and "edited" in w for w in result.drift_warnings)
 
 

@@ -100,7 +100,9 @@ def check_jargon(text: str) -> tuple[bool, list[str]]:
                     line_no = text.find(para.splitlines()[0])
                     if line_no >= 0:
                         line_no = text[:line_no].count("\n") + 1
-                        warnings.append(f"Acronym '{acronym}' at line {line_no} may need definition.")
+                        warnings.append(
+                            f"Acronym '{acronym}' at line {line_no} may need definition."
+                        )
                 break
     return len(warnings) == 0, warnings
 

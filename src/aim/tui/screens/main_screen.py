@@ -182,7 +182,9 @@ class MainScreen(Screen[None]):
         self.run_worker(self._do_lock_thread, exclusive=True, thread=True)
 
     def action_open_sync(self) -> None:
-        self.app.push_screen(InitModal(project_root=self._project_root, sync_mode=True), self._run_sync)
+        self.app.push_screen(
+            InitModal(project_root=self._project_root, sync_mode=True), self._run_sync
+        )
 
     def action_open_prune(self) -> None:
         self.run_worker(self._do_prune_thread, exclusive=True, thread=True)
@@ -218,7 +220,9 @@ class MainScreen(Screen[None]):
 
     def _do_prune_thread(self) -> None:
         try:
-            result = prune_mod.run(prune_mod.PruneOptions(project_root=self._project_root, dry_run=False))
+            result = prune_mod.run(
+                prune_mod.PruneOptions(project_root=self._project_root, dry_run=False)
+            )
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"prune failed: {exc}", severity="error")
             return

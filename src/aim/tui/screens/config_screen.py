@@ -94,7 +94,9 @@ class ConfigScreen(Screen[None]):
                 markup=False,
             ),
             Static(
-                ", ".join(applied_rules) if applied_rules else "(none — manage on the Rules screen)",
+                ", ".join(applied_rules)
+                if applied_rules
+                else "(none — manage on the Rules screen)",
                 id="proj-rules-display",
                 classes="config-paths",
                 markup=False,

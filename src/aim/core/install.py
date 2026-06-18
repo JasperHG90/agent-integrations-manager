@@ -261,8 +261,7 @@ def _deploy(plan: InstallPlan) -> str:
     hidden = content_guard.scan_directory(snap)
     if hidden:
         raise content_guard.HiddenUnicodeError(
-            f"{plan.qualified_name}: hidden Unicode found in skill files:\n"
-            + "\n".join(hidden)
+            f"{plan.qualified_name}: hidden Unicode found in skill files:\n" + "\n".join(hidden)
         )
     if plan.target_dir.exists():
         shutil.rmtree(plan.target_dir)

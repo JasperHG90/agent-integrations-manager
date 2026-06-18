@@ -96,7 +96,9 @@ def write_agent_files(
 
     if agents_path.exists() and not force:
         existing = agents_path.read_text()
-        drift_warnings.extend(_detect_region_drift(agents_path.name, existing, m.managed_region_hashes))
+        drift_warnings.extend(
+            _detect_region_drift(agents_path.name, existing, m.managed_region_hashes)
+        )
         merged = agents_md.merge(existing, fresh_regions_canonical)
     else:
         merged = _render_for_template(
@@ -115,9 +117,7 @@ def write_agent_files(
         if target.exists() and target.resolve() == agents_path.resolve():
             continue
         if target.exists() and not force:
-            drift_warnings.append(
-                f"{target.name} exists; left as-is (use --force to overwrite)"
-            )
+            drift_warnings.append(f"{target.name} exists; left as-is (use --force to overwrite)")
             continue
         if target.exists() or target.is_symlink():
             target.unlink()

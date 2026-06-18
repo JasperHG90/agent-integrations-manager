@@ -712,7 +712,9 @@ def init_cmd(
     typer.echo(f"{verb} {result.declarations_path}")
     if result.applied_rules:
         typer.echo(f"  rules:  {', '.join(result.applied_rules)}")
-    typer.echo("Run `aim lock` to resolve declarations into aim.lock.toml, then `aim sync` to apply them.")
+    typer.echo(
+        "Run `aim lock` to resolve declarations into aim.lock.toml, then `aim sync` to apply them."
+    )
 
 
 @app.command("lock")
@@ -790,7 +792,9 @@ def sync_cmd(
 @_friendly
 def prune_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Preview removals without deleting."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Preview removals without deleting."
+    ),
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),

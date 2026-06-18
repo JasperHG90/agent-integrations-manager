@@ -101,7 +101,9 @@ def test_rule_install_adds_to_manifest_and_renders(home: Path, project_root: Pat
 def test_rule_install_preserves_symlinks(home: Path, project_root: Path) -> None:
     _save_inline_profile(project_root)
     init_mod.run(
-        init_mod.InitOptions(project_root=project_root, layout_profile="inline", symlinks=("CLAUDE.md",))
+        init_mod.InitOptions(
+            project_root=project_root, layout_profile="inline", symlinks=("CLAUDE.md",)
+        )
     )
     rules.add("focus", "Focus.")
     rules.install_to_project(project_root, "focus")

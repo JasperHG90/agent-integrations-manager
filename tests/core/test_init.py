@@ -46,8 +46,14 @@ def test_re_init_preserves_existing_symlinks(home: Path, project_root: Path) -> 
 
 
 def test_re_init_clear_symlinks_replaces_them(home: Path, project_root: Path) -> None:
-    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md", "GEMINI.md")))
-    init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("OPENCODE.md",), clear_symlinks=True))
+    init_mod.run(
+        init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md", "GEMINI.md"))
+    )
+    init_mod.run(
+        init_mod.InitOptions(
+            project_root=project_root, symlinks=("OPENCODE.md",), clear_symlinks=True
+        )
+    )
     decl = declarations_mod.load(project_root)
     assert decl.symlinks == ["OPENCODE.md"]
 

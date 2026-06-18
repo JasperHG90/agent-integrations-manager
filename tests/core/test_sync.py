@@ -72,9 +72,7 @@ def test_sync_requires_lockfile(project_root: Path) -> None:
         asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
 
 
-def test_sync_restores_deleted_skill(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_restores_deleted_skill(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")
@@ -91,9 +89,7 @@ def test_sync_restores_deleted_skill(
     assert (target / "SKILL.md").read_text() == original
 
 
-def test_sync_restores_deleted_agent(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_restores_deleted_agent(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _agent_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("anth", f"file://{bare}")
@@ -126,9 +122,7 @@ def test_sync_restores_deleted_mcp_server(project_root: Path) -> None:
     assert "srv" in restored["mcpServers"]
 
 
-def test_sync_detects_skill_local_edits(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_detects_skill_local_edits(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")
@@ -156,9 +150,7 @@ def test_sync_detects_mcp_local_edits(project_root: Path) -> None:
         asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
 
 
-def test_sync_overwrites_with_force(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_overwrites_with_force(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")
@@ -172,9 +164,7 @@ def test_sync_overwrites_with_force(
     assert "# foo" in target.read_text()
 
 
-def test_sync_no_changes_on_second_run(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_no_changes_on_second_run(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")
@@ -200,17 +190,13 @@ def test_sync_skips_agent_files_when_no_sync_agents(
     target.unlink()
     agents_md = project_root / "AGENTS.md"
 
-    result = asyncio.run(
-        sync.run(sync.SyncOptions(project_root=project_root, sync_agents=False))
-    )
+    result = asyncio.run(sync.run(sync.SyncOptions(project_root=project_root, sync_agents=False)))
     assert "anth/review" in result.synced_agents
     assert target.exists()
     assert not agents_md.exists()
 
 
-def test_sync_auto_registers_missing_repo(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_auto_registers_missing_repo(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     # Install while repo is registered.
@@ -259,9 +245,7 @@ def _malicious_skill_repo(tmp_path: Path) -> tuple[Path, Path]:
     return working, bare
 
 
-def test_sync_rejects_hidden_unicode_skill(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_sync_rejects_hidden_unicode_skill(home: Path, project_root: Path, tmp_path: Path) -> None:
     working, bare = _malicious_skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")

@@ -65,7 +65,14 @@ def generate(dest: Path, *, width: int = 480) -> None:
         # Best-effort fallback; maintainer assets are generated on macOS.
         if (inkscape := shutil.which("inkscape")) is not None:
             subprocess.run(
-                [inkscape, str(svg_path), "--export-filename", str(dest), "--export-width", str(width)],
+                [
+                    inkscape,
+                    str(svg_path),
+                    "--export-filename",
+                    str(dest),
+                    "--export-width",
+                    str(width),
+                ],
                 check=True,
                 capture_output=True,
             )

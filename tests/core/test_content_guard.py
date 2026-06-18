@@ -30,7 +30,7 @@ def test_scan_text_finds_bidi_controls() -> None:
 
 
 def test_scan_text_finds_tag_characters() -> None:
-    text = "x\U000E0001y"
+    text = "x\U000e0001y"
     findings = content_guard.scan_text(text)
     assert len(findings) == 1
     assert "U+E0001" in findings[0]

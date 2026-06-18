@@ -412,7 +412,9 @@ def hash_entry(entry: McpClaudeEntry) -> str:
 
 
 def make_mcp_server_version(
-    server: McpServer, entry: McpClaudeEntry | None = None, overrides: dict[str, object] | None = None
+    server: McpServer,
+    entry: McpClaudeEntry | None = None,
+    overrides: dict[str, object] | None = None,
 ) -> McpServerVersion:
     return McpServerVersion(
         definition_hash=hash_definition(server),

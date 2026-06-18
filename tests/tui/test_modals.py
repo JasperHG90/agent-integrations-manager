@@ -381,9 +381,7 @@ async def test_project_picker_modal_esc_dismisses(home: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_skill_install_modal_passes_pin_and_track(
-    home: Path, project_root: Path
-) -> None:
+async def test_skill_install_modal_passes_pin_and_track(home: Path, project_root: Path) -> None:
     from aim.tui.modals.skill_install import SkillInstallConfig
 
     app = AimApp()
@@ -418,9 +416,7 @@ async def test_skill_install_modal_passes_pin_and_track(
 
 
 @pytest.mark.asyncio
-async def test_agent_install_modal_passes_pin_and_track(
-    home: Path, project_root: Path
-) -> None:
+async def test_agent_install_modal_passes_pin_and_track(home: Path, project_root: Path) -> None:
     from aim.tui.modals.agent_install import AgentInstallConfig
 
     app = AimApp()

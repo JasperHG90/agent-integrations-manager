@@ -72,7 +72,9 @@ class SyncResult:
     rules_applied: list[str] = field(default_factory=list)
 
 
-def _notify(callback: Callable[[str, str, str], object] | None, kind: str, name: str, status: str) -> None:
+def _notify(
+    callback: Callable[[str, str, str], object] | None, kind: str, name: str, status: str
+) -> None:
     if callback is not None:
         try:
             callback(kind, name, status)
@@ -84,12 +86,12 @@ def _load_lock(project_root: Path) -> Manifest:
     try:
         return manifest.load(project_root)
     except manifest.ManifestNotFoundError as exc:
-        raise SyncError(
-            f"no aim.lock.toml in {project_root}; run `aim init` first"
-        ) from exc
+        raise SyncError(f"no aim.lock.toml in {project_root}; run `aim init` first") from exc
 
 
-def _resolve_profile(project_root: Path, m: Manifest, layout_profile: str | None) -> layout_profiles.LayoutProfile:
+def _resolve_profile(
+    project_root: Path, m: Manifest, layout_profile: str | None
+) -> layout_profiles.LayoutProfile:
     active_name = layout_profile or m.layout_profile
     if active_name:
         try:
@@ -203,7 +205,9 @@ async def _sync_skills(
     if not skills:
         return [], []
 
-    async def _one(skill: InstalledSkill, cb: Callable[[str, str, str], object] | None) -> tuple[str | None, str | None]:
+    async def _one(
+        skill: InstalledSkill, cb: Callable[[str, str, str], object] | None
+    ) -> tuple[str | None, str | None]:
         _notify(cb, "skill", skill.qualified_name, "syncing")
         try:
             synced, error = await asyncio.to_thread(_sync_skill, project_root, skill, force=force)
@@ -245,7 +249,10 @@ def _sync_agent(
     try:
         expected_content = _read_agent_at_sha(installed)
     except Exception as exc:
-        return None, f"{installed.qualified_name}: could not read source at {installed.current.sha[:12]}: {exc}"
+        return (
+            None,
+            f"{installed.qualified_name}: could not read source at {installed.current.sha[:12]}: {exc}",
+        )
 
     expected_hash = hashing.hash_text(expected_content)
 
@@ -282,7 +289,9 @@ async def _sync_agents(
     if not agents:
         return [], []
 
-    async def _one(agent: InstalledAgent, cb: Callable[[str, str, str], object] | None) -> tuple[str | None, str | None]:
+    async def _one(
+        agent: InstalledAgent, cb: Callable[[str, str, str], object] | None
+    ) -> tuple[str | None, str | None]:
         _notify(cb, "agent", agent.qualified_name, "syncing")
         try:
             synced, error = await asyncio.to_thread(_sync_agent, project_root, agent, force=force)
@@ -330,7 +339,9 @@ async def _sync_mcps(
     if not mcps:
         return [], []
 
-    async def _one(mcp: InstalledMcpServer, cb: Callable[[str, str, str], object] | None) -> tuple[str | None, str | None]:
+    async def _one(
+        mcp: InstalledMcpServer, cb: Callable[[str, str, str], object] | None
+    ) -> tuple[str | None, str | None]:
         _notify(cb, "mcp", mcp.alias, "syncing")
         synced, error = await asyncio.to_thread(_sync_mcp, project_root, mcp, force=force)
         if error:
@@ -353,9 +364,7 @@ def _render_agent_files(
     force: bool,
 ) -> list[str]:
     """Re-render AGENTS.md and recreate symlinks. Returns drift warnings."""
-    return agent_files.write_agent_files(
-        project_root, m, profile, force=force
-    )
+    return agent_files.write_agent_files(project_root, m, profile, force=force)
 
 
 async def run(options: SyncOptions) -> SyncResult:

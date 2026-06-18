@@ -55,7 +55,9 @@ class ProjectTemplatesScreen(Screen[None]):
 
     def on_mount(self) -> None:
         table = self.query_one("#templates-table", DataTable)
-        table.add_columns("name", "instruction_template", "profile", "skills", "subagents", "mcp", "rules")
+        table.add_columns(
+            "name", "instruction_template", "profile", "skills", "subagents", "mcp", "rules"
+        )
         self._populate()
         table.focus()
 

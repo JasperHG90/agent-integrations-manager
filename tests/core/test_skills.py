@@ -199,7 +199,9 @@ def test_discover_supports_plugin_skills_dir(home: Path, tmp_path: Path) -> None
     names = {r.qualified_name for r in rows}
     assert names == {"wshobson/data-storytelling", "wshobson/async"}
     paths = {r.qualified_name: r.source_path for r in rows}
-    assert paths["wshobson/data-storytelling"] == "plugins/business-analytics/skills/data-storytelling"
+    assert (
+        paths["wshobson/data-storytelling"] == "plugins/business-analytics/skills/data-storytelling"
+    )
     assert paths["wshobson/async"] == "plugins/python-development/skills/async"
 
 

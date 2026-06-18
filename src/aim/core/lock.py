@@ -69,7 +69,9 @@ class LockResult:
     errors: list[str] = field(default_factory=list)
 
 
-def _notify(callback: Callable[[str, str, str], object] | None, kind: str, name: str, status: str) -> None:
+def _notify(
+    callback: Callable[[str, str, str], object] | None, kind: str, name: str, status: str
+) -> None:
     if callback is not None:
         try:
             callback(kind, name, status)
@@ -81,12 +83,12 @@ def _load_declarations(project_root: Path) -> ProjectDeclarations:
     try:
         return declarations.load(project_root)
     except declarations.DeclarationsNotFoundError as exc:
-        raise LockError(
-            f"no aim.toml in {project_root}; run `aim init` first"
-        ) from exc
+        raise LockError(f"no aim.toml in {project_root}; run `aim init` first") from exc
 
 
-def _resolve_profile(project_root: Path, decl: ProjectDeclarations) -> layout_profiles.LayoutProfile:
+def _resolve_profile(
+    project_root: Path, decl: ProjectDeclarations
+) -> layout_profiles.LayoutProfile:
     if decl.layout_profile:
         try:
             return layout_profiles.get_profile(project_root, decl.layout_profile)
@@ -295,7 +297,9 @@ async def _lock_mcps(
     return locked, errors
 
 
-def _compute_region_hashes(decl: ProjectDeclarations, profile: layout_profiles.LayoutProfile) -> dict[str, str]:
+def _compute_region_hashes(
+    decl: ProjectDeclarations, profile: layout_profiles.LayoutProfile
+) -> dict[str, str]:
     """Compute hashes for the rendered AGENTS.md regions from current rules/template."""
     applied = [rules.get(name) for name in decl.rules]
 

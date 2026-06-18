@@ -75,10 +75,14 @@ def test_init_includes_transitively_extended_rules(home: Path, project_root: Pat
         ),
     )
     init_mod.run(
-        init_mod.InitOptions(project_root=project_root, layout_profile="inline", extra_rules=["child"])
+        init_mod.InitOptions(
+            project_root=project_root, layout_profile="inline", extra_rules=["child"]
+        )
     )
     asyncio.run(lock_run(LockOptions(project_root=project_root)))
-    asyncio.run(sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline")))
+    asyncio.run(
+        sync_mod.run(sync_mod.SyncOptions(project_root=project_root, layout_profile="inline"))
+    )
     text = (project_root / "AGENTS.md").read_text()
     assert "Parent body." in text
     assert "Child body." in text

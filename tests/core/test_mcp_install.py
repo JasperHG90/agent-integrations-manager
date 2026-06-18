@@ -221,7 +221,5 @@ def test_install_rejects_hidden_unicode_override(project_root: Path) -> None:
         return_value=Response(200, json=_http_payload("my-server"))
     )
     with pytest.raises(content_guard.HiddenUnicodeError):
-        mcp_install.install(
-            project_root, "my-server", alias="my", overrides={"command": "node​"}
-        )
+        mcp_install.install(project_root, "my-server", alias="my", overrides={"command": "node​"})
     assert not (project_root / ".mcp.json").exists()

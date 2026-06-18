@@ -85,12 +85,12 @@ def _add_binary_file_commit(working: Path, rel_path: str, content: bytes, messag
     import subprocess
 
     subprocess.run(["git", "add", "."], cwd=working, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-q", "-m", message], cwd=working, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", message], cwd=working, check=True, capture_output=True
+    )
 
 
-def test_lock_handles_binary_skill_files(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_lock_handles_binary_skill_files(home: Path, project_root: Path, tmp_path: Path) -> None:
     """Skills may contain binary assets; hashing them must not assume UTF-8."""
     import asyncio
 
@@ -268,9 +268,7 @@ def test_install_plugin_style_skill(home: Path, project_root: Path, tmp_path: Pa
     assert m.skills[0].source_path == "plugins/business-analytics/skills/data-storytelling"
 
 
-def test_install_rejects_hidden_unicode(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
+def test_install_rejects_hidden_unicode(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _build_repo(
         tmp_path,
         {"skills/foo/SKILL.md": "# foo\n\nhidden​\n"},

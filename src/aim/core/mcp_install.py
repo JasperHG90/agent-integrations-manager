@@ -179,7 +179,9 @@ def install(
 
     mcp_registry.merge_mcp_server(project_root, alias, entry)
     effective_overrides = overrides or {}
-    version = mcp_registry.make_mcp_server_version(server, entry=entry, overrides=effective_overrides)
+    version = mcp_registry.make_mcp_server_version(
+        server, entry=entry, overrides=effective_overrides
+    )
 
     if existing is None:
         installed = InstalledMcpServer(
@@ -288,7 +290,9 @@ def rollback(project_root: Path, alias: str) -> InstalledMcpServer:
     installed.current = target_version
     installed.entry = target_entry
     installed.entry_hash = mcp_registry.hash_entry(target_entry)
-    installed.overrides = target_version.overrides if target_version.overrides is not None else installed.overrides
+    installed.overrides = (
+        target_version.overrides if target_version.overrides is not None else installed.overrides
+    )
     manifest.save(project_root, m)
     declarations._update_mcp(project_root, installed)
     return installed

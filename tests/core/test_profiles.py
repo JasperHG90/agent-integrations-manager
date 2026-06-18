@@ -21,7 +21,9 @@ from tests.fixtures import git_fixtures
 
 
 def test_save_and_load_round_trip(home: Path) -> None:
-    p = profiles.Profile(name="x", instruction_template="default", symlinks=["CLAUDE.md"], rules=["a"])
+    p = profiles.Profile(
+        name="x", instruction_template="default", symlinks=["CLAUDE.md"], rules=["a"]
+    )
     profiles.save(p)
     loaded = profiles.load("x")
     assert loaded == p

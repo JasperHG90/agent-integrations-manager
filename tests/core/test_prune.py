@@ -119,7 +119,9 @@ def test_prune_cli_exclude_option(home: Path, project_root: Path) -> None:
     rules_dir.mkdir(parents=True)
     (rules_dir / "unmanaged.md").write_text("unmanaged\n")
 
-    result = prune.run(prune.PruneOptions(project_root=project_root, excludes=[".claude/rules/unmanaged.md"]))
+    result = prune.run(
+        prune.PruneOptions(project_root=project_root, excludes=[".claude/rules/unmanaged.md"])
+    )
     removed_paths = {i.path for i in result.removed if i.action == "removed"}
     assert ".claude/rules/unmanaged.md" not in removed_paths
     assert (rules_dir / "unmanaged.md").exists()
@@ -131,7 +133,11 @@ def test_prune_aimignore_protects_local_mcp_alias(home: Path, project_root: Path
     init.run(init.InitOptions(project_root=project_root))
     _lock(project_root)
     mcp_path = project_root / ".mcp.json"
-    mcp_path.write_text(json.dumps({"mcpServers": {"managed": {"command": "managed"}, "local-db": {"command": "postgres"}}}))
+    mcp_path.write_text(
+        json.dumps(
+            {"mcpServers": {"managed": {"command": "managed"}, "local-db": {"command": "postgres"}}}
+        )
+    )
     (project_root / ".aimignore").write_text("mcp:local-*\n")
 
     result = prune.run(prune.PruneOptions(project_root=project_root))
@@ -145,7 +151,9 @@ def test_prune_aimignore_protects_local_mcp_alias(home: Path, project_root: Path
     assert "managed" not in data.get("mcpServers", {})
 
 
-def test_prune_malformed_aimignore_is_skipped(home: Path, project_root: Path, tmp_path: Path) -> None:
+def test_prune_malformed_aimignore_is_skipped(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     _, bare = _skill_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
     repos.add("a", f"file://{bare}")
