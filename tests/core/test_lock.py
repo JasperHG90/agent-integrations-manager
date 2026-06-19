@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import declarations, lock, manifest, repos
+from aim.core import declarations, git, lock, manifest, repos
 from aim.core import init as init_mod
 from aim.core.models import DeclaredSkill, ProjectDeclarations, SkillVersion
 from tests.fixtures import git_fixtures
@@ -435,3 +435,47 @@ def test_lock_track_head_upstream_moved_writes(
     assert result.unchanged is False, "HEAD movement must trigger a write"
     sha2 = _load_manifest(project_root).skills[0].current.sha
     assert sha2 != sha1
+
+
+# ---------------------------------------------------------------------------
+# resolve_ref dedup: one rev-parse per unique (repo, ref) within a lock run
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_ref_cached_dedups_within_run(tmp_path: Path) -> None:
+    real = git.RealGitBackend()
+    working = git_fixtures.make_source_repo(tmp_path / "src", files={"README.md": "x\n"})
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    clone = tmp_path / "clone"
+    real.clone_bare(f"file://{bare}", clone)
+
+    class CountingBackend(git.RealGitBackend):
+        def __init__(self) -> None:
+            self.count = 0
+
+        def resolve_ref(self, repo_dir: Path, ref: str) -> str:
+            self.count += 1
+            return super().resolve_ref(repo_dir, ref)
+
+    backend = CountingBackend()
+    git.set_backend(backend)
+    try:
+        lock._ref_cache.clear()
+        first = lock._resolve_ref_cached(clone, "HEAD")
+        again = lock._resolve_ref_cached(clone, "HEAD")
+        third = lock._resolve_ref_cached(clone, "HEAD")
+        assert first == again == third
+        assert backend.count == 1, "repeated (repo, ref) must resolve once"
+
+        # A different ref is a distinct key → resolves again.
+        lock._resolve_ref_cached(clone, first)
+        assert backend.count == 2
+
+        # clear() (called at the start of each run) forces a fresh resolve so a
+        # moved upstream is not served stale across runs.
+        lock._ref_cache.clear()
+        lock._resolve_ref_cached(clone, "HEAD")
+        assert backend.count == 3
+    finally:
+        git.set_backend(real)
+        lock._ref_cache.clear()

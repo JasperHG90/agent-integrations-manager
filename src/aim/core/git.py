@@ -45,6 +45,7 @@ class GitBackend(Protocol):
     def ls_tree(self, repo_dir: Path, sha: str, path: str = "") -> list[str]: ...
     def cat_file(self, repo_dir: Path, sha: str, path: str) -> str: ...
     def cat_file_bytes(self, repo_dir: Path, sha: str, path: str) -> bytes: ...
+    def cat_file_batch(self, repo_dir: Path, sha: str, paths: list[str]) -> dict[str, bytes]: ...
     def archive(self, repo_dir: Path, sha: str, source_path: str, dest_dir: Path) -> None: ...
     def last_touching_sha(self, repo_dir: Path, ref: str, source_path: str) -> str: ...
 
@@ -83,6 +84,12 @@ class RealGitBackend:
         `--bare` alone leaves the fetch refspec empty, so `fetch origin` is a
         no-op. `--mirror` is also bare, but sets things up so subsequent
         `fetch --tags --prune` mirrors the remote into the cache.
+
+        We deliberately do a FULL clone (no `--filter=blob:none`): aim's hot path
+        is hashing the blob content of declared artifacts, so a blobless partial
+        clone just defers each blob into a separate on-demand fetch round-trip —
+        measured ~3x slower end-to-end for a cold lock than fetching all blobs
+        once at clone time.
         """
         if dest.exists():
             raise GitError(f"clone dest already exists: {dest}")
@@ -151,6 +158,31 @@ class RealGitBackend:
 
     def cat_file_bytes(self, repo_dir: Path, sha: str, path: str) -> bytes:
         return _run(["git", "-C", str(repo_dir), "show", f"{sha}:{path}"])
+
+    def cat_file_batch(self, repo_dir: Path, sha: str, paths: list[str]) -> dict[str, bytes]:
+        """Read many blobs at `sha` with one `git cat-file --batch` process.
+
+        Avoids the per-file fork/exec of `cat_file_bytes` when hashing a whole
+        skill tree. Responses come back in request order, so we map them onto the
+        input `paths` positionally rather than by the echoed object name.
+        """
+        if not paths:
+            return {}
+        request = b"".join(f"{sha}:{p}\n".encode() for p in paths)
+        out = _run(["git", "-C", str(repo_dir), "cat-file", "--batch"], input_bytes=request)
+        result: dict[str, bytes] = {}
+        i = 0
+        for path in paths:
+            nl = out.index(b"\n", i)
+            header = out[i:nl].decode()  # "<obj> blob <size>" or "<input> missing"
+            i = nl + 1
+            parts = header.split(" ")
+            if parts[-1] == "missing":
+                raise GitError(f"object missing: {sha}:{path}")
+            size = int(parts[2])
+            result[path] = out[i : i + size]
+            i += size + 1  # skip the trailing newline git emits after the blob
+        return result
 
     def archive(self, repo_dir: Path, sha: str, source_path: str, dest_dir: Path) -> None:
         """Extract `source_path` subtree at `sha` into `dest_dir`, flattened so

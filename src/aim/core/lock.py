@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -130,9 +131,32 @@ async def _ensure_repos(decl: ProjectDeclarations, allow_insecure: bool) -> list
     return [r for r in results if r is not None]
 
 
+# Refs are stable for the duration of one lock run (repos are fetched once, up
+# front, in `_ensure_repos`). Many artifacts in the same repo share a ref —
+# commonly "HEAD" — so resolving each independently spawns one redundant
+# `git rev-parse` per artifact. This per-run cache collapses those to one spawn
+# per unique (repo, ref). It's a module global so the `asyncio.to_thread` worker
+# threads share it; `run()` clears it at the start of every lock to avoid stale
+# SHAs leaking across runs in a long-lived process (TUI/tests).
+_ref_cache: dict[tuple[str, str], str] = {}
+_ref_cache_lock = threading.Lock()
+
+
+def _resolve_ref_cached(repo_dir: Path, ref: str) -> str:
+    key = (str(repo_dir), ref)
+    with _ref_cache_lock:
+        sha = _ref_cache.get(key)
+    if sha is not None:
+        return sha
+    sha = git.get_backend().resolve_ref(repo_dir, ref)
+    with _ref_cache_lock:
+        _ref_cache[key] = sha
+    return sha
+
+
 def _resolve_skill_version(skill: DeclaredSkill) -> SkillVersion:
     repo_dir = repos.clone_dir(skill.repo_alias)
-    sha = git.get_backend().resolve_ref(repo_dir, skill.pin or skill.track or "HEAD")
+    sha = _resolve_ref_cached(repo_dir, skill.pin or skill.track or "HEAD")
     return SkillVersion(
         tag=skill.pin,
         sha=sha,
@@ -142,10 +166,11 @@ def _resolve_skill_version(skill: DeclaredSkill) -> SkillVersion:
 
 def _hash_skill_at_sha(skill: DeclaredSkill, sha: str) -> str:
     repo_dir = repos.clone_dir(skill.repo_alias)
-    paths_in_tree = git.get_backend().ls_tree(repo_dir, sha, skill.source_path)
+    paths_in_tree = sorted(git.get_backend().ls_tree(repo_dir, sha, skill.source_path))
+    blobs = git.get_backend().cat_file_batch(repo_dir, sha, paths_in_tree)
     h = hashlib.sha256()
-    for rel_path in sorted(paths_in_tree):
-        content = git.get_backend().cat_file_bytes(repo_dir, sha, rel_path)
+    for rel_path in paths_in_tree:
+        content = blobs[rel_path]
         rel_under_source = rel_path[len(skill.source_path) + 1 :] if skill.source_path else rel_path
         h.update(rel_under_source.encode("utf-8"))
         h.update(b"\0")
@@ -213,7 +238,7 @@ async def _lock_skills(
 
 def _resolve_agent_version(agent: DeclaredAgent) -> SkillVersion:
     repo_dir = repos.clone_dir(agent.repo_alias)
-    sha = git.get_backend().resolve_ref(repo_dir, agent.pin or agent.track or "HEAD")
+    sha = _resolve_ref_cached(repo_dir, agent.pin or agent.track or "HEAD")
     return SkillVersion(
         tag=agent.pin,
         sha=sha,
@@ -290,7 +315,7 @@ async def _lock_agents(
 
 def _resolve_rule_version(rule: DeclaredRule) -> SkillVersion:
     repo_dir = repos.clone_dir(rule.repo_alias)
-    sha = git.get_backend().resolve_ref(repo_dir, rule.pin or rule.track or "HEAD")
+    sha = _resolve_ref_cached(repo_dir, rule.pin or rule.track or "HEAD")
     return SkillVersion(
         tag=rule.pin,
         sha=sha,
@@ -546,6 +571,8 @@ def _preserve_unchanged_metadata(existing: Manifest | None, new: Manifest) -> No
 
 
 async def run(options: LockOptions) -> LockResult:
+    with _ref_cache_lock:
+        _ref_cache.clear()
     project_root = options.project_root.resolve()
     decl = _load_declarations(project_root)
     profile = _resolve_profile(project_root, decl)
