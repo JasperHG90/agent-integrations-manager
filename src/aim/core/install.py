@@ -288,7 +288,7 @@ def _gather_skill_text(snap: Path) -> str:
     return "\n".join(parts)
 
 
-def _deploy(plan: InstallPlan, *, allow_risky: bool = False) -> str:
+def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
     """Materialise the skill bytes into the project target_dir. Returns the
     content hash of the deployed tree."""
     snap = _ensure_snapshot(plan.repo_alias, plan.version.sha, plan.source_path, plan.skill_name)
@@ -301,12 +301,14 @@ def _deploy(plan: InstallPlan, *, allow_risky: bool = False) -> str:
         raise content_guard.HiddenUnicodeError(
             f"{plan.qualified_name}: hidden Unicode found in skill files:\n" + "\n".join(hidden)
         )
-    if pol.risk.enabled:
+    # Guarded because gathering skill text is risk-only work; skip it when risk is off
+    # (agents/rules already hold their content, so they call risk.gate unconditionally).
+    if pol.risk.classifier or pol.risk.llm_judge:
         risk.gate(
             _gather_skill_text(snap),
             qualified_name=plan.qualified_name,
             pol=pol,
-            allow_risky=allow_risky,
+            override_risk=override_risk,
         )
     if plan.target_dir.exists():
         shutil.rmtree(plan.target_dir)
@@ -337,7 +339,7 @@ def install(
     *,
     track: str | None = None,
     pin: str | None = None,
-    allow_risky: bool = False,
+    override_risk: bool = False,
 ) -> InstalledSkill:
     plan = _plan(project_root, qualified_name, track=track, pin=pin)
 
@@ -346,7 +348,7 @@ def install(
     # gets a clear print-list to install themselves.
     _warn_about_prereqs_and_capabilities(project_root, qualified_name)
 
-    content_hash = _deploy(plan, allow_risky=allow_risky)
+    content_hash = _deploy(plan, override_risk=override_risk)
 
     m = _load_manifest(project_root)
     existing = _find_installed(m, qualified_name)
@@ -469,7 +471,7 @@ def update(
     *,
     force: bool = False,
     dry_run: bool = False,
-    allow_risky: bool = False,
+    override_risk: bool = False,
 ) -> InstalledSkill | UpdatePreview:
     m = _load_manifest(project_root)
     existing = _find_installed(m, qualified_name)
@@ -508,7 +510,7 @@ def update(
         version=new_version,
         project_root=project_root,
     )
-    content_hash = _deploy(plan, allow_risky=allow_risky)
+    content_hash = _deploy(plan, override_risk=override_risk)
     existing.push_history(new_version)
     existing.content_hash = content_hash
     manifest.save(project_root, m)

@@ -9,9 +9,10 @@ instructs*. Two tiers cover two distinct threats:
   set (malicious-execution intent), driven through DSPy for structured output.
 
 Everything heavy is imported lazily, so importing this module pulls no ML deps. The
-whole subsystem is OFF unless the governing policy's `[risk]` enables it — so by
-default this is a no-op. It is advisory-first: blocking requires `mode = "block"`
-in the policy (intended only once a model is measured against a labeled corpus).
+whole subsystem is OFF by default: it activates only when the governing policy's
+`[risk]` turns on `classifier` and/or `llm_judge`. Once active, the default mode is
+`block` — a verdict at or above `block_threshold` fails the deploy; `--override-risk`
+overrides it unless the policy sets `allow_override = false`.
 """
 
 from __future__ import annotations
@@ -32,8 +33,35 @@ from aim.core import paths, policy
 _SEVERITY_TO_LEVEL: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
 
 
+def _split_reason(reason: str) -> tuple[str, str]:
+    """Split a `rule_id: evidence` reason into its parts (rule, evidence)."""
+    rule, sep, evidence = reason.partition(": ")
+    return (rule, evidence) if sep else ("", rule)
+
+
 class RiskBlockedError(ValueError):
-    """An artifact's risk verdict meets the policy's block threshold."""
+    """An artifact's risk verdict meets the policy's block threshold.
+
+    Carries the structured verdict (source, level, threshold, per-rule
+    violations) so the CLI can render each violation instead of one flat line.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        source: str = "",
+        level: str = "",
+        threshold: str = "",
+        violations: list[tuple[str, str]] | None = None,
+        override_hint: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.source = source
+        self.level = level
+        self.threshold = threshold
+        self.violations = violations or []
+        self.override_hint = override_hint
 
 
 class RiskDependencyError(RuntimeError):
@@ -59,9 +87,9 @@ class RiskVerdict:
 
 @dataclass(frozen=True)
 class RiskConfig:
-    enabled: bool
     mode: str  # warn | block
-    backend: str  # null | local | judge | tiered
+    classifier: bool  # run the local ONNX screen
+    llm_judge: bool  # run the DSPy judge (both on -> screen then escalate to judge)
     model_id: str
     block_threshold: RiskLevel
     escalate_threshold: RiskLevel
@@ -69,13 +97,18 @@ class RiskConfig:
     allow_override: bool
     rules: list[policy.RiskRule]
 
+    @property
+    def active(self) -> bool:
+        """Risk scanning runs iff a classifier or the judge is enabled."""
+        return self.classifier or self.llm_judge
+
 
 def config_from_policy(pol: policy.Policy) -> RiskConfig:
     r = pol.risk
     return RiskConfig(
-        enabled=r.enabled,
         mode=r.mode,
-        backend=r.backend,
+        classifier=r.classifier,
+        llm_judge=r.llm_judge,
         model_id=r.model_id,
         block_threshold=RiskLevel.from_severity(r.block_threshold),
         escalate_threshold=RiskLevel.from_severity(r.escalate_threshold),
@@ -131,11 +164,14 @@ def _load_onnx_model(model_id: str) -> tuple[Any, Any, int, tuple[str, ...]]:
     try:
         import onnxruntime as ort
         from huggingface_hub import snapshot_download
+        from huggingface_hub.utils import disable_progress_bars
         from tokenizers import Tokenizer
     except ImportError as exc:
         raise RiskDependencyError(
             "local risk model needs the 'risk' extra: pip install 'agent-init[risk]'"
         ) from exc
+    # Quiet the "Fetching N files" / "Download complete" tqdm bars on every scan.
+    disable_progress_bars()
     local_dir = Path(
         snapshot_download(
             model_id,
@@ -223,8 +259,43 @@ def _judge_verdict(findings: list[dict], rules: list[policy.RiskRule]) -> RiskVe
         ),
         default=RiskLevel.LOW,
     )
-    reasons = [f"{f.get('rule_id')}: {f.get('evidence', '')}".strip().rstrip(":") for f in violated]
+    # Always keep the "rule_id: evidence" separator so the renderer can split a judge
+    # finding back into its (rule, evidence) columns even when the model gave no evidence.
+    reasons = [
+        f"{f.get('rule_id')}: {str(f.get('evidence') or '(no evidence given)').strip()}"
+        for f in violated
+    ]
     return RiskVerdict(level, reasons, "judge")
+
+
+@functools.lru_cache(maxsize=4)
+def _judge_lm(judge: str) -> Any:
+    """Build a DSPy LM once per model string — reused across scans so we don't pay
+    client/connection setup on every classify call."""
+    import dspy
+
+    return dspy.LM(judge)
+
+
+@functools.lru_cache(maxsize=1)
+def _rule_judge_signature() -> Any:
+    """The judge Signature, defined once. Re-declaring it per call made DSPy reparse
+    it every scan."""
+    import dspy
+
+    class _RuleJudge(dspy.Signature):
+        """Assess an AI agent artifact (skill/rule/subagent instructions) against
+        each risk rule. Judge execution-time intent — data exfiltration, destructive
+        operations, remote code execution, privilege escalation, obfuscation — not
+        mere mention. Mark `violated` true only with concrete evidence in the text."""
+
+        artifact: str = dspy.InputField(desc="the artifact text to assess")
+        rules: str = dspy.InputField(desc="JSON list of rules [{id, severity, guidance}]")
+        findings: str = dspy.OutputField(
+            desc='JSON list [{"rule_id": str, "violated": bool, "evidence": str}]'
+        )
+
+    return _RuleJudge
 
 
 @dataclass
@@ -254,49 +325,39 @@ class JudgeClassifier:
                 raise RiskDependencyError(
                     "no judge model configured; set [risk].judge in the policy"
                 )
-            lm = dspy.LM(self.config.judge)
+            lm = _judge_lm(self.config.judge)
         rules = self.config.rules
         if not rules:
             return RiskVerdict(RiskLevel.LOW, [], "judge")
-
-        class _RuleJudge(dspy.Signature):
-            """Assess an AI agent artifact (skill/rule/subagent instructions) against
-            each risk rule. Judge execution-time intent — data exfiltration, destructive
-            operations, remote code execution, privilege escalation, obfuscation — not
-            mere mention. Mark `violated` true only with concrete evidence in the text."""
-
-            artifact: str = dspy.InputField(desc="the artifact text to assess")
-            rules: str = dspy.InputField(desc="JSON list of rules [{id, severity, guidance}]")
-            findings: str = dspy.OutputField(
-                desc='JSON list [{"rule_id": str, "violated": bool, "evidence": str}]'
-            )
 
         payload = json.dumps(
             [{"id": r.id, "severity": r.severity, "guidance": r.prompt} for r in rules]
         )
         with dspy.context(lm=lm):
-            out = dspy.Predict(_RuleJudge)(artifact=text, rules=payload)
+            out = dspy.Predict(_rule_judge_signature())(artifact=text, rules=payload)
         return _judge_verdict(_parse_findings(out.findings), rules)
 
 
 @dataclass
 class TieredClassifier:
+    """The local injection screen is the first gate. It runs BEFORE the judge: if it
+    flags (level >= escalate_threshold) the verdict is returned as-is and the judge is
+    never consulted — an injection hit is not one of the judge's rules, so it must not
+    be merged into the judge's findings. Only a clean screen falls through to the judge.
+    """
+
     local: RiskClassifier | None
     judge: RiskClassifier | None
     escalate_threshold: RiskLevel
 
     def classify(self, text: str, *, source: str | None = None) -> RiskVerdict:
-        base = (
-            self.local.classify(text, source=source)
-            if self.local is not None
-            else RiskVerdict(RiskLevel.LOW, [], "none")
-        )
-        if self.judge is None or base.level < self.escalate_threshold:
-            return base
-        judged = self.judge.classify(text, source=source)
-        if judged.level >= base.level:
-            return RiskVerdict(judged.level, [*base.reasons, *judged.reasons], "tiered")
-        return RiskVerdict(base.level, [*base.reasons, *judged.reasons], "tiered")
+        if self.local is not None:
+            base = self.local.classify(text, source=source)
+            if base.level >= self.escalate_threshold:
+                return base
+        if self.judge is not None:
+            return self.judge.classify(text, source=source)
+        return RiskVerdict(RiskLevel.LOW, [], "none")
 
 
 _override: RiskClassifier | None = None
@@ -316,19 +377,15 @@ def reset_classifier() -> None:
 def get_classifier(config: RiskConfig) -> RiskClassifier:
     if _override is not None:
         return _override
-    if not config.enabled or config.backend == "null":
+    if not config.active:
         return NullClassifier()
-    local = LocalOnnxClassifier(config.model_id) if config.backend in ("local", "tiered") else None
-    judge = (
-        JudgeClassifier(config)
-        if (config.backend in ("judge", "tiered") and config.judge)
-        else None
-    )
-    if config.backend == "local":
-        return local or NullClassifier()
-    if config.backend == "judge":
-        return judge or NullClassifier()
-    return TieredClassifier(local, judge, config.escalate_threshold)
+    local = LocalOnnxClassifier(config.model_id) if config.classifier else None
+    judge = JudgeClassifier(config) if config.llm_judge else None
+    if local is not None and judge is not None:
+        # Both on -> the cheap screen gates the judge: a screen hit blocks here, a
+        # clean screen falls through to the judge (which never sees the screen's hit).
+        return TieredClassifier(local, judge, config.escalate_threshold)
+    return local or judge or NullClassifier()
 
 
 # ---------- verdict store: per-artifact history (last 3), keyed by content hash ----------
@@ -358,7 +415,8 @@ def config_fingerprint(config: RiskConfig) -> str:
     invalidates stale verdicts instead of reusing a level computed under old rules."""
     payload = json.dumps(
         {
-            "backend": config.backend,
+            "classifier": config.classifier,
+            "llm_judge": config.llm_judge,
             "model_id": config.model_id,
             "judge": config.judge,
             "escalate": int(config.escalate_threshold),
@@ -430,21 +488,21 @@ def take_risk_warnings() -> list[str]:
 
 
 def assert_acceptable_risk(
-    text: str, *, source: str, config: RiskConfig, allow_risky: bool = False
+    text: str, *, source: str, config: RiskConfig, override_risk: bool = False
 ) -> RiskVerdict:
     """Classify `text` and enforce the policy's risk mode.
 
     Returns a LOW verdict immediately when risk is disabled (the default). Caches
     verdicts by content hash so re-scans are deterministic and cheap. Raises
     RiskBlockedError only when the policy sets `mode = "block"` and the verdict
-    meets the block threshold (unless `allow_risky`). Sub-block findings are pushed
+    meets the block threshold (unless `override_risk`). Sub-block findings are pushed
     to the advisory warnings buffer; the reasons are always populated.
     """
-    if not config.enabled:
+    if not config.active:
         return RiskVerdict(RiskLevel.LOW, [], "disabled")
 
     # The override is honored only when the policy permits it (allow_override).
-    override = allow_risky and config.allow_override
+    override = override_risk and config.allow_override
 
     content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     fingerprint = config_fingerprint(config)
@@ -458,7 +516,7 @@ def assert_acceptable_risk(
             if config.mode == "block" and not override:
                 raise RiskBlockedError(
                     f"{source}: policy requires risk blocking but the classifier is "
-                    f"unavailable ({exc}); install the risk extra or pass --allow-risky"
+                    f"unavailable ({exc}); install the risk extra or pass --override-risk"
                 ) from exc
             _warn(f"{source}: risk scan skipped ({exc})")
             return RiskVerdict(RiskLevel.LOW, [], "unavailable")
@@ -467,10 +525,19 @@ def assert_acceptable_risk(
     if verdict.level >= config.block_threshold:
         detail = "; ".join(verdict.reasons) or "no detail"
         if config.mode == "block" and not override:
-            hint = "" if config.allow_override else " (override disabled by policy)"
+            hint = (
+                "override disabled by policy"
+                if not config.allow_override
+                else "pass --override-risk to override"
+            )
             raise RiskBlockedError(
-                f"{source}: risk {verdict.level.name} >= {config.block_threshold.name}: {detail}"
-                f"{hint or ' (pass --allow-risky to override)'}"
+                f"{source}: risk {verdict.level.name} >= {config.block_threshold.name}: "
+                f"{detail} ({hint})",
+                source=source,
+                level=verdict.level.name,
+                threshold=config.block_threshold.name,
+                violations=[_split_reason(r) for r in verdict.reasons],
+                override_hint=hint,
             )
         _warn(f"{source}: risk {verdict.level.name}: {detail}")
     elif verdict.level >= RiskLevel.MEDIUM:
@@ -479,7 +546,7 @@ def assert_acceptable_risk(
 
 
 def gate(
-    content: str, *, qualified_name: str, pol: policy.Policy, allow_risky: bool = False
+    content: str, *, qualified_name: str, pol: policy.Policy, override_risk: bool = False
 ) -> None:
     """Convenience wrapper for the deploy chokepoints: classify+enforce using the
     governing policy's risk settings. No-op when risk is disabled."""
@@ -487,5 +554,5 @@ def gate(
         content,
         source=qualified_name,
         config=config_from_policy(pol),
-        allow_risky=allow_risky,
+        override_risk=override_risk,
     )

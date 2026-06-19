@@ -34,7 +34,7 @@ class FakeClassifier:
 
 def _enabled_config(*, mode: str = "warn", block: str = "high") -> risk.RiskConfig:
     pol = policy.Policy(name="local")
-    pol.risk.enabled = True
+    pol.risk.classifier = True
     pol.risk.mode = mode
     pol.risk.block_threshold = block
     return risk.config_from_policy(pol)
@@ -60,6 +60,24 @@ def test_config_from_policy_includes_active_rules() -> None:
     assert "secret_exfiltration" in ids and "destructive_ops" in ids
 
 
+def test_get_classifier_from_booleans(home: Path) -> None:
+    risk.reset_classifier()
+
+    def cfg(classifier: bool, llm_judge: bool) -> risk.RiskConfig:
+        pol = policy.Policy()
+        pol.risk.classifier = classifier
+        pol.risk.llm_judge = llm_judge
+        return risk.config_from_policy(pol)
+
+    assert isinstance(risk.get_classifier(cfg(True, False)), risk.LocalOnnxClassifier)
+    assert isinstance(risk.get_classifier(cfg(False, True)), risk.JudgeClassifier)
+    assert isinstance(risk.get_classifier(cfg(True, True)), risk.TieredClassifier)
+    assert isinstance(risk.get_classifier(cfg(False, False)), risk.NullClassifier)
+    assert isinstance(
+        risk.get_classifier(risk.config_from_policy(policy.Policy())), risk.NullClassifier
+    )  # disabled
+
+
 # ---------------------------------------------------------------------------
 # warn vs block + threshold + override
 # ---------------------------------------------------------------------------
@@ -73,13 +91,13 @@ def test_warn_mode_pushes_warning_never_raises(home: Path) -> None:
     assert any("a/b" in w for w in warnings)
 
 
-def test_block_mode_raises_and_allow_risky_overrides(home: Path) -> None:
+def test_block_mode_raises_and_override_risk_overrides(home: Path) -> None:
     risk.set_classifier(FakeClassifier(risk.RiskLevel.HIGH))
     cfg = _enabled_config(mode="block")
     with pytest.raises(risk.RiskBlockedError, match="rule:HIGH"):
         risk.assert_acceptable_risk("danger", source="a/b", config=cfg)
     # override succeeds and never raises
-    verdict = risk.assert_acceptable_risk("danger", source="a/b", config=cfg, allow_risky=True)
+    verdict = risk.assert_acceptable_risk("danger", source="a/b", config=cfg, override_risk=True)
     assert verdict.level is risk.RiskLevel.HIGH
 
 
@@ -121,7 +139,7 @@ def test_cache_invalidated_when_config_changes(home: Path) -> None:
     assert fake.calls == 1  # same content + config -> cached
     # Add a custom rule -> different config fingerprint -> must reclassify.
     pol = policy.Policy(name="local")
-    pol.risk.enabled = True
+    pol.risk.classifier = True
     pol.custom_rules = [policy.RiskRule(id="extra", severity="high", prompt="p")]
     risk.assert_acceptable_risk("same", source="a/b", config=risk.config_from_policy(pol))
     assert fake.calls == 2
@@ -155,26 +173,32 @@ def test_dependency_unavailable_block_mode_fails_closed(home: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# tiered escalation
+# tiered gating: the local screen runs first and gates the judge
 # ---------------------------------------------------------------------------
 
 
-def test_tiered_escalates_and_takes_max() -> None:
-    local = FakeClassifier(risk.RiskLevel.MEDIUM)
-    judge = FakeClassifier(risk.RiskLevel.HIGH)
+def test_tiered_local_hit_blocks_and_skips_judge() -> None:
+    # The injection screen flags -> block here; the judge is never consulted, and its
+    # hit is not one of the judge's rules so it must not be merged into judge findings.
+    local = FakeClassifier(risk.RiskLevel.HIGH)
+    judge = FakeClassifier(risk.RiskLevel.LOW)
     tiered = risk.TieredClassifier(local, judge, risk.RiskLevel.MEDIUM)
     verdict = tiered.classify("x")
     assert verdict.level is risk.RiskLevel.HIGH
-    assert judge.calls == 1
+    assert verdict.reasons == ["rule:HIGH"]  # screen's reason only
+    assert judge.calls == 0
 
 
-def test_tiered_skips_judge_below_escalation() -> None:
+def test_tiered_clean_screen_defers_to_judge() -> None:
+    # A clean screen falls through to the judge, which alone decides the verdict;
+    # the screen's reason is NOT merged in.
     local = FakeClassifier(risk.RiskLevel.LOW)
     judge = FakeClassifier(risk.RiskLevel.HIGH)
     tiered = risk.TieredClassifier(local, judge, risk.RiskLevel.MEDIUM)
     verdict = tiered.classify("x")
-    assert verdict.level is risk.RiskLevel.LOW
-    assert judge.calls == 0
+    assert verdict.level is risk.RiskLevel.HIGH
+    assert verdict.reasons == ["rule:HIGH"]  # judge-only; no "rule:LOW" from the screen
+    assert judge.calls == 1
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +208,7 @@ def test_tiered_skips_judge_below_escalation() -> None:
 
 def _set_risk_policy(project_root: Path, *, mode: str, allow_override: bool = True) -> None:
     pol = policy.Policy(name="local")
-    pol.risk.enabled = True
+    pol.risk.classifier = True
     pol.risk.mode = mode
     pol.risk.allow_override = allow_override
     section = policy.to_mapping(pol)
@@ -199,15 +223,15 @@ def test_gate_blocks_high_risk_when_policy_blocks(home: Path, project_root: Path
         agent_install._gate_agent(project_root, "r/ok", "danger")
 
 
-def test_gate_allow_risky_overrides_unless_policy_forbids(home: Path, project_root: Path) -> None:
+def test_gate_override_risk_overrides_unless_policy_forbids(home: Path, project_root: Path) -> None:
     risk.set_classifier(FakeClassifier(risk.RiskLevel.HIGH))
-    # override allowed -> --allow-risky lets it through
+    # override allowed -> --override-risk lets it through
     _set_risk_policy(project_root, mode="block", allow_override=True)
-    agent_install._gate_agent(project_root, "r/ok", "danger", allow_risky=True)  # no raise
-    # override forbidden by policy -> --allow-risky is refused
+    agent_install._gate_agent(project_root, "r/ok", "danger", override_risk=True)  # no raise
+    # override forbidden by policy -> --override-risk is refused
     _set_risk_policy(project_root, mode="block", allow_override=False)
     with pytest.raises(risk.RiskBlockedError, match="override disabled"):
-        agent_install._gate_agent(project_root, "r/ok", "danger", allow_risky=True)
+        agent_install._gate_agent(project_root, "r/ok", "danger", override_risk=True)
 
 
 def test_gate_noop_when_risk_disabled(home: Path, project_root: Path) -> None:
@@ -277,9 +301,9 @@ def test_judge_classifier_runs_real_dspy_with_dummy_lm() -> None:
 
     rules = [policy.RiskRule(id="secret_exfiltration", severity="high", prompt="flag exfiltration")]
     cfg = risk.RiskConfig(
-        enabled=True,
         mode="block",
-        backend="judge",
+        classifier=False,
+        llm_judge=True,
         model_id="x",
         block_threshold=risk.RiskLevel.HIGH,
         escalate_threshold=risk.RiskLevel.MEDIUM,
@@ -331,9 +355,9 @@ def _gemini_judge_config() -> risk.RiskConfig:
         ),
     ]
     return risk.RiskConfig(
-        enabled=True,
         mode="block",
-        backend="judge",
+        classifier=False,
+        llm_judge=True,
         model_id="x",
         block_threshold=risk.RiskLevel.HIGH,
         escalate_threshold=risk.RiskLevel.MEDIUM,

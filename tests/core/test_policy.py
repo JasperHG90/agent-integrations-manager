@@ -39,7 +39,7 @@ from tests.fixtures import git_fixtures
 
 
 def _set_local(project_root: Path, pol: policy.Policy) -> None:
-    section = policy.to_mapping(pol, include_custom_rules=True)
+    section = policy.to_mapping(pol)
     section["scope"] = "local"
     policy.set_project_policy(project_root, section)
 
@@ -107,15 +107,17 @@ def test_toml_roundtrip_preserves_fields() -> None:
         blocked_skills=["r/bad"],
         allowed_profiles=["claude"],
     )
-    pol.risk.enabled = True
     pol.risk.allow_override = False
+    pol.risk.classifier = True
+    pol.risk.llm_judge = True
     pol.risk.preset_overrides = {"obfuscation": False, "destructive_ops": "medium"}
     back = policy.from_toml(policy.to_toml(pol))
     assert back.blocked_repos == pol.blocked_repos
     assert back.blocked_skills == pol.blocked_skills
     assert back.allowed_profiles == pol.allowed_profiles
-    assert back.risk.enabled is True
+    assert back.risk.classifier is True
     assert back.risk.allow_override is False
+    assert back.risk.classifier is True and back.risk.llm_judge is True
     assert back.risk.preset_overrides == {"obfuscation": False, "destructive_ops": "medium"}
 
 
@@ -123,12 +125,12 @@ def test_from_mapping_reads_inline_custom_rules() -> None:
     pol = policy.from_mapping(
         {
             "artifacts": {"blocked_skills": ["a/b"]},
-            "risk": {"enabled": True},
+            "risk": {"classifier": True},
             "rule": [{"id": "x", "severity": "high", "prompt": "p"}],
         }
     )
     assert pol.blocked_skills == ["a/b"]
-    assert pol.risk.enabled is True
+    assert pol.risk.classifier is True
     assert [r.id for r in pol.custom_rules] == ["x"]
 
 
@@ -343,13 +345,8 @@ def test_lock_no_policy_omits_fields(home: Path, project_root: Path, tmp_path: P
 # ---------------------------------------------------------------------------
 
 
-def _make_policy_repo(
-    tmp_path: Path, policy_toml: str, rules_toml: str | None = None, name: str = "polrepo"
-) -> str:
-    files = {"policy.toml": policy_toml}
-    if rules_toml is not None:
-        files["aim.rules.toml"] = rules_toml
-    working = git_fixtures.make_source_repo(tmp_path / name, files=files)
+def _make_policy_repo(tmp_path: Path, policy_toml: str, name: str = "polrepo") -> str:
+    working = git_fixtures.make_source_repo(tmp_path / name, files={"policy.toml": policy_toml})
     bare = git_fixtures.make_bare_remote(working, tmp_path / f"{name}.git")
     return f"file://{bare}"
 
@@ -370,11 +367,68 @@ def test_org_snapshots_keyed_per_repo(home: Path, tmp_path: Path) -> None:
     assert s2 is not None and s2.policy.name == "two"
 
 
+def _backdate_org_snapshot(url: str, *, days: int) -> None:
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from aim.core import db
+    from aim.core.models import GlobalSetting
+
+    with db.session() as s:
+        row = s.get(GlobalSetting, policy._org_snapshot_key(url))
+        data = _json.loads(row.value)
+        data["fetched_at"] = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        row.value = _json.dumps(data)
+        s.commit()
+
+
+def test_org_ttl_refreshes_when_stale(home: Path, project_root: Path, tmp_path: Path) -> None:
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    _set_org(project_root, url)
+    _backdate_org_snapshot(url, days=2)
+    policy.reset_refresh_state()
+    before = policy._snapshot_fetched_at(url)
+    policy.resolve_effective(project_root)  # stale -> opportunistic re-fetch
+    after = policy._snapshot_fetched_at(url)
+    assert before is not None and after is not None and after > before
+
+
+def test_org_ttl_no_refresh_when_fresh(home: Path, project_root: Path, tmp_path: Path) -> None:
+    import shutil
+
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    _set_org(project_root, url)
+    policy.reset_refresh_state()
+    before = policy._snapshot_fetched_at(url)
+    # Remove the remote: a fresh snapshot must NOT attempt a network fetch.
+    shutil.rmtree(tmp_path / "polrepo.git")
+    shutil.rmtree(policy._policy_clone_dir(url), ignore_errors=True)
+    policy.resolve_effective(project_root)
+    assert policy._snapshot_fetched_at(url) == before
+
+
+def test_org_ttl_offline_keeps_stale_cache(home: Path, project_root: Path, tmp_path: Path) -> None:
+    import shutil
+
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    _set_org(project_root, url)
+    _backdate_org_snapshot(url, days=2)
+    shutil.rmtree(tmp_path / "polrepo.git")
+    shutil.rmtree(policy._policy_clone_dir(url), ignore_errors=True)
+    policy.reset_refresh_state()
+    # stale + remote gone -> falls back to the cached snapshot, no error
+    assert policy.resolve_effective(project_root).source == "org"
+
+
 def test_bind_fetches_and_caches_snapshot(home: Path, tmp_path: Path) -> None:
+    # Rules live inline in policy.toml — a single self-contained org file.
     url = _make_policy_repo(
         tmp_path,
-        'version = 1\nname = "acme"\n[artifacts]\nblocked_skills = ["a/foo"]\n',
-        rules_toml='[[rule]]\nid = "c1"\nseverity = "high"\nprompt = "p"\n',
+        'version = 1\nname = "acme"\n[artifacts]\nblocked_skills = ["a/foo"]\n'
+        '[[rule]]\nid = "c1"\nseverity = "high"\nprompt = "p"\n',
     )
     resolved = policy.bind(url)
     assert resolved.source == "org"
@@ -407,14 +461,20 @@ def test_org_resolves_offline_after_remote_gone(
 
 
 def test_org_without_snapshot_fails_closed(home: Path, project_root: Path) -> None:
-    _set_org(project_root, "https://example.com/policy.git")
+    # Unreachable file:// repo -> the opportunistic refresh fails fast (no network)
+    # and, with no cached snapshot, resolution fails closed.
+    _set_org(project_root, "file:///nonexistent/policy.git")
+    policy.reset_refresh_state()
     with pytest.raises(policy.PolicyError, match="refresh"):
         policy.resolve_effective(project_root)
+    policy.reset_refresh_state()
     with pytest.raises(policy.PolicyError):
         policy.effective_policy(project_root)
 
 
-def test_corrupt_snapshot_fails_closed(home: Path, project_root: Path, tmp_path: Path) -> None:
+def test_corrupt_snapshot_self_heals_when_online(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
     from aim.core import db
     from aim.core.models import GlobalSetting
 
@@ -426,6 +486,29 @@ def test_corrupt_snapshot_fails_closed(home: Path, project_root: Path, tmp_path:
         row.value = "{not json"
         s.commit()
     assert policy.load_org_snapshot(url) is None
+    policy.reset_refresh_state()
+    # corrupt is treated as expired -> opportunistic re-fetch heals it (remote is up)
+    assert policy.resolve_effective(project_root).policy.name == "acme"
+
+
+def test_corrupt_snapshot_offline_fails_closed(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    import shutil
+
+    from aim.core import db
+    from aim.core.models import GlobalSetting
+
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    _set_org(project_root, url)
+    with db.session() as s:
+        row = s.get(GlobalSetting, policy._org_snapshot_key(url))
+        row.value = "{not json"
+        s.commit()
+    shutil.rmtree(tmp_path / "polrepo.git")
+    shutil.rmtree(policy._policy_clone_dir(url), ignore_errors=True)
+    policy.reset_refresh_state()
     with pytest.raises(policy.PolicyError):
         policy.resolve_effective(project_root)
 

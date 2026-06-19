@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from rich import box
 from rich.console import Console
+from rich.table import Table
 
 from aim import __version__
 from aim.core import agent_install as agent_install_mod
@@ -111,11 +113,40 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
+def _render_risk_block(exc: risk_mod.RiskBlockedError) -> None:
+    """Render a blocked-risk verdict. Judge findings (which name a rule) go in a
+    Rule/Evidence table; screen findings (no rule) are plain lines — never a `—` row."""
+    err = Console(stderr=True)
+    err.print(
+        f"[bold red]risk blocked[/bold red] {exc.source}  [red]{exc.level} ≥ {exc.threshold}[/red]"
+    )
+    rule_findings = [(r, e) for r, e in exc.violations if r]
+    plain = [e for r, e in exc.violations if not r]
+    if not exc.violations:
+        err.print(f"  {exc}")
+    for evidence in plain:
+        err.print(f"  [red]•[/red] {evidence}")
+    if rule_findings:
+        table = Table(
+            show_header=True, header_style="bold", box=box.ROUNDED, border_style="red", expand=True
+        )
+        table.add_column("Rule", style="yellow", no_wrap=True)
+        table.add_column("Evidence", style="white", overflow="fold")
+        for rule, evidence in rule_findings:
+            table.add_row(rule, evidence or "—")
+        err.print(table)
+    if exc.override_hint:
+        err.print(f"[dim]{exc.override_hint}[/dim]")
+
+
 def _friendly(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
+        except risk_mod.RiskBlockedError as exc:
+            _render_risk_block(exc)
+            raise typer.Exit(code=1) from exc
         except _FRIENDLY_ERRORS as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -132,6 +163,12 @@ def _friendly(fn: Callable[..., Any]) -> Callable[..., Any]:
                 typer.echo(f"  risk: {warn}", err=True)
 
     return wrapper
+
+
+def _scanning(label: str) -> Any:
+    """A transient stderr spinner for the duration of an add. The risk scan can pull a
+    model or call a judge, so signal that work is happening instead of hanging silently."""
+    return Console(stderr=True).status(label, spinner="dots")
 
 
 def _here(project: Path | None) -> Path:
@@ -712,10 +749,10 @@ def policy_init_local(
 @policy_app.command("import")
 @_friendly
 def policy_import(
-    rules_file: Path = typer.Argument(..., help="aim.rules.toml with custom rule entries."),
+    rules_file: Path = typer.Argument(..., help="A toml file of custom [[rule]] entries."),
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
-    """Load custom risk rules from an aim.rules.toml into the project's policy."""
+    """Merge custom risk rules from a toml file into the project's inline policy."""
     rules = policy_mod.parse_rules_toml(rules_file.read_text(encoding="utf-8"))
     root = _here(project)
     section = dict(policy_mod.project_policy_section(root))
@@ -728,10 +765,10 @@ def policy_import(
 @policy_app.command("export")
 @_friendly
 def policy_export(
-    rules_file: Path = typer.Argument(Path("aim.rules.toml"), help="Destination file."),
+    rules_file: Path = typer.Argument(Path("rules.toml"), help="Destination file."),
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
-    """Write the project policy's custom rules out to an aim.rules.toml."""
+    """Write the project policy's custom rules out to a shareable toml file."""
     pol = policy_mod.resolve_effective(_here(project)).policy
     rules_file.write_text(policy_mod.render_rules_toml(pol.custom_rules), encoding="utf-8")
     typer.echo(f"exported {len(pol.custom_rules)} custom rule(s) to {rules_file}")
@@ -1288,15 +1325,18 @@ def rule_add(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Register the source repo without prompting."
     ),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Install despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Install despite a risk block (unless the policy forbids it).",
     ),
 ) -> None:
     """Add a rule from a git repository, registering the repo if needed."""
     qualified_name = _qualified_for_add(ctx, url, name, alias, "rule", assume_yes=yes)
-    installed = rule_install_mod.install(
-        _here(project), qualified_name, pin=pin, track=track, allow_risky=allow_risky
-    )
+    with _scanning(f"Scanning {qualified_name}…"):
+        installed = rule_install_mod.install(
+            _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
+        )
     typer.echo(f"added rule {qualified_name} {installed.current.identifier()}")
 
 
@@ -1306,13 +1346,13 @@ def rule_update(
     qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name>"),
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Update despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
     """Refresh an installed rule from its source repo."""
     updated = rule_install_mod.update(
-        _here(project), qualified_name, force=force, allow_risky=allow_risky
+        _here(project), qualified_name, force=force, override_risk=override_risk
     )
     typer.echo(f"updated rule {qualified_name} -> {updated.current.identifier()}")
 
@@ -1506,15 +1546,18 @@ def skill_add(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Register the source repo without prompting."
     ),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Install despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Install despite a risk block (unless the policy forbids it).",
     ),
 ) -> None:
     """Add a skill from a git repository, registering the repo if needed."""
     qualified_name = _qualified_for_add(ctx, url, name, alias, "skill", assume_yes=yes)
-    installed = install_mod.install(
-        _here(project), qualified_name, pin=pin, track=track, allow_risky=allow_risky
-    )
+    with _scanning(f"Scanning {qualified_name}…"):
+        installed = install_mod.install(
+            _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
+        )
     typer.echo(f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}")
     for warn in install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
@@ -1535,13 +1578,15 @@ def skill_install(
         "--track",
         help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
     ),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Install despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Install despite a risk block (unless the policy forbids it).",
     ),
 ) -> None:
     """Deprecated: install an already-registered skill by qualified name. Use `add`."""
     installed = install_mod.install(
-        _here(project), qualified_name, pin=pin, track=track, allow_risky=allow_risky
+        _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
     )
     typer.echo(
         f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_dir}"
@@ -1559,8 +1604,8 @@ def skill_update(
     project: Path | None = typer.Argument(None),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
     diff: bool = typer.Option(False, "--diff", help="Show proposed version change; don't apply."),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Update despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
     """Refresh an installed skill from its source repo."""
@@ -1576,7 +1621,7 @@ def skill_update(
         typer.echo(f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}")
         return
     updated = install_mod.update(
-        _here(project), qualified_name, force=force, allow_risky=allow_risky
+        _here(project), qualified_name, force=force, override_risk=override_risk
     )
     assert not isinstance(updated, install_mod.UpdatePreview)
     typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
@@ -1715,15 +1760,18 @@ def agent_add(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Register the source repo without prompting."
     ),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Install despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Install despite a risk block (unless the policy forbids it).",
     ),
 ) -> None:
     """Add a sub-agent from a git repository, registering the repo if needed."""
     qualified_name = _qualified_for_add(ctx, url, name, alias, "sub-agent", assume_yes=yes)
-    installed = agent_install_mod.install(
-        _here(project), qualified_name, pin=pin, track=track, allow_risky=allow_risky
-    )
+    with _scanning(f"Scanning {qualified_name}…"):
+        installed = agent_install_mod.install(
+            _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
+        )
     typer.echo(
         f"added {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
     )
@@ -1746,13 +1794,15 @@ def agent_install_cmd(
         "--track",
         help="Ref to track on update: 'latest-tag', a branch name, or any ref. Overrides repo default_ref.",
     ),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Install despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Install despite a risk block (unless the policy forbids it).",
     ),
 ) -> None:
     """Deprecated: install an already-registered sub-agent by qualified name. Use `add`."""
     installed = agent_install_mod.install(
-        _here(project), qualified_name, pin=pin, track=track, allow_risky=allow_risky
+        _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
     )
     typer.echo(
         f"installed {qualified_name} {installed.current.identifier()} -> {installed.target_path}"
@@ -1769,13 +1819,13 @@ def agent_update(
     qualified_name: str = typer.Argument(...),
     project: Path | None = typer.Argument(None),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-    allow_risky: bool = typer.Option(
-        False, "--allow-risky", help="Update despite a risk block (unless the policy forbids it)."
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
     """Refresh an installed sub-agent from its source repo."""
     updated = agent_install_mod.update(
-        _here(project), qualified_name, force=force, allow_risky=allow_risky
+        _here(project), qualified_name, force=force, override_risk=override_risk
     )
     typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
 

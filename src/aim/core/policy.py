@@ -7,10 +7,11 @@ policy per project.
 The policy lives in the project's `aim.toml` `[policy]` table:
 - `scope = "local"` — the policy is declared inline (repos/artifacts/profiles/risk
   + custom rules) and travels with the project.
-- `scope = "org"`  — `repo`/`ref` point at an org policy git repo (containing
-  `policy.toml` + optional `aim.rules.toml`). The fetched policy is cached in the
-  global DB (a cache only) so resolution stays offline; a missing/corrupt snapshot
-  fails CLOSED rather than downgrading to permissive.
+- `scope = "org"`  — `repo`/`ref` point at an org policy git repo containing a
+  self-contained `policy.toml` (the same sections as the inline `[policy]` table,
+  custom `[[rule]]` entries included). The fetched policy is cached in the global DB
+  (a cache only) so resolution stays offline; a missing/corrupt snapshot fails CLOSED
+  rather than downgrading to permissive.
 
 The real enforcement boundary is the committed lockfile + review/CI (`aim policy
 validate`): `aim lock` pins the policy repo + commit SHA + content hash, so swapping
@@ -64,15 +65,19 @@ class RiskRule(BaseModel):
 class RiskSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
-    mode: str = "warn"  # warn | block
-    backend: str = "tiered"  # null | local | judge | tiered
+    # Risk scanning is active iff `classifier` or `llm_judge` is on (no separate
+    # `enabled` flag). When active it BLOCKS by default.
+    mode: str = "block"  # warn | block
+    classifier: bool = False  # local ONNX injection/jailbreak screen
+    llm_judge: bool = False  # DSPy LLM judge against the rule set (both on -> screen gates judge)
     model_id: str = DEFAULT_MODEL_ID
     block_threshold: str = "high"  # low | medium | high
+    # When both screens are on, a local verdict at/above this level blocks immediately
+    # and the judge is skipped; a verdict below it falls through to the judge.
     escalate_threshold: str = "medium"
     judge: str | None = None
-    load_custom: bool = True  # also evaluate custom rules from aim.rules.toml
-    # When False, a `--allow-risky` override is refused — an org can make blocks
+    load_custom: bool = True  # also evaluate the policy's custom [[rule]] entries
+    # When False, a `--override-risk` override is refused — an org can make blocks
     # non-bypassable. Default True (the developer can override their own policy).
     allow_override: bool = True
     # preset rule id -> severity override (str) or False to disable.
@@ -188,9 +193,9 @@ def from_mapping(data: dict) -> Policy:
 
     preset_overrides = {k: v for k, v in rules_t.items() if k != "custom"}
     risk = RiskSettings(
-        enabled=bool(risk_t.get("enabled", False)),
-        mode=str(risk_t.get("mode", "warn")),
-        backend=str(risk_t.get("backend", "tiered")),
+        mode=str(risk_t.get("mode", "block")),
+        classifier=bool(risk_t.get("classifier", False)),
+        llm_judge=bool(risk_t.get("llm_judge", False)),
         model_id=str(risk_t.get("model_id", DEFAULT_MODEL_ID)),
         block_threshold=str(risk_t.get("block_threshold", "high")),
         escalate_threshold=str(risk_t.get("escalate_threshold", "medium")),
@@ -227,9 +232,9 @@ def from_toml(text: str) -> Policy:
         raise PolicyError(f"invalid policy.toml: {exc}") from exc
 
 
-def to_mapping(policy: Policy, *, include_custom_rules: bool = False) -> dict:
-    """Build the policy mapping (the sections shared by policy.toml and aim.toml's
-    [policy] table). Custom rules are included only when asked (aim.toml inline)."""
+def to_mapping(policy: Policy) -> dict:
+    """Build the policy mapping — the single shape used by both org `policy.toml` and
+    aim.toml's `[policy]` table, custom `[[rule]]` entries included inline."""
     doc: dict = {"version": policy.version, "name": policy.name}
     if policy.blocked_repos:
         doc["repos"] = {"blocked": policy.blocked_repos}
@@ -247,9 +252,9 @@ def to_mapping(policy: Policy, *, include_custom_rules: bool = False) -> dict:
     if policy.allowed_profiles:
         doc["profiles"] = {"allowed": policy.allowed_profiles}
     risk: dict = {
-        "enabled": policy.risk.enabled,
         "mode": policy.risk.mode,
-        "backend": policy.risk.backend,
+        "classifier": policy.risk.classifier,
+        "llm_judge": policy.risk.llm_judge,
         "model_id": policy.risk.model_id,
         "block_threshold": policy.risk.block_threshold,
         "escalate_threshold": policy.risk.escalate_threshold,
@@ -261,34 +266,34 @@ def to_mapping(policy: Policy, *, include_custom_rules: bool = False) -> dict:
     rules["custom"] = policy.risk.load_custom
     risk["rules"] = rules
     doc["risk"] = risk
-    if include_custom_rules and policy.custom_rules:
+    if policy.custom_rules:
         doc["rule"] = [r.model_dump() for r in policy.custom_rules]
     return doc
 
 
 def to_toml(policy: Policy) -> str:
-    """Serialize a Policy to a `policy.toml` document (custom rules excluded —
-    those live in aim.rules.toml)."""
+    """Serialize a Policy to a self-contained `policy.toml` document — risk settings
+    and custom `[[rule]]` entries together, the same layout as aim.toml's `[policy]`."""
     return tomli_w.dumps(to_mapping(policy))
 
 
 def parse_rules_toml(text: str) -> list[RiskRule]:
-    """Parse custom rules from an `aim.rules.toml` document."""
+    """Parse custom `[[rule]]` entries from a standalone rules toml document."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise PolicyError(f"invalid aim.rules.toml: {exc}") from exc
+        raise PolicyError(f"invalid rules toml: {exc}") from exc
     out: list[RiskRule] = []
     for raw in data.get("rule", []):
         try:
             out.append(RiskRule(**raw))
         except Exception as exc:
-            raise PolicyError(f"invalid rule in aim.rules.toml: {exc}") from exc
+            raise PolicyError(f"invalid rule: {exc}") from exc
     return out
 
 
 def render_rules_toml(rules: list[RiskRule]) -> str:
-    """Serialize custom rules to an `aim.rules.toml` document."""
+    """Serialize custom `[[rule]]` entries to a standalone rules toml document."""
     return tomli_w.dumps({"rule": [r.model_dump() for r in rules]})
 
 
@@ -328,9 +333,10 @@ def _org_snapshot_key(repo_url: str) -> str:
 def fetch_org_policy(
     repo_url: str, ref: str = "HEAD", *, allow_insecure: bool = False
 ) -> tuple[Policy, str]:
-    """Bare-clone/fetch the policy repo and read `policy.toml` (+ optional
-    `aim.rules.toml`) at the resolved commit. Returns (Policy, sha). Network op:
-    call only from bind/refresh/validate, never from the lock/deploy hot path."""
+    """Bare-clone/fetch the policy repo and read the self-contained `policy.toml`
+    (risk settings + inline `[[rule]]` together) at the resolved commit. Returns
+    (Policy, sha). Network op: call only from bind/refresh/validate, never from the
+    lock/deploy hot path."""
     # The policy repo is the trust root — never fetch it over plaintext http.
     content_guard.require_secure_url(repo_url, allow_insecure=allow_insecure)
     paths.ensure_global_dirs()
@@ -342,12 +348,6 @@ def fetch_org_policy(
         backend.clone_bare(repo_url, dest)
     sha = backend.resolve_ref(dest, ref)
     pol = from_toml(backend.cat_file(dest, sha, "policy.toml"))
-    try:
-        rules_text = backend.cat_file(dest, sha, "aim.rules.toml")
-    except git.GitError:
-        rules_text = None  # aim.rules.toml is optional
-    if rules_text is not None:
-        pol.custom_rules = parse_rules_toml(rules_text)
     return pol, sha
 
 
@@ -507,8 +507,10 @@ def refresh_org_policy(project_root: Path) -> ResolvedPolicy | None:
 
 def resolve_effective(project_root: Path | None = None) -> ResolvedPolicy:
     """Resolve the effective policy from the project's aim.toml `[policy]` table.
-    scope='org' uses the cached org snapshot (fails closed if missing); an inline
-    policy is built directly; absent/empty -> permissive built-in. Offline."""
+    scope='org' uses the cached org snapshot, opportunistically re-fetching it once
+    per process if it's older than the TTL (best-effort; offline keeps the cache,
+    fails closed only if there is no cache). Inline policy is built directly;
+    absent/empty -> permissive built-in."""
     if project_root is None:
         return ResolvedPolicy(builtin_policy(), "builtin", None, None)
     section = _read_policy_section(project_root)

@@ -203,11 +203,11 @@ blocked_mcp    = ["somerepo/badmcp"]         # by alias or registry name
 allowed = ["claude", "gemini"]               # layout-profile allow-list (empty = all)
 
 [policy.risk]
-enabled = true
-mode = "warn"              # "warn" (advisory) or "block"
-backend = "tiered"         # null | local | judge | tiered
+classifier = true          # local ONNX injection/jailbreak screen
+llm_judge  = false         # DSPy LLM judge against the rule set (both true -> screen gates the judge)
+mode = "block"             # "block" (default, refuse) or "warn" (advisory only)
 block_threshold = "high"   # low | medium | high
-allow_override = true      # set false to make blocks non-overridable by --allow-risky
+allow_override = true      # set false to make blocks non-overridable by --override-risk
 
 [[policy.rule]]            # custom risk rule (a prompt the judge evaluates against)
 id = "calls_internal_api"
@@ -225,9 +225,10 @@ aim policy validate     # check declarations + lockfile against the policy (exit
 
 ### Org policy (mandated, pinned, CI-enforced)
 
-Point a project at an org policy repo (a git repo containing `policy.toml` + optional
-`aim.rules.toml`). The org policy replaces the local one; `aim lock` pins the repo URL, the
-resolved commit SHA, and a content hash into `aim.lock.toml`:
+Point a project at an org policy repo (a git repo containing a single, self-contained
+`policy.toml` — the same sections as the inline `[policy]` table, custom `[[rule]]` entries
+included). The org policy replaces the local one; `aim lock` pins the repo URL, the resolved
+commit SHA, and a content hash into `aim.lock.toml`:
 
 ```sh
 aim policy bind https://github.com/acme/policy   # writes [policy] scope="org" + caches the policy
@@ -242,14 +243,16 @@ if the project doesn't comply:
 aim policy validate --policy https://github.com/acme/policy
 ```
 
-`lock` stays offline (it reads a cached snapshot); only `bind`/`refresh`/`validate --policy` touch
-the network. A project bound to an org policy with no cached snapshot **fails closed** — it refuses
-to resolve rather than silently downgrading to permissive.
+Day-to-day resolution is **offline** — it reads a cached snapshot. The cache has a 24h TTL: once
+a day, the next command that resolves the policy re-fetches it in the background (best-effort, once
+per process), so a bound project still picks up upstream policy changes without you remembering to
+`aim policy refresh`. Offline keeps the cache; a project bound to an org policy with **no** usable
+cache **fails closed** — it refuses to resolve rather than silently downgrading to permissive.
 
 ### Risk scanning
 
-When `[policy.risk].enabled` is true, artifact content is classified by *what it instructs* —
-complementing the always-on hidden-Unicode scan. Two tiers cover two threats:
+When `[policy.risk]` turns on `classifier` and/or `llm_judge`, artifact content is classified by
+*what it instructs* — complementing the always-on hidden-Unicode scan. Two tiers cover two threats:
 
 - **Local screen** (the `risk` extra): a small on-device ONNX classifier
   (`deberta-v3-base-prompt-injection-v2`) flags embedded prompt-injection / jailbreak payloads.
@@ -259,18 +262,23 @@ complementing the always-on hidden-Unicode scan. Two tiers cover two threats:
   (`[policy.risk].judge`, e.g. a local Ollama model or a hosted endpoint); **aim does not manage
   model hosting**.
 
+Two independent toggles select which runs: `classifier` (the local screen) and `llm_judge` (the
+LLM). With both on, the screen **gates** the judge: a screen hit (a verdict at or above
+`escalate_threshold`) blocks right there and the judge is never run; only a clean screen falls
+through to the judge — so an injection hit never shows up among the judge's rule findings.
+
 ```sh
 pip install 'agent-init[risk]'        # local injection/jailbreak screen
 pip install 'agent-init[risk-judge]'  # DSPy rule judge
 ```
 
 Verdicts are cached by content hash (so re-scans are deterministic and `sync` doesn't re-judge
-unchanged artifacts). In `warn` mode findings are surfaced as advisories; in `block` mode a
-high-risk verdict stops the install. `--allow-risky` overrides a block on `skill/agent/rule
-add`/`update` — unless the policy sets `allow_override = false`.
+unchanged artifacts). The default mode is `block`: a high-risk verdict stops the install, listing
+each fired rule. `--override-risk` overrides a block on `skill/agent/rule add`/`update` — unless
+the policy sets `allow_override = false`. Set `mode = "warn"` to surface findings as advisories
+without blocking.
 
-> Risk scanning is **off by default**. `block` mode is intended for once a model has been
-> measured against a labeled corpus; until then, prefer `warn`.
+> Risk scanning is **off by default** — it runs only once `classifier` or `llm_judge` is enabled.
 
 ## Development
 

@@ -122,7 +122,7 @@ def _repo_url(alias: str) -> str:
 
 
 def _gate_rule(
-    project_root: Path, qualified_name: str, content: str, *, allow_risky: bool = False
+    project_root: Path, qualified_name: str, content: str, *, override_risk: bool = False
 ) -> None:
     """Single content gate for rules: every deploy path (install/update/rollback/
     sync, files and inline mode) funnels through here, so security/policy/risk
@@ -132,7 +132,7 @@ def _gate_rule(
     policy.assert_repo_allowed(pol, alias, _repo_url(alias))
     policy.assert_artifact_allowed(pol, "rule", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"rule {qualified_name}")
-    risk.gate(content, qualified_name=qualified_name, pol=pol, allow_risky=allow_risky)
+    risk.gate(content, qualified_name=qualified_name, pol=pol, override_risk=override_risk)
 
 
 def _deploy(
@@ -141,11 +141,11 @@ def _deploy(
     content: str,
     *,
     qualified_name: str,
-    allow_risky: bool = False,
+    override_risk: bool = False,
 ) -> None:
     """Gate then write the rule body to its files-mode target. The gate runs above
     the inline-mode early return, so inline rules are gated too."""
-    _gate_rule(project_root, qualified_name, content, allow_risky=allow_risky)
+    _gate_rule(project_root, qualified_name, content, override_risk=override_risk)
     target = _target_path(project_root, rule_name)
     if target is None:
         return
@@ -159,7 +159,7 @@ def install(
     *,
     track: str | None = None,
     pin: str | None = None,
-    allow_risky: bool = False,
+    override_risk: bool = False,
 ) -> InstalledRule:
     """Install a rule into the project."""
     row = _rule_index_row(qualified_name)
@@ -172,7 +172,11 @@ def install(
     )
     content = repo_rules.read_rule_content(qualified_name)
     _deploy(
-        project_root, row.rule_name, content, qualified_name=qualified_name, allow_risky=allow_risky
+        project_root,
+        row.rule_name,
+        content,
+        qualified_name=qualified_name,
+        override_risk=override_risk,
     )
     content_hash = hashing.hash_text(content)
 
@@ -211,7 +215,7 @@ def update(
     qualified_name: str,
     *,
     force: bool = False,
-    allow_risky: bool = False,
+    override_risk: bool = False,
 ) -> InstalledRule:
     """Refresh an installed rule from its source repo."""
     m = _load_manifest(project_root)
@@ -242,7 +246,7 @@ def update(
         _rule_name(qualified_name),
         content,
         qualified_name=qualified_name,
-        allow_risky=allow_risky,
+        override_risk=override_risk,
     )
     existing.push_history(new_version)
     existing.content_hash = hashing.hash_text(content)

@@ -96,7 +96,7 @@ name = "acme-org"
 [artifacts]
 blocked_skills = ["demo/badskill"]
 [risk]
-enabled = true
+classifier = true
 mode = "warn"
 allow_override = true
 TOML
@@ -125,6 +125,32 @@ uv run aim policy show "$PROJ"
 #   -> error: project policy points at org repo ... but no usable snapshot is cached.
 #      Run `aim policy refresh`.
 ```
+
+**Auto-refresh (24h TTL):** the cache isn't frozen forever. It carries a `fetched_at` timestamp,
+and once it's older than a day the next command that resolves the policy re-fetches it in the
+background (best-effort, once per process) — so a bound project picks up upstream changes within a
+day without you remembering anything. To prove it without waiting a day, backdate the cache and
+watch the timestamp jump on the next `show` (the org repo must still exist):
+
+```bash
+uv run aim policy bind "file://$ORG" "$PROJ"     # if you deleted/cleared it above, re-bind
+uv run python -c "
+import json
+from datetime import UTC, datetime, timedelta
+from aim.core import db, policy
+from aim.core.models import GlobalSetting
+key = policy._org_snapshot_key('file://$ORG')
+with db.session() as s:
+    row = s.get(GlobalSetting, key); d = json.loads(row.value)
+    d['fetched_at'] = (datetime.now(UTC) - timedelta(days=2)).isoformat()   # backdate -> stale
+    row.value = json.dumps(d); s.commit()
+print('staled to:', d['fetched_at'])
+"
+uv run aim policy show "$PROJ" >/dev/null   # resolving a stale snapshot triggers a re-fetch
+uv run python -c "from aim.core import policy; print('refreshed at:', policy._snapshot_fetched_at('file://$ORG'))"
+```
+
+Force a refresh anytime with `aim policy refresh "$PROJ"`.
 
 The real enforcement boundary is **CI**, which validates against the mandated policy fetched
 out-of-band (recreate the org repo first if you deleted it):
@@ -156,9 +182,10 @@ Set the project's risk policy (edit `"$PROJ/aim.toml"`):
 scope = "local"
 
 [policy.risk]
-enabled = true
-mode = "warn"              # advisory first; switch to "block" once you trust it
-backend = "local"          # local | judge | tiered
+classifier = true          # on-device ONNX injection/jailbreak screen (fast, no LLM)
+llm_judge  = false         # LLM evaluates the artifact against your rule set (needs a model)
+                           # both true -> the screen gates the judge: a hit blocks here, a pass goes to the judge
+mode = "warn"              # set to "warn" for this demo; default is "block"
 ```
 
 ### 3a. The local screen (real ONNX inference)
@@ -181,12 +208,13 @@ uv run aim skill add evilrepo/evil "$PROJ"
 #   warn mode -> installs, but prints:  risk: evilrepo/evil: risk HIGH: prompt-injection ...
 ```
 
-Flip `mode = "block"` in aim.toml and try again — now it refuses:
+Drop the `mode = "warn"` line (block is the default) and try again — now it refuses, listing each
+fired rule in a table:
 
 ```bash
 uv run aim skill add evilrepo/evil "$PROJ"
-#   -> error: ... risk HIGH >= high: prompt-injection likelihood 1.00 (pass --allow-risky to override)
-uv run aim skill add evilrepo/evil "$PROJ" --allow-risky      # override succeeds
+#   -> risk blocked evilrepo/evil  HIGH >= HIGH   (a table of the violated rules + evidence)
+uv run aim skill add evilrepo/evil "$PROJ" --override-risk      # override succeeds
 ```
 
 ### 3b. The judge (real LLM, your model)
@@ -196,9 +224,9 @@ The judge evaluates an artifact against your rule set. DSPy reaches whatever mod
 
 ```toml
 [policy.risk]
-enabled = true
+classifier = false
+llm_judge = true
 mode = "warn"
-backend = "judge"
 judge = "gemini/gemini-3-flash-preview"
 
 [[policy.rule]]
@@ -216,7 +244,7 @@ export GEMINI_API_KEY=...        # your key; aim does not manage model hosting
 
 ### 3c. The org kill-switch
 
-If the org policy sets `allow_override = false` under `[risk]`, then `--allow-risky` is **refused**
+If the org policy sets `allow_override = false` under `[risk]`, then `--override-risk` is **refused**
 — an org can make blocks non-bypassable:
 
 ```
@@ -257,5 +285,5 @@ uv sync
 | Block a repo/skill/agent/rule/mcp | add to `[policy.repos].blocked` / `[policy.artifacts].blocked_*` |
 | Check compliance (CI) | `aim policy validate <proj>` (exit 1 = violation) |
 | Use a mandated org policy | `aim policy bind <git-url> <proj>` ; CI: `aim policy validate <proj> --policy <git-url>` |
-| Turn on risk scanning | `[policy.risk] enabled = true` (+ `pip install 'agent-init[risk]'`) |
-| Override a risk block | `--allow-risky` (unless `[risk].allow_override = false`) |
+| Turn on risk scanning | `[policy.risk] classifier = true` (+ `pip install 'agent-init[risk]'`) |
+| Override a risk block | `--override-risk` (unless `[risk].allow_override = false`) |
