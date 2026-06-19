@@ -1,4 +1,4 @@
-manifest_version = 3
+manifest_version = 4
 instruction_template = "default"
 layout_profile = "claude"
 symlinks = [
@@ -13,6 +13,7 @@ balukosuri = "https://github.com/balukosuri/Andrej-Karpathy-s-Autoresearch-As-a-
 bencium-marketplace = "https://github.com/bencium/bencium-marketplace"
 0xfurai = "https://github.com/0xfurai/claude-code-subagents"
 aim = "https://github.com/JasperHG90/agent-integrations-manager"
+wshobson = "https://github.com/wshobson/agents/"
 
 [[skill]]
 qualified_name = "anthropic/skill-creator"
@@ -56,6 +57,12 @@ repo_alias = "aim"
 source_path = "skills/readme-creator"
 target_dir = ".claude/skills/readme-creator"
 
+[[skill]]
+qualified_name = "wshobson/workflow-patterns"
+repo_alias = "wshobson"
+source_path = "plugins/conductor/skills/workflow-patterns"
+target_dir = ".claude/skills/workflow-patterns"
+
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"
 repo_alias = "0xfurai"
@@ -67,3 +74,9 @@ qualified_name = "0xfurai/python-expert"
 repo_alias = "0xfurai"
 source_path = "agents/python-expert.md"
 target_path = ".claude/agents/python-expert.md"
+
+[policy]
+scope = "local"
+
+[policy.risk]
+enabled = true

@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import tomli_w
@@ -34,7 +36,10 @@ from aim.core.models import GlobalSetting
 
 DEFAULT_MODEL_ID = "protectai/deberta-v3-base-prompt-injection-v2"
 
-_SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2}
+# Cached org policy snapshots are refreshed at most once per process, and only
+# when older than this TTL — so resolution stays offline day-to-day but a bound
+# org policy still picks up upstream changes within a day.
+_ORG_TTL = timedelta(hours=24)
 
 
 class PolicyViolationError(ValueError):
@@ -353,6 +358,7 @@ def cache_org_snapshot(repo_url: str, ref: str, sha: str, pol: Policy) -> None:
             "repo": repo_url,
             "ref": ref,
             "sha": sha,
+            "fetched_at": datetime.now(UTC).isoformat(),
             "hash": compute_hash(pol),
             "policy": pol.model_dump(mode="json"),
         }
@@ -392,6 +398,50 @@ def org_snapshot_sha(repo_url: str) -> str | None:
         return json.loads(row.value).get("sha")
     except json.JSONDecodeError:
         return None
+
+
+def _snapshot_fetched_at(repo_url: str) -> datetime | None:
+    with db.session() as session:
+        row = session.get(GlobalSetting, _org_snapshot_key(repo_url))
+    if row is None:
+        return None
+    try:
+        ts = json.loads(row.value).get("fetched_at")
+        return datetime.fromisoformat(ts) if ts else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+# Repos whose TTL-refresh was already attempted this process — avoids re-fetching
+# per artifact when sync fans the deploy gates out across threads.
+_refresh_attempted: set[str] = set()
+_refresh_lock = threading.Lock()
+
+
+def reset_refresh_state() -> None:
+    """Clear the once-per-process refresh guard (used by tests)."""
+    with _refresh_lock:
+        _refresh_attempted.clear()
+
+
+def _snapshot_expired(repo_url: str) -> bool:
+    fetched = _snapshot_fetched_at(repo_url)
+    return fetched is None or (datetime.now(UTC) - fetched) > _ORG_TTL
+
+
+def _maybe_refresh_org(repo_url: str, ref: str) -> None:
+    """Opportunistically re-fetch a stale org snapshot — at most once per process
+    per repo, best-effort. Offline/unreachable keeps whatever is cached; a fresh
+    (within-TTL) snapshot is left untouched so day-to-day resolution stays offline."""
+    with _refresh_lock:
+        if repo_url in _refresh_attempted or not _snapshot_expired(repo_url):
+            return
+        _refresh_attempted.add(repo_url)  # claim before the slow fetch
+    try:
+        pol, sha = fetch_org_policy(repo_url, ref)
+        cache_org_snapshot(repo_url, ref, sha, pol)
+    except (git.GitError, content_guard.InsecureTransportError, OSError):
+        pass  # fall back to the existing cache (if any)
 
 
 def bind(repo_url: str, ref: str = "HEAD", *, allow_insecure: bool = False) -> ResolvedPolicy:
@@ -435,12 +485,13 @@ def _resolve_org(section: dict) -> ResolvedPolicy:
     repo = section.get("repo")
     if not repo:
         raise PolicyError("[policy] scope = 'org' requires a 'repo' URL")
+    _maybe_refresh_org(repo, section.get("ref", "HEAD"))
     snapshot = load_org_snapshot(repo)
     if snapshot is None:
         # Fail CLOSED rather than silently fall back to permissive.
         raise PolicyError(
             f"project policy points at org repo {repo!r} but no usable snapshot is "
-            "cached (missing or corrupt). Run `aim policy refresh` to fetch it."
+            "cached and it could not be fetched. Run `aim policy refresh`."
         )
     return snapshot
 

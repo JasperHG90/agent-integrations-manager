@@ -4,6 +4,18 @@
 
 A lightweight package manager for your AI-assistant tooling: skills, sub-agents, MCP servers, and rules — version-pinned and tracked in your repo.
 
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Features](#features)
+- [Installation](#installation)
+- [Demo](#demo)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Governance & risk scanning](#governance--risk-scanning)
+- [Development](#development)
+- [Contributing](#contributing)
+
 ## Why this exists
 
 Every AI coding assistant works better with the right context: project conventions, reusable rules, and curated tools. Today that context is scattered across copy-pasted prompts, hand-edited `CLAUDE.md` files, and git submodules nobody wants to maintain.

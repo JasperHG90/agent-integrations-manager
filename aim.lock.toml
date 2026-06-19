@@ -1,4 +1,4 @@
-manifest_version = 8
+manifest_version = 10
 instruction_template = "default"
 mcp_servers = []
 rules = []
@@ -101,6 +101,22 @@ content_hash = "0f0e60a8a5455b0306292b0c86f692de0033f327f3aec3e3def7491ade256cb6
 [skill.current]
 sha = "e977d80ab455c8c89bf3935220bfe566ef8c9e18"
 installed_at = "2026-06-18T06:02:06.197000Z"
+
+[[skill]]
+qualified_name = "wshobson/workflow-patterns"
+repo_alias = "wshobson"
+repo_url = "https://github.com/wshobson/agents/"
+source_path = "plugins/conductor/skills/workflow-patterns"
+target_dir = ".claude/skills/workflow-patterns"
+content_hash = "2b53ad36e3d92d5429c1386e867a3db7f2b1d10c399be169e992be3ac73d087a"
+
+[skill.current]
+sha = "be57c0b2e3c05c528ca6132b87410b385718775f"
+installed_at = "2026-06-19T20:15:36.129233Z"
+
+[[skill.history]]
+sha = "be57c0b2e3c05c528ca6132b87410b385718775f"
+installed_at = "2026-06-19T20:14:38.124940Z"
 
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"

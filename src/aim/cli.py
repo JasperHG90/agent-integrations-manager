@@ -664,7 +664,7 @@ def policy_bind(
     project: Path | None = typer.Argument(None, help="Project root."),
     ref: str = typer.Option("HEAD", "--ref", help="Branch/tag/commit to pin."),
 ) -> None:
-    """Point this project at an org policy repo: write [policy] scope='org' into its
+    """Point this project at an org policy repo: set the policy scope to 'org' in its
     aim.toml and warm the local cache (the org policy then governs the project)."""
     root = _here(project)
     resolved = policy_mod.bind(git_url, ref)  # fetch + cache snapshot
@@ -678,7 +678,7 @@ def policy_bind(
 @policy_app.command("unbind")
 @_friendly
 def policy_unbind(project: Path | None = typer.Argument(None, help="Project root.")) -> None:
-    """Remove the [policy] table from the project's aim.toml (back to permissive)."""
+    """Remove the policy table from the project's aim.toml (back to permissive)."""
     policy_mod.set_project_policy(_here(project), {})
     typer.echo("removed [policy] from aim.toml")
 
@@ -698,9 +698,9 @@ def policy_refresh(project: Path | None = typer.Argument(None, help="Project roo
 @_friendly
 def policy_init_local(
     project: Path | None = typer.Argument(None, help="Project root."),
-    force: bool = typer.Option(False, "--force", help="Overwrite an existing [policy]."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing policy."),
 ) -> None:
-    """Scaffold a default local policy ([policy] scope='local') in aim.toml."""
+    """Scaffold a default local policy (scope='local') in the project's aim.toml."""
     root = _here(project)
     if policy_mod.project_policy_section(root) and not force:
         typer.echo("error: aim.toml already has a [policy]; pass --force to overwrite", err=True)
@@ -712,10 +712,10 @@ def policy_init_local(
 @policy_app.command("import")
 @_friendly
 def policy_import(
-    rules_file: Path = typer.Argument(..., help="aim.rules.toml with [[rule]] entries."),
+    rules_file: Path = typer.Argument(..., help="aim.rules.toml with custom rule entries."),
     project: Path | None = typer.Argument(None, help="Project root."),
 ) -> None:
-    """Load custom risk rules from an aim.rules.toml into the project's [policy]."""
+    """Load custom risk rules from an aim.rules.toml into the project's policy."""
     rules = policy_mod.parse_rules_toml(rules_file.read_text(encoding="utf-8"))
     root = _here(project)
     section = dict(policy_mod.project_policy_section(root))
