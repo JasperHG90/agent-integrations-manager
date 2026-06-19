@@ -34,6 +34,7 @@ from aim.core import profiles as profiles_mod
 from aim.core import prune as prune_mod
 from aim.core import repo_rules as repo_rules_mod
 from aim.core import repos as repos_mod
+from aim.core import risk as risk_mod
 from aim.core import roots as roots_mod
 from aim.core import rule_install as rule_install_mod
 from aim.core import skills as skills_mod
@@ -78,6 +79,7 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     content_guard_mod.HiddenUnicodeError,
     policy_mod.PolicyViolationError,
     policy_mod.PolicyError,
+    risk_mod.RiskBlockedError,
     install_mod.SkillNotIndexedError,
     install_mod.SkillNotInstalledError,
     install_mod.SkillSourcePathChangedError,
@@ -644,6 +646,37 @@ def policy_show(project: Path | None = typer.Argument(None, help="Project root."
     typer.echo(policy_mod.to_toml(resolved.policy))
 
 
+@policy_app.command("bind")
+@_friendly
+def policy_bind(
+    git_url: str = typer.Argument(..., help="Org policy repo URL (contains policy.toml)."),
+    ref: str = typer.Option("HEAD", "--ref", help="Branch/tag/commit to pin."),
+) -> None:
+    """Bind this machine to an org policy repo (fetches + pins it; replaces local)."""
+    resolved = policy_mod.bind(git_url, ref)
+    typer.echo(f"bound to org policy {resolved.policy.name!r} ({git_url} @ {ref})")
+    typer.echo(f"hash: {resolved.hash}")
+
+
+@policy_app.command("unbind")
+@_friendly
+def policy_unbind() -> None:
+    """Remove the org policy binding (falls back to local/built-in)."""
+    policy_mod.unbind()
+    typer.echo("unbound org policy")
+
+
+@policy_app.command("refresh")
+@_friendly
+def policy_refresh() -> None:
+    """Re-fetch the bound org policy and update the pinned snapshot."""
+    resolved = policy_mod.refresh_org_policy()
+    if resolved is None:
+        typer.echo("no org policy bound; nothing to refresh")
+        return
+    typer.echo(f"refreshed org policy {resolved.policy.name!r}; hash: {resolved.hash}")
+
+
 @policy_app.command("init-local")
 @_friendly
 def policy_init_local(
@@ -688,17 +721,29 @@ def policy_export(
 
 @policy_app.command("validate")
 @_friendly
-def policy_validate(project: Path | None = typer.Argument(None, help="Project root.")) -> None:
-    """Validate a project's declarations + lockfile against the effective policy.
+def policy_validate(
+    project: Path | None = typer.Argument(None, help="Project root."),
+    policy_url: str | None = typer.Option(
+        None,
+        "--policy",
+        help="Validate against this remote policy repo (fetched fresh) instead "
+        "of the local/bound policy. This is the out-of-band CI gate.",
+    ),
+    ref: str = typer.Option("HEAD", "--ref", help="Ref to use with --policy."),
+) -> None:
+    """Validate a project's declarations + lockfile against a policy.
 
-    Exits non-zero on any blocked repo/artifact/profile, or on drift between the
-    committed lockfile's pinned policy and the current local policy. Note: with a
-    local policy both sides derive from the same machine, so this catches accidental
-    drift, not adversarial weakening — true org enforcement (validating against a
-    remote, out-of-band-mandated policy) arrives with `--policy` in a later phase.
+    Without `--policy`, validates against the effective policy (org snapshot if
+    bound, else local). With `--policy <git-url>`, fetches that repo fresh and
+    validates against it — the out-of-band CI gate: the expected policy comes from
+    a source the developer's local state cannot forge.
     """
     root = _here(project)
-    resolved = policy_mod.resolve_effective(root)
+    if policy_url is not None:
+        pol, _sha = policy_mod.fetch_org_policy(policy_url, ref)
+        resolved = policy_mod.ResolvedPolicy(pol, "org", policy_url, policy_mod.compute_hash(pol))
+    else:
+        resolved = policy_mod.resolve_effective(root)
     pol = resolved.policy
 
     try:
@@ -887,6 +932,34 @@ def tui_cmd(
     run_tui(project_root=project, profile_name=profile)
 
 
+def _maybe_setup_policy(policy_url: str | None, local_policy: bool) -> None:
+    """Set up governance at init: bind an org policy, create a local one, or (when
+    interactive and nothing is configured yet) prompt for a choice."""
+    import sys
+
+    if policy_url:
+        resolved = policy_mod.bind(policy_url)
+        typer.echo(f"bound org policy {resolved.policy.name!r} ({policy_url})")
+        return
+    if local_policy:
+        if policy_mod.load_local_policy() is None:
+            policy_mod.save_local_policy(policy_mod.Policy(name="local"))
+        typer.echo("using local policy")
+        return
+    # Already governed, or non-interactive: leave as-is (built-in permissive default).
+    if policy_mod.get_binding() is not None or policy_mod.load_local_policy() is not None:
+        return
+    if not sys.stdin.isatty():
+        return
+    if typer.confirm("Bind an org governance policy repo?", default=False):
+        url = typer.prompt("Org policy git URL")
+        resolved = policy_mod.bind(url)
+        typer.echo(f"bound org policy {resolved.policy.name!r}")
+    elif typer.confirm("Create a local editable policy instead?", default=False):
+        policy_mod.save_local_policy(policy_mod.Policy(name="local"))
+        typer.echo("created local policy (edit via `aim policy import`)")
+
+
 @app.command("init")
 @_friendly
 def init_cmd(
@@ -902,11 +975,18 @@ def init_cmd(
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),
+    policy_url: str | None = typer.Option(
+        None, "--policy", help="Bind to this org governance policy repo."
+    ),
+    local_policy: bool = typer.Option(
+        False, "--local-policy", help="Create/use a local editable policy."
+    ),
 ) -> None:
     """Create or update the user-editable aim.toml declarations file.
 
     Rules are repo-sourced; add them after init with `aim rule add <git-url> <name>`.
     """
+    _maybe_setup_policy(policy_url, local_policy)
     options = init_mod.InitOptions(
         project_root=_here(project),
         instruction_template=instruction_template,
@@ -1408,6 +1488,8 @@ def skill_add(
     typer.echo(f"added {qualified_name} {installed.current.identifier()} -> {installed.target_dir}")
     for warn in install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
 
 
 @skill_app.command("install", hidden=True)
@@ -1431,6 +1513,8 @@ def skill_install(
     )
     for warn in install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
 
 
 @skill_app.command("update")
@@ -1600,6 +1684,8 @@ def agent_add(
     )
     for warn in agent_install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
 
 
 @subagent_app.command("install", hidden=True)
@@ -1623,6 +1709,8 @@ def agent_install_cmd(
     )
     for warn in agent_install_mod.take_install_warnings():
         typer.echo(f"  warning: {warn}", err=True)
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
 
 
 @subagent_app.command("update")

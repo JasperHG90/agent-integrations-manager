@@ -17,6 +17,7 @@ from aim.core import (
     manifest,
     paths,
     policy,
+    risk,
     validation,
 )
 from aim.core.install import resolve_install_version
@@ -125,8 +126,10 @@ def _check_local_edits(project_root: Path, installed: InstalledAgent, *, force: 
 def _gate_agent(qualified_name: str, content: str) -> None:
     """Single content gate for agents: every deploy path (install/update/rollback/
     sync) funnels through here, so security/policy/risk checks live in one place."""
-    policy.assert_artifact_allowed(policy.effective_policy(), "agent", qualified_name)
+    pol = policy.effective_policy()
+    policy.assert_artifact_allowed(pol, "agent", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"agent {qualified_name}")
+    risk.gate(content, qualified_name=qualified_name, pol=pol)
 
 
 def _write_agent(qualified_name: str, content: str, target: Path) -> str:

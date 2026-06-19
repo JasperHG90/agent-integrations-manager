@@ -21,6 +21,14 @@ dependencies = [
     "typer>=0.26.7",
 ]
 
+[project.optional-dependencies]
+# Cheap local injection/jailbreak screen (ONNX encoder) that aim runs in-process.
+risk = ["onnxruntime>=1.18", "tokenizers>=0.20", "huggingface-hub>=0.25"]
+# Rule-evaluating judge. aim only needs DSPy (structured output); the LM behind it
+# is the user's responsibility to host and configure (local server, remote endpoint,
+# etc.) — model hosting is outside aim's concern.
+risk-judge = ["dspy>=2.5"]
+
 [project.scripts]
 aim = "aim.cli:app"
 

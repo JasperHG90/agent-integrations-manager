@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import typer
+from typer.testing import CliRunner
 
 from aim import cli
 from aim.core import (
@@ -233,8 +233,17 @@ def test_lock_no_policy_omits_fields(home: Path, project_root: Path, tmp_path: P
 # ---------------------------------------------------------------------------
 
 
+_runner = CliRunner()
+
+
 def _write_declarations(project_root: Path, **kwargs: Any) -> None:
     declarations.save(project_root, ProjectDeclarations(**kwargs))
+
+
+def _validate(project_root: Path, *extra: str) -> int:
+    """Invoke `aim policy validate` via the real CLI; return the exit code."""
+    result = _runner.invoke(cli.app, ["policy", "validate", str(project_root), *extra])
+    return result.exit_code
 
 
 def test_policy_validate_blocks_disallowed(home: Path, project_root: Path) -> None:
@@ -250,9 +259,7 @@ def test_policy_validate_blocks_disallowed(home: Path, project_root: Path) -> No
         ],
     )
     policy.save_local_policy(policy.Policy(name="local", blocked_skills=["a/bad"]))
-    with pytest.raises(typer.Exit) as exc:
-        cli.policy_validate(project_root)
-    assert exc.value.exit_code == 1
+    assert _validate(project_root) == 1
 
 
 def test_policy_validate_ok_when_clean(home: Path, project_root: Path) -> None:
@@ -269,11 +276,11 @@ def test_policy_validate_ok_when_clean(home: Path, project_root: Path) -> None:
         rules=[DeclaredRule(qualified_name="a/r", repo_alias="a", source_path="rules/r.md")],
     )
     policy.save_local_policy(policy.Policy(name="local"))
-    cli.policy_validate(project_root)  # no raise
+    assert _validate(project_root) == 0
 
 
 def test_policy_validate_no_aim_toml_is_clean(home: Path, project_root: Path) -> None:
-    cli.policy_validate(project_root)  # no aim.toml -> no raise (exit 0)
+    assert _validate(project_root) == 0  # no aim.toml -> clean pass
 
 
 def test_policy_validate_blocks_mcp(home: Path, project_root: Path) -> None:
@@ -282,8 +289,7 @@ def test_policy_validate_blocks_mcp(home: Path, project_root: Path) -> None:
         mcp_servers=[DeclaredMcpServer(alias="gh", registry_name="github")],
     )
     policy.save_local_policy(policy.Policy(name="local", blocked_mcp=["github"]))
-    with pytest.raises(typer.Exit):
-        cli.policy_validate(project_root)
+    assert _validate(project_root) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +383,106 @@ def test_lockfile_preserves_set_policy_hash(home: Path, project_root: Path) -> N
     loaded = manifest.load(project_root)
     assert loaded.policy_repo == "https://example/p"
     assert loaded.policy_hash == "deadbeef"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — org policy repo + binding
+# ---------------------------------------------------------------------------
+
+
+def _make_policy_repo(
+    tmp_path: Path, policy_toml: str, rules_toml: str | None = None, name: str = "polrepo"
+) -> str:
+    files = {"policy.toml": policy_toml}
+    if rules_toml is not None:
+        files["aim.rules.toml"] = rules_toml
+    working = git_fixtures.make_source_repo(tmp_path / name, files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / f"{name}.git")
+    return f"file://{bare}"
+
+
+def test_bind_fetches_pins_and_loads_custom_rules(home: Path, tmp_path: Path) -> None:
+    url = _make_policy_repo(
+        tmp_path,
+        'version = 1\nname = "acme"\n[artifacts]\nblocked_skills = ["a/foo"]\n',
+        rules_toml='[[rule]]\nid = "c1"\nseverity = "high"\nprompt = "p"\n',
+    )
+    resolved = policy.bind(url)
+    assert resolved.source == "org"
+    assert resolved.policy.name == "acme"
+    assert resolved.policy.blocked_skills == ["a/foo"]
+    assert [r.id for r in resolved.policy.custom_rules] == ["c1"]
+    assert policy.get_binding() is not None
+    assert policy.load_org_snapshot() is not None
+
+
+def test_org_policy_replaces_local(home: Path, tmp_path: Path) -> None:
+    policy.save_local_policy(policy.Policy(name="local", blocked_skills=["x/y"]))
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    resolved = policy.resolve_effective()
+    assert resolved.source == "org"
+    assert resolved.policy.name == "acme"
+
+
+def test_resolve_offline_uses_snapshot_after_remote_gone(home: Path, tmp_path: Path) -> None:
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    # Delete the bare remote AND the cached clone: resolution must still work from
+    # the DB snapshot (proves `lock`/resolve never need the network).
+    import shutil
+
+    shutil.rmtree(tmp_path / "polrepo.git")
+    shutil.rmtree(policy._policy_clone_dir(url), ignore_errors=True)
+    resolved = policy.resolve_effective()
+    assert resolved.source == "org"
+    assert resolved.policy.name == "acme"
+
+
+def test_unbind_falls_back_to_local(home: Path, tmp_path: Path) -> None:
+    policy.save_local_policy(policy.Policy(name="local"))
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    policy.bind(url)
+    assert policy.resolve_effective().source == "org"
+    policy.unbind()
+    assert policy.get_binding() is None
+    assert policy.resolve_effective().source == "local"
+
+
+def test_lock_records_org_policy(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _setup_locked_skill_project(project_root, tmp_path)
+    url = _make_policy_repo(tmp_path, 'version = 1\nname = "acme"\n')
+    bound = policy.bind(url)
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+    m = manifest.load(project_root)
+    assert m.policy_repo == url
+    assert m.policy_hash == bound.hash
+
+
+def test_org_policy_blocks_skill_at_lock(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _setup_locked_skill_project(project_root, tmp_path)
+    url = _make_policy_repo(
+        tmp_path, 'version = 1\nname = "acme"\n[artifacts]\nblocked_skills = ["a/foo"]\n'
+    )
+    policy.bind(url)
+    with pytest.raises(policy.PolicyViolationError, match="a/foo"):
+        asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+
+
+def test_validate_against_remote_policy_cli(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _write_declarations(
+        project_root,
+        skills=[
+            DeclaredSkill(
+                qualified_name="a/foo",
+                repo_alias="a",
+                source_path="skills/foo",
+                target_dir=".claude/skills/foo",
+            )
+        ],
+    )
+    url = _make_policy_repo(
+        tmp_path, 'version = 1\nname = "acme"\n[artifacts]\nblocked_skills = ["a/foo"]\n'
+    )
+    # No local/org binding; --policy fetches the remote fresh (the out-of-band gate).
+    assert _validate(project_root, "--policy", url) == 1

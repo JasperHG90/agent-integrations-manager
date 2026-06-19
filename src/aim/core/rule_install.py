@@ -27,6 +27,7 @@ from aim.core import (
     policy,
     repo_rules,
     repos,
+    risk,
     validation,
 )
 from aim.core.install import resolve_install_version
@@ -117,8 +118,10 @@ def _gate_rule(qualified_name: str, content: str) -> None:
     """Single content gate for rules: every deploy path (install/update/rollback/
     sync, files and inline mode) funnels through here, so security/policy/risk
     checks live in one place."""
-    policy.assert_artifact_allowed(policy.effective_policy(), "rule", qualified_name)
+    pol = policy.effective_policy()
+    policy.assert_artifact_allowed(pol, "rule", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"rule {qualified_name}")
+    risk.gate(content, qualified_name=qualified_name, pol=pol)
 
 
 def _deploy(project_root: Path, rule_name: str, content: str, *, qualified_name: str) -> None:

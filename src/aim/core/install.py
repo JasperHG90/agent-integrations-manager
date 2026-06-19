@@ -37,6 +37,7 @@ from aim.core import (
     paths,
     policy,
     repos,
+    risk,
 )
 from aim.core.models import InstalledSkill, Manifest, SkillIndex, SkillVersion
 
@@ -254,17 +255,34 @@ def _ensure_symlinks_safe(snap: Path) -> None:
             )
 
 
+def _gather_skill_text(snap: Path) -> str:
+    """Concatenate the UTF-8 text of a skill snapshot for risk classification.
+    Only called when a policy enables risk scanning."""
+    parts: list[str] = []
+    for path in sorted(snap.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            parts.append(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, OSError):
+            continue
+    return "\n".join(parts)
+
+
 def _deploy(plan: InstallPlan) -> str:
     """Materialise the skill bytes into the project target_dir. Returns the
     content hash of the deployed tree."""
     snap = _ensure_snapshot(plan.repo_alias, plan.version.sha, plan.source_path, plan.skill_name)
     _ensure_symlinks_safe(snap)
-    policy.assert_artifact_allowed(policy.effective_policy(), "skill", plan.qualified_name)
+    pol = policy.effective_policy()
+    policy.assert_artifact_allowed(pol, "skill", plan.qualified_name)
     hidden = content_guard.scan_directory(snap)
     if hidden:
         raise content_guard.HiddenUnicodeError(
             f"{plan.qualified_name}: hidden Unicode found in skill files:\n" + "\n".join(hidden)
         )
+    if pol.risk.enabled:
+        risk.gate(_gather_skill_text(snap), qualified_name=plan.qualified_name, pol=pol)
     if plan.target_dir.exists():
         shutil.rmtree(plan.target_dir)
     plan.target_dir.parent.mkdir(parents=True, exist_ok=True)

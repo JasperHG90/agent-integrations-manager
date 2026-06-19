@@ -25,7 +25,7 @@ from pathlib import Path
 import tomli_w
 from pydantic import BaseModel, ConfigDict, Field
 
-from aim.core import db
+from aim.core import db, git, paths
 from aim.core.models import GlobalSetting
 
 DEFAULT_MODEL_ID = "protectai/deberta-v3-base-prompt-injection-v2"
@@ -274,6 +274,7 @@ def compute_hash(policy: Policy) -> str:
 
 _LOCAL_POLICY_KEY = "policy:local"
 _BINDING_KEY = "policy:binding"
+_ORG_SNAPSHOT_KEY = "policy:org_snapshot"
 
 
 def load_local_policy() -> Policy | None:
@@ -329,6 +330,95 @@ def clear_binding() -> None:
             session.commit()
 
 
+# ---------- org policy repo (fetched, pinned, replaces local when bound) ----------
+
+
+def _policy_clone_dir(repo_url: str) -> Path:
+    key = hashlib.sha256(normalize_repo_url(repo_url).encode("utf-8")).hexdigest()[:16]
+    return paths.user_cache_dir() / "policy" / key
+
+
+def fetch_org_policy(repo_url: str, ref: str = "HEAD") -> tuple[Policy, str]:
+    """Bare-clone/fetch the policy repo and read `policy.toml` (+ optional
+    `aim.rules.toml`) at the resolved commit. Returns (Policy, sha). Network op:
+    call only from bind/refresh/validate, never from the lock/deploy hot path."""
+    paths.ensure_global_dirs()
+    dest = _policy_clone_dir(repo_url)
+    backend = git.get_backend()
+    if dest.exists():
+        backend.fetch(dest)
+    else:
+        backend.clone_bare(repo_url, dest)
+    sha = backend.resolve_ref(dest, ref)
+    pol = from_toml(backend.cat_file(dest, sha, "policy.toml"))
+    try:
+        pol.custom_rules = parse_rules_toml(backend.cat_file(dest, sha, "aim.rules.toml"))
+    except git.GitError:
+        pass  # aim.rules.toml is optional
+    return pol, sha
+
+
+def _save_org_snapshot(repo_url: str, ref: str, sha: str, pol: Policy) -> None:
+    blob = json.dumps(
+        {
+            "repo": repo_url,
+            "ref": ref,
+            "sha": sha,
+            "hash": compute_hash(pol),
+            "policy": pol.model_dump(mode="json"),
+        }
+    )
+    with db.session() as session:
+        row = session.get(GlobalSetting, _ORG_SNAPSHOT_KEY)
+        if row is None:
+            session.add(GlobalSetting(key=_ORG_SNAPSHOT_KEY, value=blob))
+        else:
+            row.value = blob
+        session.commit()
+
+
+def _clear_org_snapshot() -> None:
+    with db.session() as session:
+        row = session.get(GlobalSetting, _ORG_SNAPSHOT_KEY)
+        if row is not None:
+            session.delete(row)
+            session.commit()
+
+
+def load_org_snapshot() -> ResolvedPolicy | None:
+    """The last-fetched org policy, read from the DB (no network). Used by
+    resolution so `lock` stays offline."""
+    with db.session() as session:
+        row = session.get(GlobalSetting, _ORG_SNAPSHOT_KEY)
+    if row is None:
+        return None
+    data = json.loads(row.value)
+    pol = Policy.model_validate(data["policy"])
+    return ResolvedPolicy(pol, "org", data["repo"], data["hash"])
+
+
+def bind(repo_url: str, ref: str = "HEAD") -> ResolvedPolicy:
+    """Bind to an org policy repo: fetch it, pin a snapshot, and record the
+    binding. The org policy then replaces the local one for this machine."""
+    pol, sha = fetch_org_policy(repo_url, ref)
+    set_binding(repo_url, ref)
+    _save_org_snapshot(repo_url, ref, sha, pol)
+    return ResolvedPolicy(pol, "org", repo_url, compute_hash(pol))
+
+
+def refresh_org_policy() -> ResolvedPolicy | None:
+    """Re-fetch the bound org policy and update the cached snapshot."""
+    binding = get_binding()
+    if binding is None:
+        return None
+    return bind(binding["repo"], binding.get("ref", "HEAD"))
+
+
+def unbind() -> None:
+    clear_binding()
+    _clear_org_snapshot()
+
+
 # ---------- resolution ----------
 
 
@@ -341,8 +431,13 @@ class ResolvedPolicy:
 
 
 def resolve_effective(project_root: Path | None = None) -> ResolvedPolicy:
-    """Resolve the effective policy. Phase 1: built-in default < local (DB).
-    The org tier (which replaces local when bound) is added in a later phase."""
+    """Resolve the effective policy: built-in default < local (DB) < org (bound).
+    A bound org policy replaces local. Offline: reads the cached org snapshot,
+    never fetches (bind/refresh do that)."""
+    if get_binding() is not None:
+        snapshot = load_org_snapshot()
+        if snapshot is not None:
+            return snapshot
     local = load_local_policy()
     if local is not None:
         return ResolvedPolicy(local, "local", None, compute_hash(local))
@@ -352,6 +447,10 @@ def resolve_effective(project_root: Path | None = None) -> ResolvedPolicy:
 def effective_policy(project_root: Path | None = None) -> Policy:
     """The resolved policy without computing a hash — the cheap path used by the
     per-artifact deploy gates (which only need the policy, not its hash)."""
+    if get_binding() is not None:
+        snapshot = load_org_snapshot()
+        if snapshot is not None:
+            return snapshot.policy
     return load_local_policy() or builtin_policy()
 
 
