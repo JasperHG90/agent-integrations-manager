@@ -210,18 +210,15 @@ class ReposScreen(Screen[None]):
                 return
             project_root = getattr(self.app, "_project_root", None)
             try:
-                repos.get(alias)  # fail before deleting anything
-                removed = (
-                    repos.remove_project_artifacts(project_root, alias)
-                    if project_root is not None
-                    else []
-                )
                 repos.remove(alias)
             except repos.RepoNotFoundError as exc:
                 self.app.notify(f"remove failed: {exc}", severity="error")
                 return
-            extra = f" (+{len(removed)} artifact(s))" if removed else ""
-            self.app.notify(f"removed {alias}{extra}")
+            # Global removal is a cache eviction; the project's declarations are left
+            # untouched. Just hint when this project still references the repo.
+            declared = repos.project_artifacts_for_repo(project_root, alias) if project_root else []
+            note = f" — {len(declared)} artifact(s) still declared here" if declared else ""
+            self.app.notify(f"removed {alias}{note}")
             self._populate()
 
         self.app.push_screen(

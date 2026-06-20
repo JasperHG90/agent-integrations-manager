@@ -139,6 +139,23 @@ def _render_risk_block(exc: risk_mod.RiskBlockedError) -> None:
         err.print(f"[dim]{exc.override_hint}[/dim]")
 
 
+def _render_error_list(title: str, items: list[str], fallback: str) -> None:
+    """Print a titled, one-per-line list of errors, or a single fallback line.
+
+    Args:
+        title: Heading shown before the list (e.g. "sync failed").
+        items: Individual error strings; each is printed on its own line.
+        fallback: Message printed when `items` is empty.
+    """
+    err = Console(stderr=True)
+    if not items:
+        err.print(f"[bold red]error:[/bold red] {fallback}")
+        return
+    err.print(f"[bold red]{title}[/bold red] ({len(items)}):")
+    for item in items:
+        err.print(f"  [red]•[/red] {item}")
+
+
 def _friendly(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a command so domain exceptions become friendly CLI errors.
 
@@ -157,6 +174,9 @@ def _friendly(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn(*args, **kwargs)
         except risk_mod.RiskBlockedError as exc:
             _render_risk_block(exc)
+            raise typer.Exit(code=1) from exc
+        except sync_mod.SyncError as exc:
+            _render_error_list("sync failed", exc.errors, str(exc))
             raise typer.Exit(code=1) from exc
         except _FRIENDLY_ERRORS as exc:
             typer.echo(f"error: {exc}", err=True)
@@ -1468,14 +1488,23 @@ def repo_remove(
     alias: str,
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
 ) -> None:
-    """Unregister a source repo, delete its local clone, and remove any of its
-    skills/agents/rules installed in the current project."""
-    repos_mod.get(alias)  # fail before deleting anything if the repo isn't registered
-    removed = repos_mod.remove_project_artifacts(_here(project), alias)
+    """Unregister a source repo and delete its local clone.
+
+    This is a global cache eviction and does not touch any project's aim.toml — a
+    project that still declares artifacts from this repo keeps them, and `sync`
+    re-registers the repo from the lockfile when needed.
+    """
+    declared = repos_mod.project_artifacts_for_repo(_here(project), alias)
     repos_mod.remove(alias)
     typer.echo(f"removed repo {alias}")
-    for qualified_name in removed:
-        typer.echo(f"  removed {qualified_name}")
+    if declared:
+        typer.echo(
+            f"  note: this project still declares {len(declared)} artifact(s) from "
+            f"{alias}; remove them with `aim skill/agent/rule remove <name>`:",
+            err=True,
+        )
+        for qualified_name in declared:
+            typer.echo(f"    {qualified_name}", err=True)
 
 
 @repo_app.command("rename")

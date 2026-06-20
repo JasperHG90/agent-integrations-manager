@@ -105,7 +105,7 @@ def test_remove_removes_clone(home: Path, bare_remote: tuple[Path, Path]) -> Non
         repos.get("doomed")
 
 
-def test_remove_project_artifacts_uninstalls_repo_skills(
+def test_project_artifacts_for_repo_lists_without_removing(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
     from aim.core import declarations, install
@@ -116,20 +116,17 @@ def test_remove_project_artifacts_uninstalls_repo_skills(
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("a", f"file://{bare}")
     install.install(project_root, "a/foo")
+
+    # Read-only: reports the declared artifact, leaves the install + declarations intact.
+    assert repos.project_artifacts_for_repo(project_root, "a") == ["a/foo"]
     assert (project_root / ".claude" / "skills" / "foo").exists()
     assert "a" in declarations.load(project_root).repos
 
-    removed = repos.remove_project_artifacts(project_root, "a")
 
-    assert removed == ["a/foo"]
-    assert not (project_root / ".claude" / "skills" / "foo").exists()
-    decl = declarations.load(project_root)
-    assert decl.skills == []
-    assert "a" not in decl.repos  # [repos] binding pruned with the last artifact
-
-
-def test_remove_project_artifacts_no_declarations_is_noop(home: Path, project_root: Path) -> None:
-    assert repos.remove_project_artifacts(project_root, "anything") == []
+def test_project_artifacts_for_repo_no_declarations_is_empty(
+    home: Path, project_root: Path
+) -> None:
+    assert repos.project_artifacts_for_repo(project_root, "anything") == []
 
 
 def test_rename_moves_clone(home: Path, bare_remote: tuple[Path, Path]) -> None:

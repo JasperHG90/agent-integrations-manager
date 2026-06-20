@@ -48,7 +48,21 @@ from aim.core.models import (
 
 
 class SyncError(RuntimeError):
-    """Top-level sync failure (missing lockfile, unreachable repo, etc.)."""
+    """Top-level sync failure (missing lockfile, unreachable repo, etc.).
+
+    Carries the individual per-artifact failures so the CLI can list them one per
+    line instead of one long semicolon-joined string.
+    """
+
+    def __init__(self, message: str, *, errors: list[str] | None = None) -> None:
+        """Store the joined message and the underlying per-artifact errors.
+
+        Args:
+            message: The combined, human-readable failure message.
+            errors: The individual failure strings, when the failure aggregates many.
+        """
+        super().__init__(message)
+        self.errors = errors or []
 
 
 class SyncDriftError(RuntimeError):
@@ -728,6 +742,6 @@ async def run(options: SyncOptions) -> SyncResult:
     all_errors = result.repo_errors + rule_errors + skill_errors + agent_errors + mcp_errors
     if all_errors:
         # Partial state was already saved above, so a re-run resumes progress.
-        raise SyncError("; ".join(all_errors))
+        raise SyncError("; ".join(all_errors), errors=all_errors)
 
     return result

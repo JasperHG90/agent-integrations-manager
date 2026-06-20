@@ -9,10 +9,12 @@ The DB stores:
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -29,28 +31,69 @@ from aim.core.models import (  # noqa: F401
 )
 
 _engine: Engine | None = None
+_engine_lock = threading.Lock()
 
 
 def get_engine(db_path: Path | None = None) -> Engine:
-    """Return the process-wide SQLite engine, creating it on first use.
+    """Return the process-wide SQLite engine, creating it once on first use.
+
+    Thread-safe: `sync` first touches the DB from many worker threads at once, so a
+    naive check-then-create would let several threads run `create_all`/migrate/WAL
+    setup concurrently and collide with "database is locked". A lock with
+    double-checked init guarantees a single engine, fully initialized (and switched
+    to WAL) before any concurrent connection opens.
 
     Args:
-        db_path: Override for the database file location; defaults to the
-            global DB path when omitted.
+        db_path: Override for the database file location; defaults to the global DB
+            path when omitted.
 
     Returns:
-        The cached SQLModel engine, with tables created and schema migrated.
+        The cached SQLModel engine, with WAL enabled, tables created, and schema
+        migrated.
     """
     global _engine
     if _engine is not None:
         return _engine
-    if db_path is None:
-        paths.ensure_global_dirs()
-        db_path = paths.db_path()
-    _engine = create_engine(f"sqlite:///{db_path}", echo=False)
-    SQLModel.metadata.create_all(_engine)
-    _migrate_schema(_engine)
-    return _engine
+    with _engine_lock:
+        if _engine is not None:
+            return _engine
+        if db_path is None:
+            paths.ensure_global_dirs()
+            db_path = paths.db_path()
+        # check_same_thread=False lets pooled connections cross threads; the busy
+        # timeout lets a blocked writer wait for the lock instead of raising.
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            echo=False,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        event.listen(engine, "connect", _set_sqlite_pragmas)
+        # Convert to WAL once, here, on a single connection while we still hold the
+        # lock — doing it per-connect would race when many threads open at once on a
+        # pre-existing rollback-mode DB. WAL is persisted in the file, so later
+        # connections inherit it.
+        with engine.connect() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        SQLModel.metadata.create_all(engine)
+        _migrate_schema(engine)
+        _engine = engine
+        return _engine
+
+
+def _set_sqlite_pragmas(dbapi_conn: object, _record: object) -> None:
+    """Set the per-connection SQLite pragmas (busy timeout and synchronous mode).
+
+    These are per-connection and so must be set on every connect. WAL journaling is
+    a database-level setting applied once in `get_engine`.
+
+    Args:
+        dbapi_conn: The freshly opened DBAPI connection.
+        _record: The pool's connection record (unused).
+    """
+    cursor = dbapi_conn.cursor()  # type: ignore[attr-defined]
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 
 def _migrate_schema(engine: Engine) -> None:
@@ -105,12 +148,22 @@ def reset_engine() -> None:
     _engine = None
 
 
+_session_lock = threading.RLock()
+
+
 @contextmanager
 def session() -> Iterator[Session]:
-    """Yield a database session bound to the shared engine.
+    """Yield a database session bound to the shared engine, serialized in-process.
+
+    SQLite allows only one writer, and pysqlite's deferred transactions can deadlock
+    on a read->write upgrade (two pooled connections each hold a read lock and both
+    try to upgrade) — a "database is locked" that `busy_timeout` cannot resolve. `sync`
+    triggers exactly this by indexing many repos from worker threads at once. A
+    process-wide reentrant lock serializes sessions so writes never contend; network
+    work happens outside sessions, so concurrency there is unaffected.
 
     Yields:
         An open SQLModel session that is closed on context exit.
     """
-    with Session(get_engine()) as s:
+    with _session_lock, Session(get_engine()) as s:
         yield s

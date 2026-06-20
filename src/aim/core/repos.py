@@ -286,46 +286,33 @@ def remove(alias: str) -> None:
     git.remove_clone(clone_dir(alias))
 
 
-def remove_project_artifacts(project_root: Path, alias: str) -> list[str]:
-    """Uninstall every skill/agent/rule in a project that came from a repo.
+def project_artifacts_for_repo(project_root: Path, alias: str) -> list[str]:
+    """Return the qualified names of a project's artifacts that come from a repo.
 
-    Removes deployed files, lockfile entries, and aim.toml declarations, which
-    prunes the `[repos]` binding once the last artifact is gone.
+    Read-only; used to warn after a (global) repo removal that a project still
+    declares artifacts sourced from the now-unregistered repo. Removing a global
+    repo registration is a reversible cache eviction — `sync` re-registers from the
+    lockfile — so the project's declarations are deliberately left untouched.
 
     Args:
-        project_root: The project directory to uninstall from.
-        alias: The repo alias whose artifacts should be removed.
+        project_root: The project directory whose aim.toml is inspected.
+        alias: The repo alias to match declared artifacts against.
 
     Returns:
-        The qualified names removed; empty when the project has no declarations.
+        The qualified names declared from `alias`; empty when there are no
+        declarations.
     """
-    # Local imports keep this module free of an import cycle.
-    from aim.core import agent_install, declarations, install, rule_install
+    from aim.core import declarations
 
     try:
         decl = declarations.load(project_root)
     except declarations.DeclarationsNotFoundError:
         return []
-    removed: list[str] = []
-    for skill in [s for s in decl.skills if s.repo_alias == alias]:
-        try:
-            install.delete(project_root, skill.qualified_name)
-        except install.SkillNotInstalledError:
-            declarations._remove_skill(project_root, skill.qualified_name)
-        removed.append(skill.qualified_name)
-    for agent in [a for a in decl.agents if a.repo_alias == alias]:
-        try:
-            agent_install.delete(project_root, agent.qualified_name)
-        except agent_install.AgentNotInstalledError:
-            declarations._remove_agent(project_root, agent.qualified_name)
-        removed.append(agent.qualified_name)
-    for rule in [r for r in decl.rules if r.repo_alias == alias]:
-        try:
-            rule_install.delete(project_root, rule.qualified_name)
-        except rule_install.RuleNotInstalledError:
-            declarations._remove_rule(project_root, rule.qualified_name)
-        removed.append(rule.qualified_name)
-    return removed
+    return (
+        [s.qualified_name for s in decl.skills if s.repo_alias == alias]
+        + [a.qualified_name for a in decl.agents if a.repo_alias == alias]
+        + [r.qualified_name for r in decl.rules if r.repo_alias == alias]
+    )
 
 
 def _delete_skill_index(alias: str):  # type: ignore[no-untyped-def]
