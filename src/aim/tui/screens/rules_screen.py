@@ -9,6 +9,7 @@ from textual.widgets import DataTable, Input, Static
 from aim.core import git, manifest, repo_rules, repos, risk, rule_install
 from aim.tui import errors as tui_errors
 from aim.tui.modals.rule_install import RuleInstallConfig, RuleInstallModal
+from aim.tui.modals.rule_view import RuleViewModal
 
 _RULE_DEPLOY_ERRORS: tuple[type[BaseException], ...] = (  # noqa: RUF005
     rule_install.RuleNotIndexedError,
@@ -25,6 +26,8 @@ class RulesScreen(Screen[None]):
         ("b", "app.pop_screen", "Back"),
         ("slash", "focus_search", "Search"),
         ("f", "cycle_repo_filter", "Filter by repo"),
+        ("enter", "view_current", "View"),
+        ("v", "view_current", "View"),
         ("i", "install_current", "Add"),
         ("a", "install_current", "Add"),
         ("q", "app.quit", "Quit"),
@@ -43,7 +46,7 @@ class RulesScreen(Screen[None]):
         yield DataTable(id="rules-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
-            "[/] Search  [f] Repo filter  [a/i] Add  [b] Back  [q] Quit",
+            "[/] Search  [f] Repo filter  [enter/v] View  [a/i] Add  [b] Back  [q] Quit",
             id="hint",
             markup=False,
         )
@@ -135,6 +138,22 @@ class RulesScreen(Screen[None]):
             return None
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
         return str(row_key.value) if row_key and row_key.value is not None else None
+
+    def action_view_current(self) -> None:
+        """Open a modal showing the source of the selected rule."""
+        qn = self._selected()
+        if qn is None:
+            if self.query_one(DataTable).row_count == 0:
+                self.app.notify("no rules indexed — add a repo first", severity="warning")
+            else:
+                self._status("no row selected")
+            return
+        try:
+            content = repo_rules.read_rule_content(qn)
+        except repo_rules.RuleNotIndexedError as exc:
+            self.app.notify(f"view failed: {exc}", severity="error")
+            return
+        self.app.push_screen(RuleViewModal(qn, content))
 
     def action_install_current(self) -> None:
         """Open the install modal for the selected rule, or warn if none is."""

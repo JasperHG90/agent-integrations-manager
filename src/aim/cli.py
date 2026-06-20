@@ -64,7 +64,7 @@ app.add_typer(rule_app, name="rule")
 app.add_typer(repo_app, name="repo")
 app.add_typer(skill_app, name="skill")
 app.add_typer(subagent_app, name="subagent")
-app.add_typer(archetype_app, name="archetype")
+app.add_typer(archetype_app, name="instructions")
 app.add_typer(db_app, name="db")
 
 
@@ -95,12 +95,14 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     policy_mod.PolicyError,
     risk_mod.RiskBlockedError,
     install_mod.SkillNotIndexedError,
+    skills_mod.SkillNotIndexedError,
     install_mod.SkillNotInstalledError,
     install_mod.SkillSourcePathChangedError,
     install_mod.LocalEditsError,
     install_mod.NoHistoryToRollbackError,
     install_mod.RollbackUnavailableError,
     agent_install_mod.AgentNotIndexedError,
+    agents_mod.AgentNotIndexedError,
     agent_install_mod.AgentNotInstalledError,
     agent_install_mod.AgentSourcePathChangedError,
     agent_install_mod.AgentLocalEditsError,
@@ -223,6 +225,31 @@ def _scanning(label: str) -> Any:
     """A transient stderr spinner for the duration of an add. The risk scan can pull a
     model or call a judge, so signal that work is happening instead of hanging silently."""
     return Console(stderr=True).status(label, spinner="dots")
+
+
+def _run_bulk_update(
+    update_many: Callable[..., list[dict[str, Any]]],
+    project: Path | None,
+    repo: str | None,
+    only_outdated: bool,
+    force: bool,
+) -> None:
+    """Run a kind's bulk update_many, print per-artifact outcomes, exit 1 on any error.
+
+    Args:
+        update_many: The core `update_many` for the artifact kind.
+        project: Project root (defaults to cwd).
+        repo: Limit to a single repo alias, or None for all.
+        only_outdated: Skip artifacts already at HEAD.
+        force: Overwrite local edits.
+    """
+    outcomes = update_many(
+        _here(project), repo_alias=repo, only_outdated=only_outdated, force=force
+    )
+    for outcome in outcomes:
+        typer.echo(f"{outcome['status']:>12}  {outcome['qualified_name']}  {outcome['detail']}")
+    if any(outcome["status"] == "error" for outcome in outcomes):
+        raise typer.Exit(code=1)
 
 
 def _here(project: Path | None) -> Path:
@@ -1404,6 +1431,15 @@ def rule_search(
     )
 
 
+@rule_app.command("view")
+@_friendly
+def rule_view(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name> to display."),
+) -> None:
+    """Print an indexed rule's source markdown."""
+    typer.echo(repo_rules_mod.read_rule_content(qualified_name))
+
+
 @rule_app.command("add")
 @_friendly
 def rule_add(
@@ -1449,43 +1485,28 @@ def rule_add(
 @rule_app.command("update")
 @_friendly
 def rule_update(
-    qualified_name: str = typer.Argument(..., help="<repo_alias>/<rule_name>"),
+    qualified_name: str | None = typer.Argument(
+        None, help="<repo_alias>/<rule_name>; omit and use --all/--repo for bulk."
+    ),
     project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    all_rules: bool = typer.Option(False, "--all", help="Update every installed rule."),
+    repo: str | None = typer.Option(None, "--repo", help="Update only this repo's rules."),
+    only_outdated: bool = typer.Option(False, "--outdated", help="Skip rules already at HEAD."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
     override_risk: bool = typer.Option(
         False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
-    """Refresh an installed rule from its source repo."""
-    updated = rule_install_mod.update(
-        _here(project), qualified_name, force=force, override_risk=override_risk
-    )
-    typer.echo(f"updated rule {qualified_name} -> {updated.current.identifier()}")
-
-
-@rule_app.command("update-many")
-@_friendly
-def rule_update_many(
-    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
-    all_rules: bool = typer.Option(False, "--all", help="Update every installed rule."),
-    repo: str | None = typer.Option(None, "--repo", help="Limit to a single repo alias."),
-    only_outdated: bool = typer.Option(False, "--outdated", help="Skip rules already at HEAD."),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-) -> None:
-    """Update installed rules in bulk."""
+    """Refresh an installed rule, or update in bulk with --all / --repo."""
+    if qualified_name is not None:
+        updated = rule_install_mod.update(
+            _here(project), qualified_name, force=force, override_risk=override_risk
+        )
+        typer.echo(f"updated rule {qualified_name} -> {updated.current.identifier()}")
+        return
     if not all_rules and repo is None:
-        raise typer.BadParameter("pass --all or --repo <alias>")
-    outcomes = rule_install_mod.update_many(
-        _here(project),
-        repo_alias=repo,
-        only_outdated=only_outdated,
-        force=force,
-    )
-    for o in outcomes:
-        typer.echo(f"{o['status']:>12}  {o['qualified_name']}  {o['detail']}")
-    errors = [o for o in outcomes if o["status"] == "error"]
-    if errors:
-        raise typer.Exit(code=1)
+        raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
+    _run_bulk_update(rule_install_mod.update_many, project, repo, only_outdated, force)
 
 
 @rule_app.command("remove")
@@ -1545,6 +1566,18 @@ def archetype_search(
         title=f"archetypes matching {query!r}",
         columns=["qualified_name", "repo_alias", "available", "title", "description"],
         compact_columns=["qualified_name", "available", "title"],
+    )
+
+
+@archetype_app.command("view")
+@_friendly
+def archetype_view(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<archetype_name> to display."),
+) -> None:
+    """Print an indexed instruction archetype's base instruction body."""
+    row = archetypes_mod.index_row(qualified_name)
+    typer.echo(
+        archetypes_mod.read_base_body(row.repo_alias, row.indexed_at_sha, row.instruction_path)
     )
 
 
@@ -1761,6 +1794,15 @@ def skill_search(
     )
 
 
+@skill_app.command("view")
+@_friendly
+def skill_view(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<skill_name> to display."),
+) -> None:
+    """Print an indexed skill's SKILL.md source."""
+    typer.echo(skills_mod.read_skill_content(qualified_name))
+
+
 @skill_app.command("add")
 @_friendly
 def skill_add(
@@ -1842,57 +1884,46 @@ def skill_install(
 @skill_app.command("update")
 @_friendly
 def skill_update(
-    qualified_name: str = typer.Argument(...),
+    qualified_name: str | None = typer.Argument(
+        None, help="<repo_alias>/<skill_name>; omit and use --all/--repo for bulk."
+    ),
     project: Path | None = typer.Argument(None),
+    all_skills: bool = typer.Option(False, "--all", help="Update every installed skill."),
+    repo: str | None = typer.Option(None, "--repo", help="Update only this repo's skills."),
+    only_outdated: bool = typer.Option(False, "--outdated", help="Skip skills already at HEAD."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-    diff: bool = typer.Option(False, "--diff", help="Show proposed version change; don't apply."),
+    diff: bool = typer.Option(False, "--diff", help="Show proposed change(s); don't apply."),
     override_risk: bool = typer.Option(
         False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
-    """Refresh an installed skill from its source repo."""
-    if diff:
-        preview = install_mod.update(_here(project), qualified_name, dry_run=True)
-        assert isinstance(preview, install_mod.UpdatePreview)
-        verb = "WOULD UPDATE" if preview.will_change else "no-op"
-        ident = (
-            f"{preview.proposed_tag}+{preview.proposed_sha[:7]}"
-            if preview.proposed_tag
-            else preview.proposed_sha[:7]
+    """Refresh an installed skill, or update in bulk with --all / --repo."""
+    if qualified_name is not None:
+        if diff:
+            preview = install_mod.update(_here(project), qualified_name, dry_run=True)
+            assert isinstance(preview, install_mod.UpdatePreview)
+            verb = "WOULD UPDATE" if preview.will_change else "no-op"
+            ident = (
+                f"{preview.proposed_tag}+{preview.proposed_sha[:7]}"
+                if preview.proposed_tag
+                else preview.proposed_sha[:7]
+            )
+            typer.echo(f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}")
+            return
+        updated = install_mod.update(
+            _here(project), qualified_name, force=force, override_risk=override_risk
         )
-        typer.echo(f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}")
+        assert not isinstance(updated, install_mod.UpdatePreview)
+        typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
         return
-    updated = install_mod.update(
-        _here(project), qualified_name, force=force, override_risk=override_risk
-    )
-    assert not isinstance(updated, install_mod.UpdatePreview)
-    typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
-
-
-@skill_app.command("update-many")
-@_friendly
-def skill_update_many(
-    project: Path | None = typer.Argument(None),
-    all_skills: bool = typer.Option(False, "--all", help="Update every installed skill."),
-    repo: str | None = typer.Option(None, "--repo", help="Limit to a single repo alias."),
-    only_outdated: bool = typer.Option(False, "--outdated", help="Skip skills already at HEAD."),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-    diff: bool = typer.Option(False, "--diff", help="Show proposals; don't apply."),
-) -> None:
-    """Update installed skills in bulk."""
     if not all_skills and repo is None:
-        raise typer.BadParameter("pass --all or --repo <alias>")
+        raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
     outcomes = install_mod.update_many(
-        _here(project),
-        repo_alias=repo,
-        only_outdated=only_outdated,
-        force=force,
-        dry_run=diff,
+        _here(project), repo_alias=repo, only_outdated=only_outdated, force=force, dry_run=diff
     )
-    for o in outcomes:
-        typer.echo(f"{o.status:>12}  {o.qualified_name}  {o.detail}")
-    errors = [o for o in outcomes if o.status == "error"]
-    if errors:
+    for outcome in outcomes:
+        typer.echo(f"{outcome.status:>12}  {outcome.qualified_name}  {outcome.detail}")
+    if any(outcome.status == "error" for outcome in outcomes):
         raise typer.Exit(code=1)
 
 
@@ -1971,6 +2002,15 @@ def agent_search(
         columns=["qualified_name", "repo_alias", "title", "description"],
         compact_columns=["qualified_name", "title", "description"],
     )
+
+
+@subagent_app.command("view")
+@_friendly
+def agent_view(
+    qualified_name: str = typer.Argument(..., help="<repo_alias>/<agent_name> to display."),
+) -> None:
+    """Print an indexed sub-agent's AGENT.md source."""
+    typer.echo(agents_mod.read_agent_content(qualified_name))
 
 
 @subagent_app.command("add")
@@ -2056,43 +2096,28 @@ def agent_install_cmd(
 @subagent_app.command("update")
 @_friendly
 def agent_update(
-    qualified_name: str = typer.Argument(...),
+    qualified_name: str | None = typer.Argument(
+        None, help="<repo_alias>/<agent_name>; omit and use --all/--repo for bulk."
+    ),
     project: Path | None = typer.Argument(None),
+    all_agents: bool = typer.Option(False, "--all", help="Update every installed sub-agent."),
+    repo: str | None = typer.Option(None, "--repo", help="Update only this repo's sub-agents."),
+    only_outdated: bool = typer.Option(False, "--outdated", help="Skip agents already at HEAD."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
     override_risk: bool = typer.Option(
         False, "--override-risk", help="Update despite a risk block (unless the policy forbids it)."
     ),
 ) -> None:
-    """Refresh an installed sub-agent from its source repo."""
-    updated = agent_install_mod.update(
-        _here(project), qualified_name, force=force, override_risk=override_risk
-    )
-    typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
-
-
-@subagent_app.command("update-many")
-@_friendly
-def agent_update_many(
-    project: Path | None = typer.Argument(None),
-    all_agents: bool = typer.Option(False, "--all", help="Update every installed agent."),
-    repo: str | None = typer.Option(None, "--repo", help="Limit to a single repo alias."),
-    only_outdated: bool = typer.Option(False, "--outdated", help="Skip agents already at HEAD."),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
-) -> None:
-    """Update installed sub-agents in bulk."""
+    """Refresh an installed sub-agent, or update in bulk with --all / --repo."""
+    if qualified_name is not None:
+        updated = agent_install_mod.update(
+            _here(project), qualified_name, force=force, override_risk=override_risk
+        )
+        typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
+        return
     if not all_agents and repo is None:
-        raise typer.BadParameter("pass --all or --repo <alias>")
-    outcomes = agent_install_mod.update_many(
-        _here(project),
-        repo_alias=repo,
-        only_outdated=only_outdated,
-        force=force,
-    )
-    for o in outcomes:
-        typer.echo(f"{o['status']:>12}  {o['qualified_name']}  {o['detail']}")
-    errors = [o for o in outcomes if o["status"] == "error"]
-    if errors:
-        raise typer.Exit(code=1)
+        raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
+    _run_bulk_update(agent_install_mod.update_many, project, repo, only_outdated, force)
 
 
 @subagent_app.command("remove")

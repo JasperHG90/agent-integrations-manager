@@ -25,6 +25,7 @@ Every AI coding assistant works better with the right context: project conventio
 ## Features
 
 - **Generate Karpathy-style `AGENTS.md`** — `init` writes a minimal, opinionated agent instruction file. Project-specific guidance lives in reusable rules, not in `AGENTS.md`.
+- **Share project-instruction archetypes** — base your `AGENTS.md` on a versioned archetype from any repo (`aim instructions use`), so a whole team starts from the same agent instructions while keeping their own rules layered on top.
 - **Install skills, agents, and rules from any repo** — register a git URL, browse the index, and install with per-artifact version pinning.
 - **Install MCP servers from the community registry** — search the public MCP registry and add servers to `.mcp.json` without hand-editing JSON.
 - **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, and rule.
@@ -75,7 +76,7 @@ Launch with no arguments and navigate the whole tool from the keyboard: the main
 Every action is also a scriptable command — `aim --help` lists them, command groups like `aim skill` expose their subcommands, and `aim doctor` audits drift across your projects.
 
 <p align="center">
-  <img src="assets/aim-demo.gif" alt="Running aim on the command line: the top-level help, the aim skill command group, and an aim doctor health audit" width="820">
+  <img src="assets/aim-demo.gif" alt="Running aim on the command line: the top-level help, the aim skill and aim instructions command groups, and an aim doctor health audit" width="820">
 </p>
 
 ### Lock &amp; sync
@@ -109,21 +110,27 @@ aim init path/to/project
 aim repo add anthropic https://github.com/anthropics/skills
 aim repo add 0xforai https://github.com/0xforai/agents
 
-# 4. Search and install skills, agents, or rules.
+# 4. Search, inspect, and install skills, sub-agents, or rules.
 aim skill search review
+aim skill view anthropic/code-review        # print the source before installing
 aim skill install anthropic/code-review
-aim agent search angular
-aim agent install 0xforai/angular-expert
+aim subagent search angular
+aim subagent install 0xforai/angular-expert
 
 # 5. Search and install an MCP server from the registry.
 aim mcp search fetch
 aim mcp install fetch
 
-# 6. Update or roll back safely later.
+# 6. Update one artifact, a whole repo, or everything; roll back safely.
 aim skill update anthropic/code-review
+aim skill update --all
 aim skill rollback anthropic/code-review
 
-# 7. Save a reusable project template.
+# 7. Base AGENTS.md on a shared instruction archetype from a repo.
+aim instructions list
+aim instructions use myorg/lean
+
+# 8. Save a reusable project template.
 aim profile save my-stack path/to/project
 aim init --template my-stack path/to/new-project
 ```
@@ -145,6 +152,8 @@ The global SQLite DB is a **cache**. The project's `manifest.json` is the **sour
 
 `init` scaffolds `AGENTS.md` with Karpathy's agent instructions. It is intentionally minimal: project-specific guidance goes into the rules library, not into `AGENTS.md`. Mirrors like `CLAUDE.md` or `GEMINI.md` are symlinks so a single source of truth stays in `AGENTS.md` and the rules stay reusable across projects.
 
+Instead of the built-in scaffold, you can base `AGENTS.md` on a **project-instruction archetype** — a versioned `instructions/<name>/` directory (holding `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `OPENCODE.md`) published in a registered repo. `aim instructions use <alias>/<name>` (or `aim init --instructions <alias>/<name>`) pins the archetype as your base, and `aim sync` re-renders `AGENTS.md` from it while still layering your own rules on top. A governance policy can restrict which archetypes are allowed.
+
 ### Skill and agent discovery
 
 A registered repo can expose skills, agents, and rules in **any** location. `aim` discovers:
@@ -152,6 +161,7 @@ A registered repo can expose skills, agents, and rules in **any** location. `aim
 - Any `SKILL.md` file anywhere in the repo. The skill name is its parent directory; a bare `SKILL.md` at the repo root uses the repo alias as its name.
 - Any `AGENT.md` file anywhere in the repo, plus flat `<name>.md` files inside any `agents/` directory. The agent name follows the same rules as skills.
 - Any `.md` file whose stem is a valid rule name anywhere in the repo. Common documentation names like `README.md` or `license.md` are ignored.
+- Any `instructions/<name>/` (or `.aim/instructions/<name>/`) directory holding a standard instruction file, surfaced as a selectable project-instruction archetype. Unlike the others, archetypes are never discovered at the repo root.
 
 If the same name appears in multiple places, the shallower path wins. At the same depth, canonical `skills/`, `agents/`, and `rules/` prefixes win over `.claude/` and arbitrary paths, so existing convention-based repos keep working. Ties otherwise break by lexicographic path. Artifacts are referenced everywhere as `<repo_alias>/<name>`. Repos with no discoverable artifacts are rejected on `repo add` unless you pass `--allow-empty`.
 
