@@ -278,8 +278,8 @@ LLM). With both on, the screen **gates** the judge: a screen hit (a verdict at o
 through to the judge — so an injection hit never shows up among the judge's rule findings.
 
 ```sh
-pip install 'agent-init[risk]'        # local injection/jailbreak screen
-pip install 'agent-init[risk-judge]'  # DSPy rule judge
+uv tool install 'aim[risk] @ git+https://github.com/JasperHG90/agent-integrations-manager.git'        # local injection/jailbreak screen
+uv tool install 'aim[risk-judge] @ git+https://github.com/JasperHG90/agent-integrations-manager.git'  # DSPy rule judge
 ```
 
 Verdicts are cached by content hash (so re-scans are deterministic and `sync` doesn't re-judge

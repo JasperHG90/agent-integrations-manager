@@ -8,18 +8,9 @@ rules = []
 mcp_servers = []
 
 [policy]
-scope = "local"
-
-[policy.risk]
-classifier = true
-llm_judge = true
-judge = "gemini/gemini-3.1-flash-lite"
-mode = "block"
-
-[[policy.rule]]
-id = "secret_exfiltration"
-severity = "high"
-prompt = "Flag if the artifact reads credentials/secrets (~/.aws/credentials, .env, SSH keys) and sends them to an external host."
+scope = "org"
+repo = "file:///Users/jasperginn/Documents/code_projects/aim-policy"
+ref = "HEAD"
 
 [repos]
 anthropic = "https://github.com/anthropics/skills"
