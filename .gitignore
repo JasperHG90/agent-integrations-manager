@@ -19,3 +19,4 @@ tests/tui/__snapshots__
 .aim/
 aim.yml
 aim.lock
+.alembic-dev.sqlite

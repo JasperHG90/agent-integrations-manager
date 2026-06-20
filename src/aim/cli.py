@@ -21,6 +21,7 @@ from aim.core import agent_install as agent_install_mod
 from aim.core import agents as agents_mod
 from aim.core import agents_md as agents_md_mod
 from aim.core import content_guard as content_guard_mod
+from aim.core import db as db_mod
 from aim.core import declarations as declarations_mod
 from aim.core import doctor as doctor_mod
 from aim.core import format as format_mod
@@ -52,10 +53,12 @@ rule_app = typer.Typer(no_args_is_help=True, help="Discover and manage repo-sour
 repo_app = typer.Typer(no_args_is_help=True, help="Manage skill/agent/rule source repositories.")
 skill_app = typer.Typer(no_args_is_help=True, help="Discover and manage skills.")
 subagent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
+db_app = typer.Typer(no_args_is_help=True, help="Maintain the global cache database.")
 app.add_typer(rule_app, name="rule")
 app.add_typer(repo_app, name="repo")
 app.add_typer(skill_app, name="skill")
 app.add_typer(subagent_app, name="subagent")
+app.add_typer(db_app, name="db")
 
 
 from aim.core import manifest as manifest_mod  # noqa: E402
@@ -180,6 +183,17 @@ def _friendly(fn: Callable[..., Any]) -> Callable[..., Any]:
             raise typer.Exit(code=1) from exc
         except _FRIENDLY_ERRORS as exc:
             typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except Exception as exc:
+            # A leftover "database is locked" (e.g. another aim/TUI process holds it)
+            # gets a clean, actionable message instead of a raw SQLAlchemy traceback.
+            if not db_mod.is_locked_error(exc):
+                raise
+            Console(stderr=True).print(
+                "[bold red]error:[/bold red] the aim database is locked — another aim "
+                "or TUI process may be running.\n"
+                "  close it and retry, or run [bold]aim db unlock[/bold] to recover."
+            )
             raise typer.Exit(code=1) from exc
         finally:
             # Surface buffered warnings from any deploy path (add/update/rollback/
@@ -1141,8 +1155,12 @@ def sync_cmd(
     ),
 ) -> None:
     """Reproduce the committed project state from aim.lock.toml."""
+    console = Console()
 
-    async def _run() -> sync_mod.SyncResult:
+    async def _run(status: Any) -> sync_mod.SyncResult:
+        def _progress(kind: str, name: str, state: str) -> None:
+            status.update(f"{kind} {name}: {state}")
+
         return await sync_mod.run(
             sync_mod.SyncOptions(
                 project_root=_here(project),
@@ -1150,10 +1168,12 @@ def sync_cmd(
                 sync_agents=not no_sync_agents,
                 layout_profile=layout_profile,
                 allow_insecure=_get_allow_insecure(ctx),
+                progress_callback=_progress,
             )
         )
 
-    result = asyncio.run(_run())
+    with console.status("Syncing...", spinner="dots") as status:
+        result = asyncio.run(_run(status))
     for qn in result.synced_skills:
         typer.echo(f"synced skill {qn}")
     for qn in result.synced_agents:
@@ -1162,6 +1182,19 @@ def sync_cmd(
         typer.echo(f"synced mcp {alias}")
     for warn in result.drift_warnings:
         typer.echo(f"warning: {warn}", err=True)
+
+
+@db_app.command("unlock")
+@_friendly
+def db_unlock() -> None:
+    """Recover the global cache database after a "database is locked" failure.
+
+    Checkpoints the write-ahead log to release WAL state. If another aim or TUI
+    process is actively holding the database, this reports that instead — close that
+    process and retry.
+    """
+    for action in db_mod.unlock():
+        typer.echo(action)
 
 
 @app.command("prune")

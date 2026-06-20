@@ -33,6 +33,12 @@ from aim.core.models import (  # noqa: F401
 _engine: Engine | None = None
 _engine_lock = threading.Lock()
 
+# Alembic migration scripts ship inside the package; built into a Config at runtime.
+_MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+# The baseline revision (full schema as of Alembic adoption); pre-Alembic DBs are
+# stamped here after the column bridge so later revisions apply cleanly.
+_BASELINE_REVISION = "4ce213945fbd"
+
 
 def get_engine(db_path: Path | None = None) -> Engine:
     """Return the process-wide SQLite engine, creating it once on first use.
@@ -74,8 +80,7 @@ def get_engine(db_path: Path | None = None) -> Engine:
         # connections inherit it.
         with engine.connect() as conn:
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-        SQLModel.metadata.create_all(engine)
-        _migrate_schema(engine)
+        _run_migrations(engine)
         _engine = engine
         return _engine
 
@@ -91,27 +96,78 @@ def _set_sqlite_pragmas(dbapi_conn: object, _record: object) -> None:
         _record: The pool's connection record (unused).
     """
     cursor = dbapi_conn.cursor()  # type: ignore[attr-defined]
-    cursor.execute("PRAGMA busy_timeout=5000")
+    # 30s matches the DBAPI connect timeout: a writer blocked by another process
+    # (e.g. a second aim/TUI instance) waits instead of failing immediately.
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 
-def _migrate_schema(engine: Engine) -> None:
-    """Apply additive schema migrations to bring the DB up to the model.
+def _alembic_config(connection: object) -> object:
+    """Build a programmatic Alembic Config bound to a live connection.
 
-    `SQLModel.metadata.create_all` only creates *missing tables*; it never
-    ALTERs an existing one to add a new column. When fields are added to an
-    ORM model the next `aim` run against an older DB crashes with
-    `no such column: ...`. Walk each model table, diff against the live
-    SQLite schema, and `ALTER TABLE ADD COLUMN` for anything missing. Safe
-    only for additive changes (new column must be nullable or have a default).
+    Avoids any on-disk `alembic.ini` at runtime (the repo's ini is dev-time only).
+    The connection is injected so migrations reuse the WAL/busy-timeout engine.
 
     Args:
-        engine: The live engine whose database is reconciled with the models.
+        connection: The SQLAlchemy connection migrations should run on.
+
+    Returns:
+        A configured Alembic `Config`.
+    """
+    from alembic.config import Config
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+    cfg.attributes["connection"] = connection
+    return cfg
+
+
+def _run_migrations(engine: Engine) -> None:
+    """Bring the database schema to head via Alembic.
+
+    Three cases:
+    - Fresh DB (no tables, no Alembic version): `upgrade head` runs the baseline
+      revision, which creates every table.
+    - Pre-Alembic DB (tables created by the old `create_all`, no version row): add
+      any baseline columns the tables predate (the one-time bridge for ancient DBs),
+      then `stamp` the baseline so future revisions apply, then `upgrade head`.
+    - Managed DB (already has an Alembic version): `upgrade head` applies new
+      revisions only.
+
+    Args:
+        engine: The live, WAL-configured engine.
+    """
+    from alembic import command
+    from alembic.runtime.migration import MigrationContext
+    from sqlalchemy import inspect
+
+    with engine.begin() as connection:
+        current = MigrationContext.configure(connection).get_current_revision()
+        legacy = current is None and inspect(connection).has_table("registeredrepo")
+        if legacy:
+            _bridge_pre_alembic_columns(connection)
+    with engine.connect() as connection:
+        cfg = _alembic_config(connection)
+        if legacy:
+            command.stamp(cfg, _BASELINE_REVISION)
+        command.upgrade(cfg, "head")
+
+
+def _bridge_pre_alembic_columns(connection: object) -> None:
+    """Add any model columns missing from already-existing tables (legacy bridge).
+
+    Only runs once, when adopting Alembic on a database the old `create_all`-based
+    code built. It does NOT create tables — that is Alembic's job — it only reconciles
+    columns so stamping the baseline is honest (e.g. a skillindex predating
+    `prereqs`/`provides`). Additive only: new columns must be nullable or defaulted.
+
+    Args:
+        connection: An open connection inside a transaction.
     """
     from sqlalchemy import inspect, text
 
-    inspector = inspect(engine)
+    inspector = inspect(connection)
     for table in SQLModel.metadata.sorted_tables:
         if not inspector.has_table(table.name):
             continue
@@ -119,7 +175,7 @@ def _migrate_schema(engine: Engine) -> None:
         for column in table.columns:
             if column.name in live_cols:
                 continue
-            col_type = column.type.compile(dialect=engine.dialect)
+            col_type = column.type.compile(dialect=connection.dialect)  # type: ignore[attr-defined]
             null_clause = "" if column.nullable else " NOT NULL"
             default_clause = ""
             default = getattr(column.default, "arg", None)
@@ -132,12 +188,12 @@ def _migrate_schema(engine: Engine) -> None:
                 default_clause = f" DEFAULT '{escaped}'"
             elif column.nullable:
                 default_clause = " DEFAULT NULL"
-            stmt = (
-                f"ALTER TABLE {table.name} ADD COLUMN "
-                f"{column.name} {col_type}{default_clause}{null_clause}"
+            connection.execute(  # type: ignore[attr-defined]
+                text(
+                    f"ALTER TABLE {table.name} ADD COLUMN "
+                    f"{column.name} {col_type}{default_clause}{null_clause}"
+                )
             )
-            with engine.begin() as conn:
-                conn.execute(text(stmt))
 
 
 def reset_engine() -> None:
@@ -146,6 +202,48 @@ def reset_engine() -> None:
     if _engine is not None:
         _engine.dispose()
     _engine = None
+
+
+def is_locked_error(exc: BaseException) -> bool:
+    """Return whether an exception is a SQLite "database is locked" failure."""
+    return "database is locked" in str(exc).lower()
+
+
+def unlock() -> list[str]:
+    """Recover a wedged database by checkpointing the write-ahead log.
+
+    Drops this process's pooled connections, then opens a dedicated short-lived
+    connection (bypassing the engine pool) and runs a truncating WAL checkpoint to
+    fold the `-wal` file back into the main database and release WAL state. Safe to
+    run anytime — it never force-deletes sidecar files, which could corrupt a database
+    another process is using. A checkpoint that stays busy means another live process
+    holds the database; the failsafe reports that instead of pretending it unlocked.
+
+    Returns:
+        Human-readable descriptions of the actions taken, for the CLI to print.
+    """
+    import sqlite3
+
+    path = paths.db_path()
+    if not path.exists():
+        return [f"no database at {path}; nothing to unlock"]
+    actions = ["closed this process's database connections"]
+    reset_engine()
+    try:
+        conn = sqlite3.connect(str(path), timeout=30)
+        try:
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as exc:
+        actions.append(f"checkpoint failed ({exc}); another process is holding the database")
+        return actions
+    if row and row[0] == 1:  # (busy, log_pages, checkpointed_pages)
+        actions.append("checkpoint is blocked — another process is holding the database")
+    else:
+        actions.append("checkpointed the write-ahead log; the database is unlocked")
+    return actions
 
 
 _session_lock = threading.RLock()
