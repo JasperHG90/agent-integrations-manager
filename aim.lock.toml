@@ -90,6 +90,71 @@ content_hash = "2b53ad36e3d92d5429c1386e867a3db7f2b1d10c399be169e992be3ac73d087a
 sha = "cc37bfdd292ce520ba1c44df7a3a70d5f8137236"
 installed_at = "2026-06-20T05:49:52.048842Z"
 
+[[skill]]
+qualified_name = "jasperhg90/pageindex"
+repo_alias = "jasperhg90"
+repo_url = "https://github.com/JasperHG90/skills"
+source_path = "skills/tools/pageindex"
+target_dir = ".claude/skills/pageindex"
+history = []
+content_hash = "2bd803b32799dd81fdae0b92776ca4a91340ce096b81ac36ae45a77f20704007"
+
+[skill.current]
+sha = "516c105a9d8260c80a9d1fd8cb4004fe22a74225"
+installed_at = "2026-06-20T20:30:15.201703Z"
+
+[[skill]]
+qualified_name = "jasperhg90/doc-write"
+repo_alias = "jasperhg90"
+repo_url = "https://github.com/JasperHG90/skills"
+source_path = "skills/documentation/doc-write"
+target_dir = ".claude/skills/doc-write"
+history = []
+content_hash = "3a0386265d011ddf80b85ebeaf323eb8722a76fe9bae1bae80473e1c4a736c31"
+
+[skill.current]
+sha = "1d92f60fed5599f0f04bbcfe72733b0aa60be7c8"
+installed_at = "2026-06-20T20:30:03.279269Z"
+
+[[skill]]
+qualified_name = "jasperhg90/manifesto"
+repo_alias = "jasperhg90"
+repo_url = "https://github.com/JasperHG90/skills"
+source_path = "skills/architecture/manifesto"
+target_dir = ".claude/skills/manifesto"
+history = []
+content_hash = "5906935b4b3fb44b2d113018526590b3337969fb20a0710c414b7824bf7b4bcb"
+
+[skill.current]
+sha = "516c105a9d8260c80a9d1fd8cb4004fe22a74225"
+installed_at = "2026-06-20T20:30:13.415756Z"
+
+[[skill]]
+qualified_name = "jasperhg90/release"
+repo_alias = "jasperhg90"
+repo_url = "https://github.com/JasperHG90/skills"
+source_path = "skills/ops/release"
+target_dir = ".claude/skills/release"
+history = []
+content_hash = "27551a57c8a8a9fe0af1187309890b747231c3f1bde802d984ce8e5c7ad145a5"
+
+[skill.current]
+sha = "1d92f60fed5599f0f04bbcfe72733b0aa60be7c8"
+installed_at = "2026-06-20T20:30:25.598403Z"
+
+[[skill]]
+qualified_name = "jasperhg90/terminal-gif"
+repo_alias = "jasperhg90"
+repo_url = "https://github.com/JasperHG90/skills"
+source_path = "skills/documentation/terminal-gif"
+target_dir = ".claude/skills/terminal-gif"
+history = []
+content_hash = "599a57b4fa4629c81fd9d53b3f7c6617b230fab04cd9dde33d318bb0c1756711"
+
+[skill.current]
+sha = "516c105a9d8260c80a9d1fd8cb4004fe22a74225"
+installed_at = "2026-06-20T20:30:28.284025Z"
+
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"
 repo_alias = "0xfurai"

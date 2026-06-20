@@ -1,4 +1,4 @@
-manifest_version = 4
+manifest_version = 5
 instruction_template = "default"
 layout_profile = "claude"
 symlinks = [
@@ -27,6 +27,7 @@ balukosuri = "https://github.com/balukosuri/Andrej-Karpathy-s-Autoresearch-As-a-
 bencium-marketplace = "https://github.com/bencium/bencium-marketplace"
 0xfurai = "https://github.com/0xfurai/claude-code-subagents"
 wshobson = "https://github.com/wshobson/agents/"
+jasperhg90 = "https://github.com/JasperHG90/skills"
 
 [[skill]]
 qualified_name = "anthropic/skill-creator"
@@ -63,6 +64,36 @@ qualified_name = "wshobson/workflow-patterns"
 repo_alias = "wshobson"
 source_path = "plugins/conductor/skills/workflow-patterns"
 target_dir = ".claude/skills/workflow-patterns"
+
+[[skill]]
+qualified_name = "jasperhg90/pageindex"
+repo_alias = "jasperhg90"
+source_path = "skills/tools/pageindex"
+target_dir = ".claude/skills/pageindex"
+
+[[skill]]
+qualified_name = "jasperhg90/doc-write"
+repo_alias = "jasperhg90"
+source_path = "skills/documentation/doc-write"
+target_dir = ".claude/skills/doc-write"
+
+[[skill]]
+qualified_name = "jasperhg90/manifesto"
+repo_alias = "jasperhg90"
+source_path = "skills/architecture/manifesto"
+target_dir = ".claude/skills/manifesto"
+
+[[skill]]
+qualified_name = "jasperhg90/release"
+repo_alias = "jasperhg90"
+source_path = "skills/ops/release"
+target_dir = ".claude/skills/release"
+
+[[skill]]
+qualified_name = "jasperhg90/terminal-gif"
+repo_alias = "jasperhg90"
+source_path = "skills/documentation/terminal-gif"
+target_dir = ".claude/skills/terminal-gif"
 
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"
