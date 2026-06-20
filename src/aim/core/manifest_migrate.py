@@ -194,6 +194,23 @@ def _v9_to_v10(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v10_to_v11(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v10 manifest forward to v11.
+
+    v11 adds the optional locked instruction archetype. Additive only — absence
+    means the project's AGENTS.md uses the built-in instruction template.
+
+    Args:
+        raw: The decoded manifest mapping at version 10.
+
+    Returns:
+        The same mapping, mutated in place, stamped at version 11.
+    """
+    raw.setdefault("instruction_archetype", None)
+    raw["manifest_version"] = 11
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
@@ -205,6 +222,7 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     7: _v7_to_v8,
     8: _v8_to_v9,
     9: _v9_to_v10,
+    10: _v10_to_v11,
 }
 
 

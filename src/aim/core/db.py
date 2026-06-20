@@ -21,6 +21,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from aim.core import paths
 from aim.core.models import (  # noqa: F401
     AgentIndex,
+    ArchetypeIndex,
     GlobalSetting,
     LayoutProfile,
     McpServerCache,

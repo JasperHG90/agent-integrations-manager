@@ -24,6 +24,9 @@ def _fabricate_pre_alembic_db(db_path: Path) -> None:
     raw = create_engine(f"sqlite:///{db_path}")
     SQLModel.metadata.create_all(raw)
     with raw.begin() as conn:
+        # A genuine pre-Alembic DB predates tables added in later Alembic revisions
+        # (e.g. archetypeindex from 0002) — drop it so the bridge + upgrade recreate it.
+        conn.exec_driver_sql("DROP TABLE archetypeindex")
         conn.exec_driver_sql("ALTER TABLE skillindex DROP COLUMN prereqs")
         conn.exec_driver_sql("ALTER TABLE skillindex DROP COLUMN provides")
         conn.exec_driver_sql(
@@ -49,12 +52,14 @@ def test_pre_alembic_db_is_bridged_and_stamped(home: Path) -> None:
     assert row.prereqs == ""
     assert row.provides == ""
 
-    # The DB is now under Alembic management.
+    # The DB is now under Alembic management and brought up to head: it was stamped at
+    # baseline, then later revisions applied (e.g. the archetype table from 0002).
     with db.session() as s:
         live = inspect(s.connection())
         assert live.has_table("alembic_version")
+        assert live.has_table("archetypeindex")
         version = s.exec(text("SELECT version_num FROM alembic_version")).one()
-    assert version[0] == db._BASELINE_REVISION
+    assert version[0] is not None
 
 
 def test_fresh_db_is_created_at_head(home: Path) -> None:

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ from aim import __version__
 from aim.core import agent_install as agent_install_mod
 from aim.core import agents as agents_mod
 from aim.core import agents_md as agents_md_mod
+from aim.core import archetype_install as archetype_install_mod
+from aim.core import archetypes as archetypes_mod
 from aim.core import content_guard as content_guard_mod
 from aim.core import db as db_mod
 from aim.core import declarations as declarations_mod
@@ -53,11 +56,15 @@ rule_app = typer.Typer(no_args_is_help=True, help="Discover and manage repo-sour
 repo_app = typer.Typer(no_args_is_help=True, help="Manage skill/agent/rule source repositories.")
 skill_app = typer.Typer(no_args_is_help=True, help="Discover and manage skills.")
 subagent_app = typer.Typer(no_args_is_help=True, help="Discover and manage sub-agents.")
+archetype_app = typer.Typer(
+    no_args_is_help=True, help="Discover and select project-instruction archetypes."
+)
 db_app = typer.Typer(no_args_is_help=True, help="Maintain the global cache database.")
 app.add_typer(rule_app, name="rule")
 app.add_typer(repo_app, name="repo")
 app.add_typer(skill_app, name="skill")
 app.add_typer(subagent_app, name="subagent")
+app.add_typer(archetype_app, name="archetype")
 app.add_typer(db_app, name="db")
 
 
@@ -80,6 +87,8 @@ _FRIENDLY_ERRORS: tuple[type[Exception], ...] = (
     rule_install_mod.RuleLocalEditsError,
     rule_install_mod.RuleNoHistoryToRollbackError,
     repo_rules_mod.RuleNotIndexedError,
+    archetypes_mod.ArchetypeNotIndexedError,
+    archetype_install_mod.NoArchetypeSelectedError,
     content_guard_mod.InsecureTransportError,
     content_guard_mod.HiddenUnicodeError,
     policy_mod.PolicyViolationError,
@@ -1055,6 +1064,31 @@ def _maybe_setup_policy(root: Path, policy_url: str | None, local_policy: bool) 
         typer.echo(f"bound org policy {resolved.policy.name!r}")
 
 
+def _prompt_instructions() -> str | None:
+    """Interactively choose a project-instruction archetype, or the built-in template.
+
+    Returns:
+        The chosen archetype's qualified name, `init_mod.BUILTIN_INSTRUCTIONS` for the
+        built-in template, or None when no archetypes are available to choose from.
+    """
+    rows = archetypes_mod.list_archetypes()
+    if not rows:
+        return None
+    typer.echo("Choose project instructions:")
+    typer.echo("  0) built-in template (default)")
+    for index, row in enumerate(rows, start=1):
+        suffix = f" — {row.title}" if row.title else ""
+        typer.echo(f"  {index}) {row.qualified_name}{suffix}")
+    selection = typer.prompt("Selection", default="0")
+    try:
+        chosen = int(selection)
+    except ValueError:
+        chosen = 0
+    if 1 <= chosen <= len(rows):
+        return rows[chosen - 1].qualified_name
+    return init_mod.BUILTIN_INSTRUCTIONS
+
+
 @app.command("init")
 @_friendly
 def init_cmd(
@@ -1070,6 +1104,11 @@ def init_cmd(
     layout_profile: str | None = typer.Option(
         None, "--profile", help="Layout profile to use (overrides manifest)."
     ),
+    instructions: str | None = typer.Option(
+        None,
+        "--instructions",
+        help="Instruction archetype '<alias>/<name>', or 'builtin' for the default template.",
+    ),
     policy_url: str | None = typer.Option(
         None, "--policy", help="Bind to this org governance policy repo."
     ),
@@ -1082,11 +1121,15 @@ def init_cmd(
     Rules are repo-sourced; add them after init with `aim rule add <git-url> <name>`.
     """
     root = _here(project)
+    chosen = instructions
+    if chosen is None and sys.stdin.isatty() and sys.stdout.isatty():
+        chosen = _prompt_instructions()
     options = init_mod.InitOptions(
         project_root=root,
         instruction_template=instruction_template,
         symlinks=tuple(symlink),
         layout_profile=layout_profile,
+        instruction_archetype=chosen,
     )
     result = init_mod.run(options)
     _maybe_setup_policy(root, policy_url, local_policy)
@@ -1466,6 +1509,109 @@ def rule_rollback(
     """Restore the previous installed version of a rule."""
     rolled = rule_install_mod.rollback(_here(project), qualified_name, force=force)
     typer.echo(f"rolled back rule {qualified_name} -> {rolled.current.identifier()}")
+
+
+# ---------- archetype (project-instruction archetypes) ----------
+
+
+@archetype_app.command("list")
+@_friendly
+def archetype_list(
+    ctx: typer.Context,
+    repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+) -> None:
+    """List indexed project-instruction archetypes."""
+    rows = archetypes_mod.list_archetypes(repo)
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title="archetypes indexed",
+        columns=["qualified_name", "repo_alias", "available", "title", "description"],
+        compact_columns=["qualified_name", "available", "title"],
+    )
+
+
+@archetype_app.command("search")
+@_friendly
+def archetype_search(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="Substring to match."),
+) -> None:
+    """Search indexed archetypes by substring."""
+    rows = archetypes_mod.search(query)
+    format_mod.render(
+        rows,
+        _get_format(ctx),
+        title=f"archetypes matching {query!r}",
+        columns=["qualified_name", "repo_alias", "available", "title", "description"],
+        compact_columns=["qualified_name", "available", "title"],
+    )
+
+
+@archetype_app.command("use")
+@_friendly
+def archetype_use(
+    ctx: typer.Context,
+    url: str = typer.Argument(
+        ...,
+        help="Git URL, or '<alias>/<name>' of an archetype in an already-registered repo.",
+    ),
+    name: str | None = typer.Argument(
+        None, help="Archetype name within the repo (inferred from a tree URL if omitted)."
+    ),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    alias: str | None = typer.Option(
+        None, "--alias", help="Repo alias to register under (default: derived from the URL)."
+    ),
+    pin: str | None = typer.Option(
+        None, "--pin", help="Pin to an exact tag/sha; update never advances past it."
+    ),
+    track: str | None = typer.Option(
+        None, "--track", help="Ref to track on update (branch, tag, or 'latest-tag')."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Register the source repo without prompting."
+    ),
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Select despite a risk block (unless policy forbids it)."
+    ),
+) -> None:
+    """Select an instruction archetype as this project's AGENTS.md base."""
+    qualified_name = _qualified_for_add(ctx, url, name, alias, "archetype", assume_yes=yes)
+    root = _here(project)
+    risk_mod.prewarm(root)
+    with _scanning(f"Scanning {qualified_name}…"):
+        installed = archetype_install_mod.select(
+            root, qualified_name, pin=pin, track=track, override_risk=override_risk
+        )
+    typer.echo(f"using instruction archetype {qualified_name} {installed.current.identifier()}")
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
+
+
+@archetype_app.command("update")
+@_friendly
+def archetype_update(
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Update despite a risk block (unless policy forbids it)."
+    ),
+) -> None:
+    """Re-resolve the selected archetype to its tracked ref and re-render AGENTS.md."""
+    updated = archetype_install_mod.update(_here(project), override_risk=override_risk)
+    typer.echo(
+        f"updated instruction archetype {updated.qualified_name} -> {updated.current.identifier()}"
+    )
+
+
+@archetype_app.command("clear")
+@_friendly
+def archetype_clear(
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
+) -> None:
+    """Clear the selected archetype, reverting AGENTS.md to the built-in template."""
+    archetype_install_mod.clear(_here(project))
+    typer.echo("cleared instruction archetype; using the built-in template")
 
 
 @repo_app.command("add")

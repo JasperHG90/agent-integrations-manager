@@ -30,6 +30,8 @@ def kind_tag(kinds: set[str]) -> str:
         parts.append("subagents")
     if "rules" in kinds:
         parts.append("rules")
+    if "archetype" in kinds:
+        parts.append("archetypes")
     return " + ".join(parts) if parts else "—"
 
 

@@ -135,11 +135,30 @@ def write_agent_files(
     assert isinstance(m, Manifest)
 
     applied = [repo_rules.render_rule(r) for r in m.rules]
-    fresh_regions_canonical = _render_regions(
+    canonical_regions = _render_regions(
         m.instruction_template,
         applied,
         rules_mode=profile.rules_mode,
     )
+
+    # A selected archetype supplies its own AGENTS.md prose (read at the pinned SHA);
+    # only aim's dynamic `rules` region is merged into it. Without an archetype, the
+    # built-in template's full region set is used as before.
+    archetype_base: str | None = None
+    if m.instruction_archetype is not None:
+        from aim.core import archetypes as archetypes_mod
+
+        installed_archetype = m.instruction_archetype
+        archetype_base = archetypes_mod.read_base_body(
+            installed_archetype.repo_alias,
+            installed_archetype.current.sha,
+            installed_archetype.source_path,
+        )
+        fresh_regions = (
+            {"rules": canonical_regions["rules"]} if "rules" in canonical_regions else {}
+        )
+    else:
+        fresh_regions = canonical_regions
 
     drift_warnings: list[str] = []
     agents_path = project_root / profile.agents_md
@@ -149,7 +168,9 @@ def write_agent_files(
         drift_warnings.extend(
             _detect_region_drift(agents_path.name, existing, m.managed_region_hashes)
         )
-        merged = agents_md.merge(existing, fresh_regions_canonical)
+        merged = agents_md.merge(existing, fresh_regions)
+    elif archetype_base is not None:
+        merged = agents_md.merge(archetype_base, fresh_regions)
     else:
         merged = _render_for_template(
             m.instruction_template,

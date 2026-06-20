@@ -101,7 +101,26 @@ class McpServerCache(SQLModel, table=True):  # type: ignore[call-arg]
     fetched_at: datetime
 
 
-CURRENT_DECLARATIONS_VERSION = 4  # v4 adds the [policy] governance table
+class ArchetypeIndex(SQLModel, table=True):  # type: ignore[call-arg]
+    """A discovered project-instruction archetype within a registered repo.
+
+    An archetype is a directory (never the repo root) holding one or more standard
+    instruction files (AGENTS.md / CLAUDE.md / GEMINI.md / OPENCODE.md). It is a
+    selectable base for a project's AGENTS.md, used by `archetype list/search/use`.
+    """
+
+    qualified_name: str = SQLField(primary_key=True)  # "<alias>/<archetype_name>"
+    repo_alias: str = SQLField(index=True)
+    archetype_name: str = SQLField(index=True)
+    source_path: str  # path of the archetype DIRECTORY relative to repo root
+    instruction_path: str  # path of the chosen base instruction file (e.g. .../AGENTS.md)
+    available: str = ""  # CSV of standard filenames present, e.g. "AGENTS.md,CLAUDE.md"
+    title: str | None = None
+    description: str | None = None
+    indexed_at_sha: str
+
+
+CURRENT_DECLARATIONS_VERSION = 5  # v5 adds the [instruction_archetype] selection
 
 
 class DeclaredRepo(BaseModel):
@@ -163,6 +182,22 @@ class DeclaredMcpServer(BaseModel):
     overrides: dict[str, object] = Field(default_factory=dict)
 
 
+class DeclaredArchetype(BaseModel):
+    """Declare the selected project-instruction archetype in `aim.toml`.
+
+    Singleton: a project uses at most one archetype as its AGENTS.md base. None
+    (the field absent) means the built-in instruction template is used instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<archetype_name>"
+    repo_alias: str
+    source_path: str  # the chosen base instruction file, relative to repo root
+    track: str | None = None
+    pin: str | None = None
+
+
 class ProjectDeclarations(BaseModel):
     """User-editable project state stored in `aim.toml`."""
 
@@ -170,6 +205,8 @@ class ProjectDeclarations(BaseModel):
 
     manifest_version: int = CURRENT_DECLARATIONS_VERSION
     instruction_template: str = "default"
+    # Selected instruction archetype (repo-sourced AGENTS.md base). None = built-in.
+    instruction_archetype: DeclaredArchetype | None = None
     layout_profile: str | None = None
     symlinks: list[str] = Field(default_factory=list)
     rules: list[DeclaredRule] = Field(default_factory=list)
@@ -184,7 +221,7 @@ class ProjectDeclarations(BaseModel):
     mcp_servers: list[DeclaredMcpServer] = Field(default_factory=list)
 
 
-CURRENT_MANIFEST_VERSION = 10  # v10: pin the org policy commit SHA (policy_ref)
+CURRENT_MANIFEST_VERSION = 11  # v11: pin the selected instruction archetype
 HISTORY_CAP = 10
 
 
@@ -327,6 +364,33 @@ class InstalledRule(BaseModel):
             del self.history[HISTORY_CAP:]
 
 
+class InstalledArchetype(BaseModel):
+    """The locked project-instruction archetype recorded in `aim.lock.toml`.
+
+    Singleton: pins the chosen base instruction file to a commit and content hash so
+    `sync` can reproduce the project's AGENTS.md base deterministically.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<archetype_name>" at select time
+    repo_alias: str
+    repo_url: str
+    source_path: str  # the base instruction file inside the source repo
+    current: SkillVersion
+    history: list[SkillVersion] = Field(default_factory=list)
+    content_hash: str | None = None  # sha256 of the installed base body (drift detection)
+    pin: str | None = None
+    track: str | None = None
+
+    def push_history(self, new_current: SkillVersion) -> None:
+        """Promote new_current to current, pushing the old one onto capped history."""
+        self.history.insert(0, self.current)
+        self.current = new_current
+        if len(self.history) > HISTORY_CAP:
+            del self.history[HISTORY_CAP:]
+
+
 class RenderRule(BaseModel):
     """Render-time view of a rule body, consumed by the AGENTS.md template
     (which references `.name`, `.description`, `.body`). Not persisted."""
@@ -343,6 +407,8 @@ class Manifest(BaseModel):
 
     manifest_version: int = CURRENT_MANIFEST_VERSION
     instruction_template: str = "default"
+    # Locked instruction archetype (repo-sourced AGENTS.md base). None = built-in.
+    instruction_archetype: InstalledArchetype | None = None
     skills: list[InstalledSkill] = Field(default_factory=list)
     agents: list[InstalledAgent] = Field(default_factory=list)
     mcp_servers: list[InstalledMcpServer] = Field(default_factory=list)

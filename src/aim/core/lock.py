@@ -39,10 +39,12 @@ from aim.core import (
 )
 from aim.core.models import (
     DeclaredAgent,
+    DeclaredArchetype,
     DeclaredMcpServer,
     DeclaredRule,
     DeclaredSkill,
     InstalledAgent,
+    InstalledArchetype,
     InstalledMcpServer,
     InstalledRule,
     InstalledSkill,
@@ -451,6 +453,54 @@ def _read_rule_at_sha(rule: DeclaredRule, sha: str) -> str:
     return git.get_backend().cat_file(repo_dir, sha, rule.source_path)
 
 
+def _resolve_archetype_version(declared: DeclaredArchetype) -> SkillVersion:
+    """Resolve a declared archetype's pin/track to a concrete SkillVersion."""
+    repo_dir = repos.clone_dir(declared.repo_alias)
+    sha = _resolve_ref_cached(repo_dir, declared.pin or declared.track or "HEAD")
+    return SkillVersion(tag=declared.pin, sha=sha, installed_at=datetime.now(UTC))
+
+
+def _lock_archetype(
+    declared: DeclaredArchetype, cached: InstalledArchetype | None = None
+) -> tuple[InstalledArchetype | None, str | None]:
+    """Lock the declared instruction archetype to a concrete InstalledArchetype.
+
+    Args:
+        declared: Declared archetype to resolve and hash.
+        cached: Prior installed archetype from an existing lockfile, if any.
+
+    Returns:
+        An `(InstalledArchetype, None)` pair on success, or `(None, error message)`.
+    """
+    try:
+        version = _resolve_archetype_version(declared)
+        if (
+            cached is not None
+            and cached.current.sha == version.sha
+            and cached.source_path == declared.source_path
+        ):
+            content_hash = cached.content_hash
+        else:
+            repo_dir = repos.clone_dir(declared.repo_alias)
+            content = git.get_backend().cat_file(repo_dir, version.sha, declared.source_path)
+            content_hash = hashing.hash_text(content)
+    except Exception as exc:
+        return None, f"{declared.qualified_name}: {exc}"
+    return (
+        InstalledArchetype(
+            qualified_name=declared.qualified_name,
+            repo_alias=declared.repo_alias,
+            repo_url=repos.get(declared.repo_alias).url,
+            source_path=declared.source_path,
+            current=version,
+            content_hash=content_hash,
+            pin=declared.pin,
+            track=declared.track,
+        ),
+        None,
+    )
+
+
 def _lock_rule(
     rule: DeclaredRule, cached: InstalledRule | None = None
 ) -> tuple[InstalledRule | None, str | None]:
@@ -626,6 +676,10 @@ def _compute_region_hashes(
 
     canonical = _render_for_agent(None)
     regions = {r.name: r.body for r in agents_md.parse(canonical)}
+    # With an archetype the base prose comes from the archetype, not the template, so
+    # only aim's dynamic `rules` region is managed inside AGENTS.md (matches the render).
+    if decl.instruction_archetype is not None:
+        regions = {"rules": regions["rules"]} if "rules" in regions else {}
     return {name: hashing.hash_text(body) for name, body in regions.items()}
 
 
@@ -793,6 +847,8 @@ def _enforce_policy(
         policy.assert_artifact_allowed(pol, "rule", r.qualified_name)
     for mcp in decl.mcp_servers:
         policy.assert_mcp_allowed(pol, mcp.alias, mcp.registry_name)
+    if decl.instruction_archetype is not None:
+        policy.assert_archetype_allowed(pol, decl.instruction_archetype.qualified_name)
     # Check the EFFECTIVE profile (the one the lockfile records), never the raw
     # possibly-None declaration, so an allow-list isn't bypassed by relying on the default.
     policy.assert_profile_allowed(pol, effective_profile)
@@ -865,6 +921,18 @@ async def run(options: LockOptions) -> LockResult:
     result.locked_mcp = [m.alias for m in mcps_locked]
     result.locked_rules = [r.qualified_name for r in rules_locked]
 
+    archetype_locked: InstalledArchetype | None = None
+    archetype_errors: list[str] = []
+    if decl.instruction_archetype is not None:
+        cached_archetype = (
+            None if options.force or existing is None else existing.instruction_archetype
+        )
+        archetype_locked, archetype_error = _lock_archetype(
+            decl.instruction_archetype, cached_archetype
+        )
+        if archetype_error is not None:
+            archetype_errors.append(archetype_error)
+
     # Region hashes depend on the locked rule bodies (read at their pinned
     # SHAs), so compute them after the rule lock — not concurrently — to avoid a
     # moving-HEAD race between the region hash and each rule's content_hash.
@@ -877,6 +945,7 @@ async def run(options: LockOptions) -> LockResult:
 
     lock = Manifest(
         instruction_template=decl.instruction_template,
+        instruction_archetype=archetype_locked,
         layout_profile=decl.layout_profile or profile.name,
         rules=rules_locked,
         symlinks=decl.symlinks,
@@ -897,7 +966,9 @@ async def run(options: LockOptions) -> LockResult:
     if not options.force:
         _preserve_unchanged_metadata(existing, lock)
 
-    all_errors = result.errors + skill_errors + agent_errors + mcp_errors + rule_errors
+    all_errors = (
+        result.errors + skill_errors + agent_errors + mcp_errors + rule_errors + archetype_errors
+    )
     if (
         existing is not None
         and not options.force

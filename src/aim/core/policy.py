@@ -98,6 +98,9 @@ class Policy(BaseModel):
     blocked_rules: list[str] = Field(default_factory=list)
     blocked_mcp: list[str] = Field(default_factory=list)  # by alias or registry_name
     allowed_profiles: list[str] = Field(default_factory=list)  # empty = all allowed
+    # Allow-list of selectable instruction archetypes (by qualified name). Empty = all
+    # allowed; non-empty constrains `archetype use` to the listed archetypes.
+    allowed_archetypes: list[str] = Field(default_factory=list)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     custom_rules: list[RiskRule] = Field(default_factory=list)
 
@@ -214,6 +217,7 @@ def from_mapping(data: dict) -> Policy:
     repos_t = data.get("repos", {}) or {}
     artifacts_t = data.get("artifacts", {}) or {}
     profiles_t = data.get("profiles", {}) or {}
+    archetypes_t = data.get("archetypes", {}) or {}
     risk_t = dict(data.get("risk", {}) or {})
     rules_t = dict(risk_t.pop("rules", {}) or {})
 
@@ -245,6 +249,7 @@ def from_mapping(data: dict) -> Policy:
         blocked_rules=list(artifacts_t.get("blocked_rules", [])),
         blocked_mcp=list(artifacts_t.get("blocked_mcp", [])),
         allowed_profiles=list(profiles_t.get("allowed", [])),
+        allowed_archetypes=list(archetypes_t.get("allowed", [])),
         risk=risk,
         custom_rules=custom_rules,
     )
@@ -295,6 +300,8 @@ def to_mapping(policy: Policy) -> dict:
         doc["artifacts"] = artifacts
     if policy.allowed_profiles:
         doc["profiles"] = {"allowed": policy.allowed_profiles}
+    if policy.allowed_archetypes:
+        doc["archetypes"] = {"allowed": policy.allowed_archetypes}
     risk: dict = {
         "mode": policy.risk.mode,
         "classifier": policy.risk.classifier,
@@ -574,7 +581,7 @@ def bind(repo_url: str, ref: str = "HEAD", *, allow_insecure: bool = False) -> R
     return ResolvedPolicy(pol, "org", repo_url, compute_hash(pol))
 
 
-_INLINE_KEYS = ("repos", "artifacts", "profiles", "risk", "rule", "name", "version")
+_INLINE_KEYS = ("repos", "artifacts", "profiles", "archetypes", "risk", "rule", "name", "version")
 
 
 def _read_policy_section(project_root: Path) -> dict:
@@ -776,4 +783,26 @@ def assert_profile_allowed(policy: Policy, layout_profile_name: str | None) -> N
         raise PolicyViolationError(
             f"layout profile {layout_profile_name!r} is not in the policy "
             f"allow-list {policy.allowed_profiles} (policy {policy.name!r})"
+        )
+
+
+def assert_archetype_allowed(policy: Policy, qualified_name: str | None) -> None:
+    """Raise if an instruction archetype is not in the policy's allow-list.
+
+    An empty allow-list or a None selection permits everything (None means the
+    built-in instruction template, which is always allowed).
+
+    Args:
+        policy: The active policy.
+        qualified_name: The archetype's qualified name, or None for the built-in.
+
+    Raises:
+        PolicyViolationError: If the archetype is not allowed.
+    """
+    if not policy.allowed_archetypes or qualified_name is None:
+        return
+    if qualified_name not in policy.allowed_archetypes:
+        raise PolicyViolationError(
+            f"instruction archetype {qualified_name!r} is not in the policy "
+            f"allow-list {policy.allowed_archetypes} (policy {policy.name!r})"
         )

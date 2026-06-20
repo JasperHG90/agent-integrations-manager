@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from aim.core import content_guard, db, git, paths
-from aim.core.models import AgentIndex, RegisteredRepo, RuleIndex, SkillIndex
+from aim.core.models import AgentIndex, ArchetypeIndex, RegisteredRepo, RuleIndex, SkillIndex
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -211,11 +211,13 @@ def add(
     _skills = importlib.import_module("aim.core.skills")
     _agents = importlib.import_module("aim.core.agents")
     _repo_rules = importlib.import_module("aim.core.repo_rules")
+    _archetypes = importlib.import_module("aim.core.archetypes")
 
     try:
         skill_result = _skills.index_repo(alias)
         agent_result = _agents.index_repo(alias)
         rule_result = _repo_rules.index_repo(alias)
+        archetype_result = _archetypes.index_repo(alias)
     except Exception:
         # Roll back the registration so the next attempt isn't blocked.
         remove(alias)
@@ -224,12 +226,13 @@ def add(
         not skill_result.indexed
         and not agent_result.indexed
         and not rule_result.indexed
+        and not archetype_result.indexed
         and not allow_empty
     ):
         remove(alias)
         raise RepoHasNoArtifactsError(
-            f"{alias}: no SKILL.md, AGENT.md, or valid rule .md files found "
-            f"anywhere in the repository"
+            f"{alias}: no SKILL.md, AGENT.md, rule .md, or instruction archetype "
+            f"found anywhere in the repository"
         )
     return repo
 
@@ -243,7 +246,7 @@ def list_repos() -> list[RegisteredRepo]:
 
 
 def artifact_kinds(alias: str) -> set[str]:
-    """Return which artifact types a repo contains: skill, agent, rules."""
+    """Return which artifact types a repo contains: skill, agent, rules, archetype."""
     kinds: set[str] = set()
     with db.session() as session:
         if session.exec(select(SkillIndex).where(SkillIndex.repo_alias == alias).limit(1)).first():  # type: ignore[arg-type]
@@ -252,6 +255,10 @@ def artifact_kinds(alias: str) -> set[str]:
             kinds.add("agent")
         if session.exec(select(RuleIndex).where(RuleIndex.repo_alias == alias).limit(1)).first():  # type: ignore[arg-type]
             kinds.add("rules")
+        if session.exec(
+            select(ArchetypeIndex).where(ArchetypeIndex.repo_alias == alias).limit(1)
+        ).first():  # type: ignore[arg-type]
+            kinds.add("archetype")
     return kinds
 
 
@@ -281,6 +288,7 @@ def remove(alias: str) -> None:
         session.exec(_delete_skill_index(alias))
         session.exec(_delete_agent_index(alias))
         session.exec(_delete_rule_index(alias))
+        session.exec(_delete_archetype_index(alias))
         session.delete(row)
         session.commit()
     git.remove_clone(clone_dir(alias))
@@ -338,6 +346,15 @@ def _delete_rule_index(alias: str):  # type: ignore[no-untyped-def]
     from aim.core.models import RuleIndex as _RuleIndex
 
     return _delete(_RuleIndex).where(_RuleIndex.repo_alias == alias)  # type: ignore[arg-type]
+
+
+def _delete_archetype_index(alias: str):  # type: ignore[no-untyped-def]
+    """Build a delete statement for a repo's archetype index rows."""
+    from sqlmodel import delete as _delete
+
+    from aim.core.models import ArchetypeIndex as _ArchetypeIndex
+
+    return _delete(_ArchetypeIndex).where(_ArchetypeIndex.repo_alias == alias)  # type: ignore[arg-type]
 
 
 def rename(old: str, new: str) -> RegisteredRepo:
@@ -424,6 +441,23 @@ def rename(old: str, new: str) -> RegisteredRepo:
                 )
             )
             session.delete(row)
+        for row in list(  # type: ignore[assignment]
+            session.exec(select(ArchetypeIndex).where(ArchetypeIndex.repo_alias == old)).all()  # type: ignore[arg-type]
+        ):
+            session.add(
+                ArchetypeIndex(
+                    qualified_name=f"{new}/{row.archetype_name}",
+                    repo_alias=new,
+                    archetype_name=row.archetype_name,
+                    source_path=row.source_path,
+                    instruction_path=row.instruction_path,
+                    available=row.available,
+                    title=row.title,
+                    description=row.description,
+                    indexed_at_sha=row.indexed_at_sha,
+                )
+            )
+            session.delete(row)
         session.commit()
 
     old_dir = clone_dir(old)
@@ -497,6 +531,25 @@ def rename(old: str, new: str) -> RegisteredRepo:
                             )
                         )
                         session.delete(row)
+                    for row in list(  # type: ignore[assignment]
+                        session.exec(
+                            select(ArchetypeIndex).where(ArchetypeIndex.repo_alias == new)  # type: ignore[arg-type]
+                        ).all()
+                    ):
+                        session.add(
+                            ArchetypeIndex(
+                                qualified_name=f"{old}/{row.archetype_name}",
+                                repo_alias=old,
+                                archetype_name=row.archetype_name,
+                                source_path=row.source_path,
+                                instruction_path=row.instruction_path,
+                                available=row.available,
+                                title=row.title,
+                                description=row.description,
+                                indexed_at_sha=row.indexed_at_sha,
+                            )
+                        )
+                        session.delete(row)
                     session.commit()
             raise
     return get(new)
@@ -554,8 +607,10 @@ def refresh(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
         _skills = importlib.import_module("aim.core.skills")
         _agents = importlib.import_module("aim.core.agents")
         _repo_rules = importlib.import_module("aim.core.repo_rules")
+        _archetypes = importlib.import_module("aim.core.archetypes")
 
         _skills.index_repo(alias)
         _agents.index_repo(alias)
         _repo_rules.index_repo(alias)
+        _archetypes.index_repo(alias)
     return fresh

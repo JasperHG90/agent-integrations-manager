@@ -69,6 +69,11 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
         # v4 adds the optional [policy] governance table. Additive.
         raw.setdefault("policy", {})
         raw["manifest_version"] = 4
+        version = 4
+    if version < 5:
+        # v5 adds the optional [instruction_archetype] selection. Additive — absence
+        # means the built-in instruction template is used.
+        raw["manifest_version"] = 5
     return raw
 
 
@@ -198,6 +203,10 @@ def _prune_repo_if_unused(decl: ProjectDeclarations, alias: str) -> None:
         any(s.repo_alias == alias for s in decl.skills)
         or any(a.repo_alias == alias for a in decl.agents)
         or any(r.repo_alias == alias for r in decl.rules)
+        or (
+            decl.instruction_archetype is not None
+            and decl.instruction_archetype.repo_alias == alias
+        )
     )
     if not used:
         decl.repos.pop(alias, None)
@@ -275,6 +284,38 @@ def _update_rule(project_root: Path, installed: object) -> None:
     decl.rules = [r for r in decl.rules if r.qualified_name != installed.qualified_name]
     decl.rules.append(declared)
     decl.repos[installed.repo_alias] = installed.repo_url
+    save(project_root, decl)
+
+
+def set_instruction_archetype(project_root: Path, installed: object) -> None:
+    """Record the selected instruction archetype (singleton) in `aim.toml`.
+
+    Args:
+        project_root: Directory whose `aim.toml` should be updated.
+        installed: An `InstalledArchetype` describing the selected archetype.
+    """
+    from aim.core.models import DeclaredArchetype, InstalledArchetype
+
+    assert isinstance(installed, InstalledArchetype)
+    decl = load_or_default(project_root)
+    decl.instruction_archetype = DeclaredArchetype(
+        qualified_name=installed.qualified_name,
+        repo_alias=installed.repo_alias,
+        source_path=installed.source_path,
+        pin=installed.pin,
+        track=installed.track,
+    )
+    decl.repos[installed.repo_alias] = installed.repo_url
+    save(project_root, decl)
+
+
+def clear_instruction_archetype(project_root: Path) -> None:
+    """Clear the selected instruction archetype, pruning its repo binding if unused."""
+    decl = load_or_default(project_root)
+    previous = decl.instruction_archetype
+    decl.instruction_archetype = None
+    if previous is not None:
+        _prune_repo_if_unused(decl, previous.repo_alias)
     save(project_root, decl)
 
 

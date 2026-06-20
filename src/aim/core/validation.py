@@ -81,6 +81,21 @@ def is_valid_rule_name(name: str) -> bool:
     return bool(_ALIAS_RE.fullmatch(name))
 
 
+def is_valid_archetype_name(name: str) -> bool:
+    """Validate a project-instruction archetype directory name.
+
+    Same constraints as other artifact names, so a qualified name like
+    `<alias>/<archetype>` is shell- and path-safe.
+
+    Args:
+        name: Candidate archetype directory name.
+
+    Returns:
+        True if the name matches the allowed pattern.
+    """
+    return bool(_ALIAS_RE.fullmatch(name))
+
+
 def is_safe_repo_path(path: str) -> bool:
     """Check whether a path is safe to pass back to git as a pathspec.
 

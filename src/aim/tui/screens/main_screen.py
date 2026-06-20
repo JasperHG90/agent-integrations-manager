@@ -341,6 +341,7 @@ class MainScreen(Screen[None]):
                 init_mod.InitOptions(
                     project_root=config.project_root,
                     layout_profile=config.layout_profile,
+                    instruction_archetype=config.instruction_archetype,
                 )
             )
         except Exception as exc:

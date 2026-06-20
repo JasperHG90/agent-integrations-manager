@@ -20,6 +20,7 @@ from aim.core import (
     agent_files,
     agent_install,
     agents,
+    archetypes,
     git,
     hashing,
     layout_profiles,
@@ -172,6 +173,8 @@ def _locked_repo_pairs(m: Manifest) -> dict[str, str]:
         pairs[a.repo_alias] = a.repo_url
     for r in m.rules:
         pairs[r.repo_alias] = r.repo_url
+    if m.instruction_archetype is not None:
+        pairs[m.instruction_archetype.repo_alias] = m.instruction_archetype.repo_url
     return pairs
 
 
@@ -197,6 +200,7 @@ def _register_repo(alias: str, url: str, allow_insecure: bool) -> str | None:
             skills.index_repo(alias)
             agents.index_repo(alias)
             repo_rules_mod.index_repo(alias)
+            archetypes.index_repo(alias)
         return None
     except repos.RepoNotFoundError:
         pass

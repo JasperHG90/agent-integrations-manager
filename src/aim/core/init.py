@@ -10,16 +10,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aim.core import (
+    archetypes,
     declarations,
     layout_profiles,
     paths,
     policy,
+    repos,
     templates,
 )
-from aim.core.models import ProjectDeclarations
+from aim.core.models import DeclaredArchetype, ProjectDeclarations
 from aim.core.validation import MirrorNameError, is_valid_mirror_name
 
 KNOWN_SYMLINKS = ("CLAUDE.md", "GEMINI.md", "OPENCODE.md")
+# Sentinel for `instruction_archetype`: explicitly select the built-in template
+# (clears any existing archetype). None means "leave the current selection as-is".
+BUILTIN_INSTRUCTIONS = "builtin"
 
 
 @dataclass
@@ -31,6 +36,8 @@ class InitOptions:
     symlinks: tuple[str, ...] = ()
     clear_symlinks: bool = False
     layout_profile: str | None = None
+    # Selected instruction archetype qualified name, or None for the built-in template.
+    instruction_archetype: str | None = None
 
 
 @dataclass
@@ -102,6 +109,20 @@ def run(options: InitOptions) -> InitResult:
     decl.instruction_template = options.instruction_template
     decl.layout_profile = options.layout_profile or decl.layout_profile
     decl.symlinks = requested_symlinks
+    # Record the selected instruction archetype. None leaves the current selection
+    # untouched; BUILTIN_INSTRUCTIONS clears it (use the built-in template); a
+    # qualified name selects an archetype, pinned + rendered at the first lock/sync.
+    if options.instruction_archetype == BUILTIN_INSTRUCTIONS:
+        decl.instruction_archetype = None
+    elif options.instruction_archetype is not None:
+        row = archetypes.index_row(options.instruction_archetype)
+        policy.assert_archetype_allowed(policy.effective_policy(proj), row.qualified_name)
+        decl.instruction_archetype = DeclaredArchetype(
+            qualified_name=row.qualified_name,
+            repo_alias=row.repo_alias,
+            source_path=row.instruction_path,
+        )
+        decl.repos[row.repo_alias] = repos.get(row.repo_alias).url
     # Seed a default (permissive) local policy on first init so governance is
     # discoverable and editable in aim.toml; preserve any existing [policy].
     if not decl.policy:
