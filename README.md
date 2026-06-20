@@ -20,16 +20,16 @@ A lightweight package manager for your AI-assistant tooling: skills, sub-agents,
 
 Every AI coding assistant works better with the right context: project conventions, reusable rules, and curated tools. Today that context is scattered across copy-pasted prompts, hand-edited `CLAUDE.md` files, and git submodules nobody wants to maintain.
 
-`aim` turns that into a reproducible workflow. It keeps a library of reusable rules, installs versioned skills, agents, and MCP servers from any git repo or registry, and scaffolds the agent instruction file your IDE expects. Everything is recorded in your project so the setup survives a fresh clone.
+`aim` turns that into a reproducible workflow. It installs versioned skills, agents, rules, and MCP servers from any git repo or registry, and scaffolds the agent instruction file your IDE expects. Everything is recorded in your project so the setup survives a fresh clone.
 
 ## Features
 
-- **Generate Karpathy-style `AGENTS.md`** — `init` writes a minimal, opinionated agent instruction file. Project-specific guidance lives in reusable rules, not in `AGENTS.md`.
+- **Scaffold an opinionated `AGENTS.md`** — `init` renders the agent instruction file from a template (a bundled set of behavioral guidelines by default, or one you pick) and keeps only its `aim:` marker regions in sync, so your edits outside them survive. Project-specific guidance lives in reusable rules, layered into the file's rules region.
 - **Share project-instruction archetypes** — base your `AGENTS.md` on a versioned archetype from any repo (`aim instructions use`), so a whole team starts from the same agent instructions while keeping their own rules layered on top.
 - **Install skills, agents, and rules from any repo** — register a git URL, browse the index, and install with per-artifact version pinning.
 - **Install MCP servers from the community registry** — search the public MCP registry and add servers to `.mcp.json` without hand-editing JSON.
 - **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, and rule.
-- **Skills that let your agent manage itself** — bundled `repo-add` and `agent-installer` skills let your assistant add sources and install skills/agents/rules straight from a project chat.
+- **Skills that let your agent manage itself** — bundled `repo-add` and `artifact-installer` skills let your assistant add sources and install skills/agents/rules straight from a project chat.
 - **Hackable profiles** — layout profiles control where skills, rules, and agent files land (e.g. `.claude/`, `.gemini/`, or your own paths).
 - **Project templates for common stacks** — save a combo of skills, agents, MCP servers, and rules as a reusable template and bootstrap new projects in seconds.
 - **Governance policy + risk scanning** — a `[policy]` table in `aim.toml` can blacklist repos, block specific skills/agents/rules/MCP servers, restrict layout profiles, and turn on semantic risk classification of what an artifact *instructs*. Local for solo work, or sourced from an org policy repo and enforced in CI.
@@ -100,57 +100,54 @@ From the main menu you can initialize a project, add repos, search skills/agents
 For scripting or CI, the same actions are available as CLI commands:
 
 ```sh
-# 1. Add a reusable rule and make it a default.
-aim rule add be-concise --body "Be concise." --default
-
-# 2. Scaffold a project: writes AGENTS.md, mirrors, and seeds default rules.
+# 1. Scaffold a project: writes AGENTS.md and its CLAUDE.md/GEMINI.md mirrors.
 aim init path/to/project
 
-# 3. Register skill/agent/rule source repositories from any git URL.
+# 2. Register skill/agent/rule source repositories from any git URL.
 aim repo add anthropic https://github.com/anthropics/skills
 aim repo add 0xforai https://github.com/0xforai/agents
 
-# 4. Search, inspect, and install skills, sub-agents, or rules.
+# 3. Search, inspect, and install skills, sub-agents, and rules (all repo-sourced).
 aim skill search review
 aim skill view anthropic/code-review        # print the source before installing
 aim skill install anthropic/code-review
-aim subagent search angular
 aim subagent install 0xforai/angular-expert
+aim rule add anthropic/be-concise
 
-# 5. Search and install an MCP server from the registry.
+# 4. Search and install an MCP server from the registry.
 aim mcp search fetch
 aim mcp install fetch
 
-# 6. Update one artifact, a whole repo, or everything; roll back safely.
+# 5. Update one artifact, a whole repo, or everything; roll back safely.
 aim skill update anthropic/code-review
 aim skill update --all
 aim skill rollback anthropic/code-review
 
-# 7. Base AGENTS.md on a shared instruction archetype from a repo.
+# 6. Base AGENTS.md on a shared instruction archetype from a repo.
 aim instructions list
 aim instructions use myorg/lean
 
-# 8. Save a reusable project template.
+# 7. Save a reusable project template.
 aim profile save my-stack path/to/project
 aim init --template my-stack path/to/new-project
 ```
 
 ## How it works
 
-Per-project state lives in `aim.lock.toml` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
+Per-project state lives in `aim.lock.toml` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, rules, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
 
 Global, machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):
 
 - `user_data_dir`: SQLite cache of registered repos, indexed skills/agents, templates, rule metadata, and MCP registry entries.
 - `user_cache_dir/repos/<alias>`: bare git mirrors reused across projects.
 - `user_cache_dir/snapshots/<alias>/<sha>/<skill>`: extracted artifact bytes used by rollback.
-- `user_config_dir/rules`: user-authored rule snippets (one markdown file per rule).
+- `user_config_dir/templates`: registered `AGENTS.md` templates (the bundled default plus any you add).
 
-The global SQLite DB is a **cache**. The project's `manifest.json` is the **source of truth** for what is installed where.
+The global SQLite DB is a **cache**. The project's `aim.lock.toml` is the **source of truth** for what is installed where.
 
 ### Agent instructions
 
-`init` scaffolds `AGENTS.md` with Karpathy's agent instructions. It is intentionally minimal: project-specific guidance goes into the rules library, not into `AGENTS.md`. Mirrors like `CLAUDE.md` or `GEMINI.md` are symlinks so a single source of truth stays in `AGENTS.md` and the rules stay reusable across projects.
+`init` scaffolds `AGENTS.md` from a template marked up with `aim:` regions. The bundled `default` template (used unless you pass `--template`) is an opinionated set of behavioral guidelines that reduce common LLM coding mistakes; `aim` keeps only the marked regions — header, guidelines, and rules — in sync, so anything you write outside them is preserved. Project-specific guidance goes into reusable rules (added with `aim rule add`) that are merged into the rules region, not pasted inline. Mirrors like `CLAUDE.md` or `GEMINI.md` are symlinks so a single source of truth stays in `AGENTS.md` and the rules stay reusable across projects.
 
 Instead of the built-in scaffold, you can base `AGENTS.md` on a **project-instruction archetype** — a versioned `instructions/<name>/` directory (holding `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `OPENCODE.md`) published in a registered repo. `aim instructions use <alias>/<name>` (or `aim init --instructions <alias>/<name>`) pins the archetype as your base, and `aim sync` re-renders `AGENTS.md` from it while still layering your own rules on top. A governance policy can restrict which archetypes are allowed.
 
@@ -211,6 +208,9 @@ blocked_mcp    = ["somerepo/badmcp"]         # by alias or registry name
 
 [policy.profiles]
 allowed = ["claude", "gemini"]               # layout-profile allow-list (empty = all)
+
+[policy.archetypes]
+allowed = ["myorg/lean"]                      # instruction-archetype allow-list (empty = all)
 
 [policy.risk]
 classifier = true          # local ONNX injection/jailbreak screen
