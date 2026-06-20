@@ -30,6 +30,7 @@ jobs:
       firefox-extension: ${{ steps.filter.outputs.firefox-extension }}
       docker: ${{ steps.filter.outputs.docker }}
       ci-config: ${{ steps.filter.outputs.ci-config }}
+      aim-config: ${{ steps.filter.outputs.aim-config }}
       hermes-runner: ${{ steps.filter.outputs.hermes-runner }}
       hermes-plugin: ${{ steps.filter.outputs.hermes-plugin }}
     steps:
@@ -45,6 +46,11 @@ jobs:
               - 'uv.lock'
               - '.pre-commit-config.yaml'
             ci-config:
+              - '.github/workflows/ci.yaml'
+            aim-config:
+              - 'aim.toml'
+              - 'aim.lock.toml'
+              - '.github/actions/aim/**'
               - '.github/workflows/ci.yaml'
 
   pre-commit:
@@ -80,6 +86,21 @@ jobs:
           uv_version: ${{ env.UV_VERSION }}
           python_version: ${{ matrix.python-version }}
           markers: "not integration"
+
+  aim-policy-gate:
+    needs: changes
+    if: always() && (github.event_name == 'push' || needs.changes.outputs.aim-config == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate aim governance policy
+        uses: ./.github/actions/aim
+        with:
+          # Gate the working tree against its own policy by installing aim from source.
+          aim-spec: .
+          uv-version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
   build-python:
     needs: [changes, pre-commit, python-tests]

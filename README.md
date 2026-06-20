@@ -259,6 +259,29 @@ per process), so a bound project still picks up upstream policy changes without 
 `aim policy refresh`. Offline keeps the cache; a project bound to an org policy with **no** usable
 cache **fails closed** — it refuses to resolve rather than silently downgrading to permissive.
 
+### CI gate (example GitHub Action)
+
+A reusable composite action at [`.github/actions/aim`](.github/actions/aim/action.yml) installs
+`aim` and runs the policy gate, so the enforcement boundary lives in CI rather than on the
+developer's machine. Reference it from a workflow:
+
+```yaml
+jobs:
+  aim-policy-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JasperHG90/agent-integrations-manager/.github/actions/aim@main
+        with:
+          # Validate against a mandated org policy fetched fresh — the developer's
+          # local state cannot forge it. Omit to use the project's effective policy.
+          policy-url: https://github.com/acme/policy
+```
+
+It exits non-zero on any violation (blocked repo/artifact/profile, or a lockfile pinned under a
+different policy). This repo dogfoods the action in its own [CI](.github/workflows/ci.yaml) via the
+`aim-policy-gate` job, passing `aim-spec: .` to gate the working tree against its own policy.
+
 ### Risk scanning
 
 When `[policy.risk]` turns on `classifier` and/or `llm_judge`, artifact content is classified by

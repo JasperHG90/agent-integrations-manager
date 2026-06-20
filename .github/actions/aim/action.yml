@@ -1,0 +1,74 @@
+name: aim policy gate
+description: >-
+  Install aim and validate a project's declarations + lockfile against its
+  governance policy. This is the out-of-band CI enforcement boundary: a blocked
+  repo, artifact, or profile fails the build before it reaches a governed project.
+
+inputs:
+  project:
+    description: Project root holding aim.toml / aim.lock.toml (relative to $GITHUB_WORKSPACE).
+    required: false
+    default: '.'
+  policy-url:
+    description: >-
+      Validate against this remote org-policy repo, fetched fresh, instead of the
+      project's local/bound policy — the gate where the expected policy comes from
+      a source the developer's local state cannot forge. Leave empty to use the
+      project's effective policy.
+    required: false
+    default: ''
+  policy-ref:
+    description: Git ref to use with policy-url.
+    required: false
+    default: HEAD
+  aim-spec:
+    description: >-
+      Install argument passed to `uv tool install`. Defaults to the published repo;
+      pass a local path (e.g. '.') to gate the working tree against its own policy.
+    required: false
+    default: git+https://github.com/JasperHG90/agent-integrations-manager.git
+  python-version:
+    description: Python version for setup-python.
+    required: false
+    default: '3.12'
+  uv-version:
+    description: Version spec for setup-uv.
+    required: false
+    default: 0.11.x
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+
+    - name: Install aim
+      shell: bash
+      env:
+        AIM_SPEC: ${{ inputs.aim-spec }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        uv tool install --python "$PYTHON_VERSION" "$AIM_SPEC"
+
+    - name: Validate governance policy
+      shell: bash
+      env:
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_POLICY_URL: ${{ inputs.policy-url }}
+        INPUT_POLICY_REF: ${{ inputs.policy-ref }}
+      run: |
+        set -euo pipefail
+        args=("$INPUT_PROJECT")
+        if [[ -n "$INPUT_POLICY_URL" ]]; then
+          args+=(--policy "$INPUT_POLICY_URL" --ref "$INPUT_POLICY_REF")
+        fi
+        aim policy validate "${args[@]}"
