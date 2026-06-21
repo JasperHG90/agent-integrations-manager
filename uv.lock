@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "cachetools" },
+    { name = "click" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "platformdirs" },
@@ -46,6 +47,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "cachetools", specifier = ">=5.5.0" },
+    { name = "click", specifier = ">=8.0" },
     { name = "dspy", marker = "extra == 'risk-judge'", specifier = ">=2.5" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "huggingface-hub", marker = "extra == 'risk'", specifier = ">=0.25" },
