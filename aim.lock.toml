@@ -10,9 +10,9 @@ layout_profile = "claude"
 symlinks = [
     "CLAUDE.md",
 ]
-policy_repo = "file:///Users/jasperginn/Documents/code_projects/aim-policy"
-policy_ref = "a0a63a6749a307b243b288f9f14ae2c4a1117ad4"
-policy_hash = "5234f180bc4b60f658590f4d978eedd01215e70b150c100d4457d77af2532dd1"
+policy_repo = "https://github.com/JasperHG90/aim-policy"
+policy_ref = "c2b87682202bee3e972d4c113cc4da99d44dfe2e"
+policy_hash = "82ae6774d570f747a69baf224f9930245fa5562012bc37cfe408e020f4a7dc95"
 
 [[skill]]
 qualified_name = "anthropic/skill-creator"
