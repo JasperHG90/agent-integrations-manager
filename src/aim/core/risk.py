@@ -32,6 +32,13 @@ from aim.core import paths, policy
 
 _SEVERITY_TO_LEVEL: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
 
+# The encoder's max sequence length. Inputs longer than this are windowed (below)
+# rather than truncated, so a payload anywhere in the artifact is screened.
+_MODEL_MAX_TOKENS = 512
+# Tokens shared between adjacent windows, so an injection straddling a window
+# boundary still lands intact inside at least one window.
+_WINDOW_OVERLAP = 64
+
 
 def _split_reason(reason: str) -> tuple[str, str]:
     """Split a `rule_id: evidence` reason string into its parts.
@@ -254,10 +261,46 @@ def _load_onnx_model(model_id: str) -> tuple[Any, Any, int, tuple[str, ...]]:
             f"{model_id} has no tokenizer.json (a fast tokenizer is required)"
         )
     tokenizer = Tokenizer.from_file(str(tok_path))
-    tokenizer.enable_truncation(max_length=512)
+    # Saved tokenizer.json files commonly bake in a 512-token truncation; clear it so
+    # classify() can window long inputs across several forward passes. Otherwise an
+    # injection past the model's max length is silently dropped by head-only truncation.
+    tokenizer.no_truncation()
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     input_names = tuple(i.name for i in session.get_inputs())
     return session, tokenizer, _injection_label_index(local_dir / "config.json"), input_names
+
+
+def _token_windows(tokenizer: Any, text: str):
+    """Yield (ids, attention_mask) windows that together cover the whole text.
+
+    The injection screen must see the entire artifact: head-only truncation would let
+    a payload past the model's max length pass as clean. The text is sliced into
+    overlapping windows by token offset and each slice re-encoded, so every window
+    carries its own special tokens and stays within the model's limit.
+
+    Args:
+        tokenizer: The fast tokenizer (truncation disabled).
+        text: The full artifact text to window.
+
+    Yields:
+        (ids, attention_mask) pairs, one per window; a single window for short text.
+    """
+    enc = tokenizer.encode(text)
+    # Special tokens ([CLS]/[SEP]/[PAD]) report a (0, 0) offset; drop them so windows
+    # are measured in content tokens only.
+    offsets = [o for o in enc.offsets if o != (0, 0)]
+    if not offsets:
+        yield list(enc.ids), list(enc.attention_mask)
+        return
+    budget = _MODEL_MAX_TOKENS - 2  # leave room for each window's own [CLS]/[SEP]
+    step = budget - _WINDOW_OVERLAP
+    for start in range(0, len(offsets), step):
+        window = offsets[start : start + budget]
+        chunk = text[window[0][0] : window[-1][1]]
+        sub = tokenizer.encode(chunk)
+        yield list(sub.ids)[:_MODEL_MAX_TOKENS], list(sub.attention_mask)[:_MODEL_MAX_TOKENS]
+        if start + budget >= len(offsets):
+            break
 
 
 @dataclass
@@ -274,6 +317,10 @@ class LocalOnnxClassifier:
     def classify(self, text: str, *, source: str | None = None) -> RiskVerdict:
         """Score `text` for injection/jailbreak likelihood into a verdict.
 
+        Long inputs are windowed so the whole artifact is screened; the verdict
+        reflects the highest-scoring window (the model's max length cannot hide a
+        payload in an artifact's tail).
+
         Args:
             text: The artifact text to screen.
             source: Optional label for the artifact being scanned.
@@ -281,27 +328,53 @@ class LocalOnnxClassifier:
         Returns:
             A verdict whose level reflects the model's injection probability.
         """
-        import numpy as np
-
         session, tokenizer, injection_index, input_names = _load_onnx_model(self.model_id)
-        enc = tokenizer.encode(text)
-        ids = list(enc.ids)
-        feed: dict[str, Any] = {}
-        if "input_ids" in input_names:
-            feed["input_ids"] = np.array([ids], dtype=np.int64)
-        if "attention_mask" in input_names:
-            feed["attention_mask"] = np.array([list(enc.attention_mask)], dtype=np.int64)
-        if "token_type_ids" in input_names:
-            feed["token_type_ids"] = np.zeros((1, len(ids)), dtype=np.int64)
-        logits = np.asarray(session.run(None, feed)[0])[0]
-        exp = np.exp(logits - np.max(logits))
-        probs = exp / exp.sum()
-        score = float(probs[injection_index])
+        score = max(
+            (
+                self._score_window(ids, mask, session, injection_index, input_names)
+                for ids, mask in _token_windows(tokenizer, text)
+            ),
+            default=0.0,
+        )
         return RiskVerdict(
             _injection_score_to_level(score),
             [f"prompt-injection/jailbreak likelihood {score:.2f}"],
             "local:onnx",
         )
+
+    @staticmethod
+    def _score_window(
+        ids: list[int],
+        mask: list[int],
+        session: Any,
+        injection_index: int,
+        input_names: tuple[str, ...],
+    ) -> float:
+        """Run one forward pass over a single token window and return its injection score.
+
+        Args:
+            ids: The window's token ids.
+            mask: The window's attention mask.
+            session: The loaded ONNX inference session.
+            injection_index: Output index of the injection/unsafe label.
+            input_names: The session's expected input tensor names.
+
+        Returns:
+            The softmax probability of the injection class for this window.
+        """
+        import numpy as np
+
+        feed: dict[str, Any] = {}
+        if "input_ids" in input_names:
+            feed["input_ids"] = np.array([ids], dtype=np.int64)
+        if "attention_mask" in input_names:
+            feed["attention_mask"] = np.array([mask], dtype=np.int64)
+        if "token_type_ids" in input_names:
+            feed["token_type_ids"] = np.zeros((1, len(ids)), dtype=np.int64)
+        logits = np.asarray(session.run(None, feed)[0])[0]
+        exp = np.exp(logits - np.max(logits))
+        probs = exp / exp.sum()
+        return float(probs[injection_index])
 
 
 def _parse_findings(raw: str) -> list[dict]:
