@@ -9,7 +9,7 @@ mcp_servers = []
 
 [policy]
 scope = "org"
-repo = "file:///Users/jasperginn/Documents/code_projects/aim-policy"
+repo = "https://github.com/JasperHG90/aim-policy"
 ref = "HEAD"
 
 [repos]
