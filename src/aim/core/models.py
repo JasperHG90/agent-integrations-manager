@@ -93,6 +93,22 @@ class RuleIndex(SQLModel, table=True):  # type: ignore[call-arg]
     indexed_at_sha: str
 
 
+class TemplateIndex(SQLModel, table=True):  # type: ignore[call-arg]
+    """A discovered shareable project template (profile TOML) within a repo.
+
+    A template is a `templates/<name>.toml` (or `.aim/templates/<name>.toml`) file
+    holding a serialized Profile. It is applied via `aim profile apply <alias>/<name>`.
+    """
+
+    qualified_name: str = SQLField(primary_key=True)  # "<alias>/<template_name>"
+    repo_alias: str = SQLField(index=True)
+    template_name: str = SQLField(index=True)
+    template_toml_path: str  # path of the .toml file relative to repo root
+    title: str | None = None
+    description: str | None = None
+    indexed_at_sha: str
+
+
 class McpServerCache(SQLModel, table=True):  # type: ignore[call-arg]
     """Cached default MCP registry server definitions for instant TUI startup."""
 
@@ -120,7 +136,7 @@ class ArchetypeIndex(SQLModel, table=True):  # type: ignore[call-arg]
     indexed_at_sha: str
 
 
-CURRENT_DECLARATIONS_VERSION = 5  # v5 adds the [instruction_archetype] selection
+CURRENT_DECLARATIONS_VERSION = 7  # v7 drops the vestigial instruction_template field
 
 
 class DeclaredRepo(BaseModel):
@@ -198,14 +214,34 @@ class DeclaredArchetype(BaseModel):
     pin: str | None = None
 
 
+class DeclaredTemplate(BaseModel):
+    """Provenance of the project template this project was stamped from.
+
+    Recorded in `aim.toml` so `aim profile check`/`update` can detect upstream
+    template drift and converge the project. `ref`/`template_hash` are the commit
+    SHA and content hash the template was last applied from; `members` is the set
+    of artifacts the template owns (qualified names, plus ``mcp:<alias>`` for MCP
+    servers), used to add/remove on update.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<template_name>"
+    repo_alias: str
+    url: str
+    pin: str | None = None
+    ref: str | None = None  # commit SHA the template was applied from
+    template_hash: str | None = None  # content hash of the template toml at `ref`
+    members: list[str] = Field(default_factory=list)
+
+
 class ProjectDeclarations(BaseModel):
     """User-editable project state stored in `aim.toml`."""
 
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = CURRENT_DECLARATIONS_VERSION
-    instruction_template: str = "default"
-    # Selected instruction archetype (repo-sourced AGENTS.md base). None = built-in.
+    # The AGENTS.md base: a repo-sourced archetype, or None for aim's built-in default.
     instruction_archetype: DeclaredArchetype | None = None
     layout_profile: str | None = None
     symlinks: list[str] = Field(default_factory=list)
@@ -215,13 +251,16 @@ class ProjectDeclarations(BaseModel):
     # parsed/interpreted by aim.core.policy (avoids a models<->policy import cycle).
     # Declared above `repos` so the [policy] table serializes near the top of aim.toml.
     policy: dict[str, Any] = Field(default_factory=dict)
+    # Provenance of the project template this project was stamped from (None = not
+    # stamped from a shared template). Drives `aim profile check`/`update`.
+    template: DeclaredTemplate | None = None
     repos: dict[str, str] = Field(default_factory=dict)
     skills: list[DeclaredSkill] = Field(default_factory=list)
     agents: list[DeclaredAgent] = Field(default_factory=list)
     mcp_servers: list[DeclaredMcpServer] = Field(default_factory=list)
 
 
-CURRENT_MANIFEST_VERSION = 11  # v11: pin the selected instruction archetype
+CURRENT_MANIFEST_VERSION = 13  # v13 drops the vestigial instruction_template field
 HISTORY_CAP = 10
 
 
@@ -406,8 +445,7 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = CURRENT_MANIFEST_VERSION
-    instruction_template: str = "default"
-    # Locked instruction archetype (repo-sourced AGENTS.md base). None = built-in.
+    # Locked AGENTS.md base: a repo-sourced archetype, or None for the built-in default.
     instruction_archetype: InstalledArchetype | None = None
     skills: list[InstalledSkill] = Field(default_factory=list)
     agents: list[InstalledAgent] = Field(default_factory=list)
@@ -427,3 +465,10 @@ class Manifest(BaseModel):
     policy_repo: str | None = None
     policy_ref: str | None = None
     policy_hash: str | None = None
+    # Project template this project was stamped from, pinned at lock time: the
+    # source repo url, the qualified template name, the resolved commit SHA, and a
+    # content hash of the template toml. Lets review/CI detect template drift.
+    template_repo: str | None = None
+    template_qualified_name: str | None = None
+    template_ref: str | None = None
+    template_hash: str | None = None

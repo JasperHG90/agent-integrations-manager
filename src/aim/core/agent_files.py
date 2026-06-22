@@ -136,7 +136,7 @@ def write_agent_files(
 
     applied = [repo_rules.render_rule(r) for r in m.rules]
     canonical_regions = _render_regions(
-        m.instruction_template,
+        templates.BUILTIN_DEFAULT,
         applied,
         rules_mode=profile.rules_mode,
     )
@@ -173,7 +173,7 @@ def write_agent_files(
         merged = agents_md.merge(archetype_base, fresh_regions)
     else:
         merged = _render_for_template(
-            m.instruction_template,
+            templates.BUILTIN_DEFAULT,
             applied,
             rules_mode=profile.rules_mode,
         )

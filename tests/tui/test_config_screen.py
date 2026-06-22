@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from textual.screen import Screen
 
-from aim.core import declarations, layout_profiles, templates
+from aim.core import declarations, layout_profiles
 from aim.core import init as init_mod
 from aim.tui.app import AimApp
 from aim.tui.screens.config_screen import ConfigScreen
@@ -24,7 +24,6 @@ async def test_project_tab_shows_current_manifest(home: Path, project_root: Path
         from textual.widgets import Input, Static
 
         assert app.screen.query_one("#proj-root", Input).value == str(project_root.resolve())
-        assert app.screen.query_one("#proj-template", Input).value == "default"
         # Agent dialect is managed by the active layout profile, not the Config screen.
         assert not app.screen.query("#proj-dialect")
         # Active layout profile summary is shown.
@@ -56,34 +55,6 @@ async def test_project_save_writes_manifest(home: Path, project_root: Path) -> N
     # init now writes aim.toml only; the lockfile is produced by `aim lock`.
     lock_path = project_root / "aim.lock.toml"
     assert not lock_path.exists()
-
-
-@pytest.mark.asyncio
-async def test_project_save_updates_instruction_template(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
-    custom_template = tmp_path / "custom.md.j2"
-    custom_template.write_text("# custom scaffold\n")
-    templates.register_user_template("custom", custom_template, description="test template")
-
-    init_mod.run(init_mod.InitOptions(project_root=project_root))
-    app = AimApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.push_screen(ConfigScreen(project_root))
-        await pilot.pause()
-        from textual.widgets import Button, Input
-
-        app.screen.query_one("#proj-template", Input).value = "custom"
-        for btn in app.screen.query(Button):
-            if btn.id == "proj-save":
-                btn.press()
-                break
-        await pilot.pause()
-        await pilot.pause()
-
-    decl = declarations.load(project_root)
-    assert decl.instruction_template == "custom"
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,8 @@ def test_first_init_creates_aim_toml(home: Path, project_root: Path) -> None:
     assert result.declarations_path.exists()
     decl = declarations_mod.load(project_root)
     assert decl.rules == []
-    assert decl.instruction_template == "default"
+    # No archetype selected means the built-in default scaffold is the base.
+    assert decl.instruction_archetype is None
     assert "AGENTS.md" not in result.declarations_path.read_text()
 
 

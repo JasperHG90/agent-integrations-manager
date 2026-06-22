@@ -27,6 +27,10 @@ _USAGE_ERRORS: tuple[type[click.exceptions.UsageError], ...] = (
 # Maps a top-level group name to "<module>:<typer-app-attr>". Populated by the root app.
 LAZY_SUBCOMMANDS: dict[str, str] = {}
 
+# Lazy group names that still dispatch but are omitted from `--help` (back-compat
+# aliases). They resolve via `get_command` but never appear in `list_commands`.
+LAZY_HIDDEN: set[str] = set()
+
 
 class LazyTyperGroup(TyperGroup):
     """A `TyperGroup` whose `LAZY_SUBCOMMANDS` entries load on first access."""
@@ -38,7 +42,7 @@ class LazyTyperGroup(TyperGroup):
         unchanged: top-level commands first, then the command groups.
         """
         eager = super().list_commands(ctx)
-        lazy = [name for name in LAZY_SUBCOMMANDS if name not in eager]
+        lazy = [name for name in LAZY_SUBCOMMANDS if name not in eager and name not in LAZY_HIDDEN]
         return eager + lazy
 
     def resolve_command(

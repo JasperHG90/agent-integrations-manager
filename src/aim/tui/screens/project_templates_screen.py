@@ -68,9 +68,7 @@ class ProjectTemplatesScreen(Screen[None]):
     def on_mount(self) -> None:
         """Set up the table columns, populate rows, and focus the table."""
         table = self.query_one("#templates-table", DataTable)
-        table.add_columns(
-            "name", "instruction_template", "profile", "skills", "subagents", "mcp", "rules"
-        )
+        table.add_columns("name", "profile", "skills", "subagents", "mcp", "rules")
         self._populate()
         table.focus()
 
@@ -102,7 +100,6 @@ class ProjectTemplatesScreen(Screen[None]):
         for p in profiles:
             table.add_row(
                 p.name,
-                p.instruction_template,
                 p.layout_profile or "—",
                 str(len(p.skills)),
                 str(len(p.agents)),
@@ -182,9 +179,8 @@ class ProjectTemplatesScreen(Screen[None]):
         new_profile = profile.model_copy(
             update={
                 "name": result.name,
-                "instruction_template": result.instruction_template,
                 "layout_profile": result.layout_profile,
-                "rules": list(result.rules),
+                "rules": [r for r in profile.rules if r.qualified_name in result.rules],
                 "skills": [s for s in profile.skills if s.qualified_name in result.skills],
                 "agents": [a for a in profile.agents if a.qualified_name in result.agents],
                 "mcp_servers": [m for m in profile.mcp_servers if m.alias in result.mcp_servers],
@@ -254,23 +250,20 @@ class ProjectTemplatesScreen(Screen[None]):
             return
         lines = [
             f"name: {profile.name}",
-            f"instruction_template: {profile.instruction_template}",
             f"layout_profile: {profile.layout_profile or '—'}",
             f"symlinks: {', '.join(profile.symlinks) if profile.symlinks else '—'}",
-            f"rules: {', '.join(profile.rules) if profile.rules else '—'}",
+            f"rules: {', '.join(r.qualified_name for r in profile.rules) if profile.rules else '—'}",
         ]
         if profile.skills:
             lines.append("skills:")
             for s in profile.skills:
-                pin = f" pin={s.pin}" if s.pin else ""
-                track = f" track={s.track}" if s.track else ""
-                lines.append(f"  - {s.qualified_name}{pin}{track}")
+                sha = f" sha={s.sha[:12]}" if s.sha else ""
+                lines.append(f"  - {s.qualified_name}{sha}")
         if profile.agents:
             lines.append("subagents:")
             for a in profile.agents:
-                pin = f" pin={a.pin}" if a.pin else ""
-                track = f" track={a.track}" if a.track else ""
-                lines.append(f"  - {a.qualified_name}{pin}{track}")
+                sha = f" sha={a.sha[:12]}" if a.sha else ""
+                lines.append(f"  - {a.qualified_name}{sha}")
         if profile.mcp_servers:
             lines.append("mcp servers:")
             for m in profile.mcp_servers:

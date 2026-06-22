@@ -1,5 +1,4 @@
-manifest_version = 11
-instruction_template = "default"
+manifest_version = 13
 mcp_servers = []
 managed_files = [
     "AGENTS.md",
@@ -19,10 +18,13 @@ repo_alias = "anthropic"
 repo_url = "https://github.com/anthropics/skills"
 source_path = "skills/skill-creator"
 target_dir = ".claude/skills/skill-creator"
-history = []
 content_hash = "4557d54c524c67984e4bab23fa436e90196292ae8df4d2093f0ce0e6951bfc1c"
 
 [skill.current]
+sha = "b9e19e6f44773509fbdd7001d77ff41a49a486c1"
+installed_at = "2026-06-22T14:24:55.688502Z"
+
+[[skill.history]]
 sha = "57546260929473d4e0d1c1bb75297be2fdfa1949"
 installed_at = "2026-06-21T06:32:00.381097Z"
 

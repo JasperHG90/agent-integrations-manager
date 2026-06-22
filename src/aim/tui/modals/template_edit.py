@@ -25,7 +25,6 @@ class TemplateEditResult:
     """Captured selections from the template edit modal."""
 
     name: str
-    instruction_template: str
     layout_profile: str | None
     rules: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
@@ -68,10 +67,11 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
         """Build the modal layout with toggle rows and input fields."""
         self._rule_names = [r.qualified_name for r in repo_rules_mod.list_rules()]
 
+        selected_rules = {r.qualified_name for r in self._profile.rules}
         rule_toggles = [
             ToggleRow(
                 name,
-                value=name in self._profile.rules,
+                value=name in selected_rules,
                 id=self._toggle_id("rule", name),
             )
             for name in self._rule_names
@@ -106,8 +106,6 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
             VerticalScroll(
                 Static("Template name:", markup=False),
                 Input(value=self._profile.name, id="name"),
-                Static("Instruction template:", markup=False),
-                Input(value=self._profile.instruction_template, id="instruction-template"),
                 Static("Layout profile:", markup=False),
                 Input(value=self._profile.layout_profile or "", id="layout-profile"),
                 Static("Included rules:", markup=False),
@@ -179,12 +177,8 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
     def _submit(self) -> None:
         """Validate inputs and dismiss with the edited template result."""
         name = self.query_one("#name", Input).value.strip()
-        instruction_template = self.query_one("#instruction-template", Input).value.strip()
         if not name:
             self._error("template name is required")
-            return
-        if not instruction_template:
-            self._error("instruction template name is required")
             return
         layout_profile = self.query_one("#layout-profile", Input).value.strip() or None
 
@@ -195,7 +189,6 @@ class TemplateEditModal(ModalScreen[TemplateEditResult | None]):
         self.dismiss(
             TemplateEditResult(
                 name=name,
-                instruction_template=instruction_template,
                 layout_profile=layout_profile,
                 rules=tuple(self._checked_keys("rule", self._rule_names)),
                 skills=tuple(self._checked_keys("skill", skill_keys)),

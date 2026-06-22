@@ -59,7 +59,6 @@ async def test_builder_saves_template(home: Path, project_root: Path) -> None:
 
     loaded = profiles.load("my-template")
     assert loaded.name == "my-template"
-    assert loaded.instruction_template == "default"
 
 
 @pytest.mark.asyncio
@@ -129,7 +128,8 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
     toml_path.write_text(
         'name = "imported-template"\n'
         'instruction_template = "default"\n'
-        'rules = ["repo/imported-rule"]\n'
+        "[[rule]]\n"
+        'qualified_name = "repo/imported-rule"\n'
         "[[skill]]\n"
         'qualified_name = "repo/skill"\n',
         encoding="utf-8",
@@ -161,8 +161,7 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
 async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Path) -> None:
     profile = profiles.Profile(
         name="export-me",
-        instruction_template="default",
-        rules=["repo/export-rule"],
+        rules=[profiles.ProfileRule(qualified_name="repo/export-rule")],
         skills=[profiles.ProfileSkill(qualified_name="repo/skill")],
     )
     export_path = tmp_path / "exported.toml"
@@ -183,8 +182,8 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
     assert export_path.exists()
     text = export_path.read_text(encoding="utf-8")
     assert 'name = "export-me"' in text
-    assert 'instruction_template = "default"' in text
-    assert 'rules = ["repo/export-rule"]' in text
+    assert "[[rule]]" in text
+    assert 'qualified_name = "repo/export-rule"' in text
     assert "[[skill]]" in text
     assert 'qualified_name = "repo/skill"' in text
 

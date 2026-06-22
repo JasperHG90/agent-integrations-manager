@@ -273,6 +273,10 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         manifest_mod.ManifestNotFoundError,
         profiles_mod.ProfileNameError,
         profiles_mod.ProfileNotFoundError,
+        profiles_mod.ProfileTomlError,
+        profiles_mod.TemplateNotLockedError,
+        profiles_mod.NoProjectTemplateError,
+        profiles_mod.TemplateArtifactNotFoundError,
         sync_mod.SyncError,
         sync_mod.SyncDriftError,
         prune_mod.PruneError,
@@ -399,6 +403,7 @@ def _run_bulk_update(
     repo: str | None,
     only_outdated: bool,
     force: bool,
+    override_risk: bool = False,
 ) -> None:
     """Run a kind's bulk update_many, print per-artifact outcomes, exit 1 on any error.
 
@@ -408,9 +413,14 @@ def _run_bulk_update(
         repo: Limit to a single repo alias, or None for all.
         only_outdated: Skip artifacts already at HEAD.
         force: Overwrite local edits.
+        override_risk: Bypass a risk gate the user has acknowledged.
     """
     outcomes = update_many(
-        _here(project), repo_alias=repo, only_outdated=only_outdated, force=force
+        _here(project),
+        repo_alias=repo,
+        only_outdated=only_outdated,
+        force=force,
+        override_risk=override_risk,
     )
     for outcome in outcomes:
         typer.echo(f"{outcome['status']:>12}  {outcome['qualified_name']}  {outcome['detail']}")

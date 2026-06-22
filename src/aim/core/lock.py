@@ -685,7 +685,7 @@ def _compute_region_hashes(
     def _render_for_agent(agent: str | None) -> str:
         """Render the instruction template for one agent (or the canonical None)."""
         return templates.render(
-            decl.instruction_template,
+            templates.BUILTIN_DEFAULT,
             {
                 "rules": applied,
                 "agent": agent,
@@ -781,7 +781,6 @@ def _archetype_key(a: InstalledArchetype) -> tuple:
 def _top_level_key(m: Manifest) -> tuple:
     """Build the identity tuple for a manifest's non-artifact (top-level) fields."""
     return (
-        m.instruction_template,
         None if m.instruction_archetype is None else _archetype_key(m.instruction_archetype),
         m.layout_profile,
         tuple(m.symlinks),
@@ -989,7 +988,6 @@ async def run(options: LockOptions) -> LockResult:
     ]
 
     lock = Manifest(
-        instruction_template=decl.instruction_template,
         instruction_archetype=archetype_locked,
         layout_profile=decl.layout_profile or profile.name,
         rules=rules_locked,
@@ -1006,6 +1004,10 @@ async def run(options: LockOptions) -> LockResult:
             else None
         ),
         policy_hash=resolved_policy.hash,
+        template_repo=decl.template.url if decl.template else None,
+        template_qualified_name=decl.template.qualified_name if decl.template else None,
+        template_ref=decl.template.ref if decl.template else None,
+        template_hash=decl.template.template_hash if decl.template else None,
     )
 
     if not options.force:

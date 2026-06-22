@@ -636,6 +636,7 @@ def update_many(
     only_outdated: bool = False,
     force: bool = False,
     dry_run: bool = False,
+    override_risk: bool = False,
 ) -> list[BulkUpdateOutcome]:
     """Update all (or a filtered subset of) installed skills in a project.
 
@@ -648,6 +649,7 @@ def update_many(
         only_outdated: skip skills already at HEAD.
         force: pass through to per-skill update.
         dry_run: return previews without applying.
+        override_risk: bypass a risk gate the user has acknowledged.
 
     Returns:
         One outcome per skill considered.
@@ -680,7 +682,9 @@ def update_many(
                         )
                     )
                     continue
-            result = update(project_root, skill.qualified_name, force=force)
+            result = update(
+                project_root, skill.qualified_name, force=force, override_risk=override_risk
+            )
             assert not isinstance(result, UpdatePreview)
             outcomes.append(
                 BulkUpdateOutcome(

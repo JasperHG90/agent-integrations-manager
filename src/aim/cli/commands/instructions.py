@@ -1,4 +1,4 @@
-"""`aim instructions`: discover and select project-instruction archetypes."""
+"""`aim archetype`: discover, select, and update project-instruction archetypes."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from aim.core import risk as risk_mod
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Discover and select project-instruction archetypes.",
+    help="Discover, select, update, and clear project-instruction archetypes.",
 )
 
 
@@ -25,10 +25,32 @@ def archetype_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
 ) -> None:
-    """List indexed project-instruction archetypes."""
-    rows = archetypes_mod.list_archetypes(repo)
+    """List indexed project-instruction archetypes (plus the built-in default)."""
+    display: list[dict[str, str]] = []
+    # The built-in default ships with aim and is always an option; it heads the
+    # list unless a specific repo is requested.
+    if repo is None:
+        display.append(
+            {
+                "qualified_name": "default",
+                "repo_alias": "-",
+                "available": "-",
+                "title": "Built-in template",
+                "description": "aim's bundled AGENTS.md scaffold (no archetype)",
+            }
+        )
+    display += [
+        {
+            "qualified_name": r.qualified_name,
+            "repo_alias": r.repo_alias,
+            "available": r.available,
+            "title": r.title or "",
+            "description": r.description or "",
+        }
+        for r in archetypes_mod.list_archetypes(repo)
+    ]
     format_mod.render(
-        rows,
+        display,
         _get_format(ctx),
         title="archetypes indexed",
         columns=["qualified_name", "repo_alias", "available", "title", "description"],

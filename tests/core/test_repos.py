@@ -362,3 +362,41 @@ def test_refresh_rejects_http_transport(home: Path, bare_remote: tuple[Path, Pat
         session.commit()
     with pytest.raises(content_guard.InsecureTransportError):
         repos.refresh("demo")
+
+
+def test_refresh_many_fetches_in_parallel_and_reindexes(home: Path, tmp_path: Path) -> None:
+    src_a = git_fixtures.make_source_repo(
+        tmp_path / "src-a", files={"skills/foo/SKILL.md": "# foo\n"}
+    )
+    bare_a = git_fixtures.make_bare_remote(src_a, tmp_path / "bare-a.git")
+    src_b = git_fixtures.make_source_repo(
+        tmp_path / "src-b", files={"skills/bar/SKILL.md": "# bar\n"}
+    )
+    bare_b = git_fixtures.make_bare_remote(src_b, tmp_path / "bare-b.git")
+    repos.add("a", f"file://{bare_a}")
+    repos.add("b", f"file://{bare_b}")
+
+    # Advance repo a upstream; refresh_many must fetch + reindex it.
+    git_fixtures.add_commit(src_a, {"skills/baz/SKILL.md": "# baz\n"}, "add baz")
+    git_fixtures.push_to_bare(src_a, bare_a)
+
+    results = repos.refresh_many(["a", "b"])
+    by_alias = {alias: (repo, err) for alias, repo, err in results}
+    assert by_alias["a"][1] is None and by_alias["b"][1] is None
+
+    from aim.core import skills
+
+    assert "a/baz" in {s.qualified_name for s in skills.list_skills("a")}
+
+
+def test_refresh_many_reports_per_repo_failure(home: Path, tmp_path: Path) -> None:
+    import shutil
+
+    src = git_fixtures.make_source_repo(tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"})
+    bare = git_fixtures.make_bare_remote(src, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    shutil.rmtree(bare)  # remote is gone; fetch will fail
+
+    results = repos.refresh_many(["a"])
+    alias, repo, err = results[0]
+    assert alias == "a" and repo is None and err is not None

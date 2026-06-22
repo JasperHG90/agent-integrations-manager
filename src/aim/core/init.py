@@ -32,7 +32,6 @@ class InitOptions:
     """Configuration inputs for an `aim init` run."""
 
     project_root: Path
-    instruction_template: str = templates.BUILTIN_DEFAULT
     symlinks: tuple[str, ...] = ()
     clear_symlinks: bool = False
     layout_profile: str | None = None
@@ -64,7 +63,6 @@ def run(options: InitOptions) -> InitResult:
     """
     paths.ensure_global_dirs()
     templates.ensure_builtin_registered()
-    templates.resolve(options.instruction_template)
 
     for link in options.symlinks:
         if not is_valid_mirror_name(link):
@@ -78,11 +76,7 @@ def run(options: InitOptions) -> InitResult:
 
     decl_path = paths.project_declarations_path(proj)
     re_init = decl_path.exists()
-    decl = (
-        declarations.load(proj)
-        if re_init
-        else ProjectDeclarations(instruction_template=options.instruction_template)
-    )
+    decl = declarations.load(proj) if re_init else ProjectDeclarations()
 
     # Resolve layout profile: CLI option wins, then existing decl.
     active_profile_name = options.layout_profile or decl.layout_profile
@@ -106,7 +100,6 @@ def run(options: InitOptions) -> InitResult:
 
     # Rules are repo-sourced artifacts managed by `aim rule add`; init only
     # preserves any already-declared rules (it never resolves or seeds them).
-    decl.instruction_template = options.instruction_template
     decl.layout_profile = options.layout_profile or decl.layout_profile
     decl.symlinks = requested_symlinks
     # Record the selected instruction archetype. None leaves the current selection

@@ -211,6 +211,43 @@ def _v10_to_v11(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v11_to_v12(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v11 manifest forward to v12.
+
+    v12 adds the optional applied-template pin (`template_repo`,
+    `template_qualified_name`, `template_ref`, `template_hash`). Additive only.
+
+    Args:
+        raw: The decoded manifest mapping at version 11.
+
+    Returns:
+        The same mapping, mutated in place, stamped at version 12.
+    """
+    raw.setdefault("template_repo", None)
+    raw.setdefault("template_qualified_name", None)
+    raw.setdefault("template_ref", None)
+    raw.setdefault("template_hash", None)
+    raw["manifest_version"] = 12
+    return raw
+
+
+def _v12_to_v13(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v12 manifest forward to v13.
+
+    v13 drops the vestigial `instruction_template` field. The AGENTS.md base is
+    the locked instruction archetype, or the built-in default when none is set.
+
+    Args:
+        raw: The decoded manifest mapping at version 12.
+
+    Returns:
+        The same mapping, mutated in place, stamped at version 13.
+    """
+    raw.pop("instruction_template", None)
+    raw["manifest_version"] = 13
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
@@ -223,6 +260,8 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     8: _v8_to_v9,
     9: _v9_to_v10,
     10: _v10_to_v11,
+    11: _v11_to_v12,
+    12: _v12_to_v13,
 }
 
 

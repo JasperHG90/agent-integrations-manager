@@ -41,7 +41,7 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 # The cheap at-head check below compares the DB's recorded revision against this to
 # avoid importing Alembic on every launch. Bump it when adding an Alembic revision;
 # the `test_head_revision_matches_script_head` drift guard enforces the match.
-HEAD_REVISION = "d7424c089c0e"
+HEAD_REVISION = "b7e1c0a4d2f3"
 
 
 def get_engine(db_path: Path | None = None) -> Engine:

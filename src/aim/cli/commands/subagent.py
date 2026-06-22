@@ -171,7 +171,9 @@ def agent_update(
         return
     if not all_agents and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
-    _run_bulk_update(agent_install_mod.update_many, project, repo, only_outdated, force)
+    _run_bulk_update(
+        agent_install_mod.update_many, project, repo, only_outdated, force, override_risk
+    )
 
 
 @app.command("remove")

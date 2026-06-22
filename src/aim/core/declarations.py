@@ -74,6 +74,17 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
         # v5 adds the optional [instruction_archetype] selection. Additive — absence
         # means the built-in instruction template is used.
         raw["manifest_version"] = 5
+        version = 5
+    if version < 6:
+        # v6 adds the optional [template] provenance table. Additive — absence means
+        # the project was not stamped from a shared template.
+        raw["manifest_version"] = 6
+        version = 6
+    if version < 7:
+        # v7 drops the vestigial instruction_template field. The AGENTS.md base is
+        # the [instruction_archetype] selection, or the built-in default when absent.
+        raw.pop("instruction_template", None)
+        raw["manifest_version"] = 7
     return raw
 
 
@@ -363,4 +374,35 @@ def _remove_mcp(project_root: Path, alias: str) -> None:
     """
     decl = load_or_default(project_root)
     decl.mcp_servers = [m for m in decl.mcp_servers if m.alias != alias]
+    save(project_root, decl)
+
+
+def set_template_provenance(project_root: Path, declared: object) -> None:
+    """Record (or replace) the project's template provenance in `aim.toml`.
+
+    Args:
+        project_root: Directory whose `aim.toml` should be updated.
+        declared: A `DeclaredTemplate` describing the applied template.
+    """
+    from aim.core.models import DeclaredTemplate
+
+    assert isinstance(declared, DeclaredTemplate)
+    decl = load_or_default(project_root)
+    decl.template = declared
+    save(project_root, decl)
+
+
+def set_template_members(project_root: Path, members: list[str]) -> None:
+    """Update the member-artifact set of the recorded template provenance.
+
+    No-op if the project has no template provenance.
+
+    Args:
+        project_root: Directory whose `aim.toml` should be updated.
+        members: Qualified names (plus ``mcp:<alias>``) the template installed.
+    """
+    decl = load_or_default(project_root)
+    if decl.template is None:
+        return
+    decl.template.members = members
     save(project_root, decl)

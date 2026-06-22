@@ -8,6 +8,7 @@ from textual.widgets import DataTable, Input, Static
 
 from aim.core import git, install, manifest, repos, risk, skills
 from aim.tui import errors as tui_errors
+from aim.tui.modals.repo_filter import RepoFilterModal, RepoFilterPick
 from aim.tui.modals.skill_install import SkillInstallConfig, SkillInstallModal
 from aim.tui.modals.skill_view import SkillViewModal
 
@@ -26,7 +27,7 @@ class SkillsScreen(Screen[None]):
         ("escape", "app.pop_screen", "Back"),
         ("b", "app.pop_screen", "Back"),
         ("slash", "focus_search", "Search"),
-        ("f", "cycle_repo_filter", "Filter by repo"),
+        ("f", "pick_repo_filter", "Filter by repo"),
         ("enter", "view_current", "View"),
         ("v", "view_current", "View"),
         ("i", "install_current", "Install"),
@@ -101,22 +102,20 @@ class SkillsScreen(Screen[None]):
                 pass
         self._status(f"{len(rows)} skill(s){filter_label}")
 
-    def action_cycle_repo_filter(self) -> None:
-        """Advance the repo filter to the next alias, wrapping back to no filter."""
+    def action_pick_repo_filter(self) -> None:
+        """Open a picker to filter by a single repo (or clear the filter)."""
         aliases = [r.alias for r in repos.list_repos()]
         if not aliases:
             self.app.notify("no repos to filter by", severity="warning")
             return
-        if self._repo_filter is None:
-            self._repo_filter = aliases[0]
-        else:
-            try:
-                idx = aliases.index(self._repo_filter)
-            except ValueError:
-                idx = -1
-            self._repo_filter = aliases[idx + 1] if idx + 1 < len(aliases) else None
-        query = self.query_one("#search-bar", Input).value
-        self._populate(query)
+        self.app.push_screen(RepoFilterModal(aliases, self._repo_filter), self._on_repo_filter)
+
+    def _on_repo_filter(self, pick: RepoFilterPick | None) -> None:
+        """Apply the chosen repo filter, or do nothing when cancelled."""
+        if pick is None:
+            return
+        self._repo_filter = pick.alias
+        self._populate(self.query_one("#search-bar", Input).value)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Repopulate the table as the user types in the search bar."""

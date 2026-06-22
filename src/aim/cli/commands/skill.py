@@ -174,7 +174,12 @@ def skill_update(
     if not all_skills and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
     outcomes = install_mod.update_many(
-        _here(project), repo_alias=repo, only_outdated=only_outdated, force=force, dry_run=diff
+        _here(project),
+        repo_alias=repo,
+        only_outdated=only_outdated,
+        force=force,
+        dry_run=diff,
+        override_risk=override_risk,
     )
     for outcome in outcomes:
         typer.echo(f"{outcome.status:>12}  {outcome.qualified_name}  {outcome.detail}")

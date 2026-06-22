@@ -2,8 +2,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aim.core import install, manifest, repos
 from tests.fixtures import git_fixtures
+
+
+def test_update_many_forwards_override_risk(
+    home: Path, project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _src_a, bare_a, _src_b, _bare_b = _two_repo_setup(tmp_path)
+    repos.add("a", f"file://{bare_a}")
+    install.install(project_root, "a/foo")
+
+    captured: list[bool] = []
+    real_update = install.update
+
+    def spy(project_root, qualified_name, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(bool(kwargs.get("override_risk")))
+        return real_update(project_root, qualified_name, **kwargs)
+
+    monkeypatch.setattr(install, "update", spy)
+    install.update_many(project_root, override_risk=True)
+    assert captured and all(captured)
 
 
 def _two_repo_setup(tmp_path: Path) -> tuple[Path, Path, Path, Path]:

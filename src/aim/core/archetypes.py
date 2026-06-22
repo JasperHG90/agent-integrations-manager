@@ -30,15 +30,22 @@ except Exception:  # pragma: no cover - pyyaml is required but be defensive
 # Standard instruction filenames, in base-selection priority order.
 _INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "OPENCODE.md")
 _FILE_ALT = "|".join(re.escape(f) for f in _INSTRUCTION_FILES)
-# Archetypes live under a fixed subdirectory, never the repo root.
-_ARCHETYPE_RE = re.compile(
-    rf"^(?P<prefix>instructions|\.aim/instructions)/(?P<name>[^/]+)/(?P<file>{_FILE_ALT})$"
-)
+# Any non-root directory holding a standard instruction file is an archetype, so
+# you can author one anywhere in a repo. The canonical `instructions/<name>/` and
+# `.aim/instructions/<name>/` locations win on a name collision; the repo root is
+# never an archetype (the pattern requires at least one directory component).
+_ARCHETYPE_RE = re.compile(rf"^(?P<dir>.+)/(?P<file>{_FILE_ALT})$")
+_CANONICAL_RE = re.compile(r"^instructions/[^/]+$")
+_AIM_CANONICAL_RE = re.compile(r"^\.aim/instructions/[^/]+$")
 
 
-def _prefix_rank(prefix: str) -> int:
-    """Return precedence for an archetype location prefix (lower wins)."""
-    return 0 if prefix == "instructions" else 1
+def _dir_rank(source_dir: str) -> int:
+    """Return precedence for an archetype directory (lower wins on name collisions)."""
+    if _CANONICAL_RE.fullmatch(source_dir):
+        return 0
+    if _AIM_CANONICAL_RE.fullmatch(source_dir):
+        return 1
+    return 2
 
 
 class DiscoveredArchetype(NamedTuple):
@@ -74,9 +81,9 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
-    # Map each archetype directory to the instruction files it contains.
+    # Map each archetype directory to the instruction files it contains. The
+    # archetype name is the directory's last path component.
     dirs: dict[str, dict[str, str]] = {}  # source_dir -> {filename: full_path}
-    dir_prefix: dict[str, str] = {}  # source_dir -> location prefix
     dir_name: dict[str, str] = {}  # source_dir -> archetype name
     for p in paths:
         match = _ARCHETYPE_RE.match(p)
@@ -84,15 +91,14 @@ def discover(repo_alias: str) -> IndexResult:
             continue
         if not validation.is_safe_repo_path(p):
             continue
-        name = match.group("name")
+        source_dir = match.group("dir")
+        name = source_dir.rsplit("/", 1)[-1]
         if not validation.is_valid_archetype_name(name):
             continue
-        source_dir = f"{match.group('prefix')}/{name}"
         dirs.setdefault(source_dir, {})[match.group("file")] = p
-        dir_prefix[source_dir] = match.group("prefix")
         dir_name[source_dir] = name
 
-    # Group directories by archetype name; the shallowest/canonical location wins.
+    # Group directories by archetype name; the canonical/shallowest location wins.
     by_name: dict[str, list[str]] = {}
     for source_dir, name in dir_name.items():
         by_name.setdefault(name, []).append(source_dir)
@@ -100,7 +106,7 @@ def discover(repo_alias: str) -> IndexResult:
     indexed: list[DiscoveredArchetype] = []
     shadowed: list[DiscoveredArchetype] = []
     for _, source_dirs in sorted(by_name.items()):
-        source_dirs.sort(key=lambda d: (_prefix_rank(dir_prefix[d]), d))
+        source_dirs.sort(key=lambda d: (_dir_rank(d), d.count("/"), d))
         for rank, source_dir in enumerate(source_dirs):
             available = [f for f in _INSTRUCTION_FILES if f in dirs[source_dir]]
             archetype = DiscoveredArchetype(

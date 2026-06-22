@@ -25,7 +25,7 @@ Every AI coding assistant works better with the right context: project conventio
 ## Features
 
 - **Scaffold an opinionated `AGENTS.md`** — `init` renders the agent instruction file from a template (a bundled set of behavioral guidelines by default, or one you pick) and keeps only its `aim:` marker regions in sync, so your edits outside them survive. Project-specific guidance lives in reusable rules, layered into the file's rules region.
-- **Share project-instruction archetypes** — base your `AGENTS.md` on a versioned archetype from any repo (`aim instructions use`), so a whole team starts from the same agent instructions while keeping their own rules layered on top.
+- **Share project-instruction archetypes** — base your `AGENTS.md` on a versioned archetype from any repo (`aim archetype use`), so a whole team starts from the same agent instructions while keeping their own rules layered on top.
 - **Install skills, agents, and rules from any repo** — register a git URL, browse the index, and install with per-artifact version pinning.
 - **Install MCP servers from the community registry** — search the public MCP registry and add servers to `.mcp.json` without hand-editing JSON.
 - **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, and rule.
@@ -76,7 +76,7 @@ Launch with no arguments and navigate the whole tool from the keyboard: the main
 Every action is also a scriptable command — `aim --help` lists them, command groups like `aim skill` expose their subcommands, and `aim doctor` audits drift across your projects.
 
 <p align="center">
-  <img src="assets/aim-demo.gif" alt="Running aim on the command line: the top-level help, the aim skill and aim instructions command groups, and an aim doctor health audit" width="820">
+  <img src="assets/aim-demo.gif" alt="Running aim on the command line: the top-level help, the aim skill and aim archetype command groups, and an aim doctor health audit" width="820">
 </p>
 
 ### Lock &amp; sync
@@ -124,12 +124,12 @@ aim skill update --all
 aim skill rollback anthropic/code-review
 
 # 6. Base AGENTS.md on a shared instruction archetype from a repo.
-aim instructions list
-aim instructions use myorg/lean
+aim archetype list
+aim archetype use myorg/lean
 
-# 7. Save a reusable project template.
-aim profile save my-stack path/to/project
-aim init --template my-stack path/to/new-project
+# 7. Save a reusable project template, then stamp new projects from it.
+aim template save my-stack path/to/project
+aim template apply my-stack path/to/new-project
 ```
 
 ## How it works
@@ -147,9 +147,9 @@ The global SQLite DB is a **cache**. The project's `aim.lock.toml` is the **sour
 
 ### Agent instructions
 
-`init` scaffolds `AGENTS.md` from a template marked up with `aim:` regions. The bundled `default` template (used unless you pass `--template`) is an opinionated set of behavioral guidelines that reduce common LLM coding mistakes; `aim` keeps only the marked regions — header, guidelines, and rules — in sync, so anything you write outside them is preserved. Project-specific guidance goes into reusable rules (added with `aim rule add`) that are merged into the rules region, not pasted inline. Mirrors like `CLAUDE.md` or `GEMINI.md` are symlinks so a single source of truth stays in `AGENTS.md` and the rules stay reusable across projects.
+`init` scaffolds `AGENTS.md` from a base marked up with `aim:` regions. The base is aim's bundled `default` scaffold unless you select an archetype (`aim archetype use <alias>/<name>`); the default is an opinionated set of behavioral guidelines that reduce common LLM coding mistakes. `aim` keeps only the marked regions — header, guidelines, and rules — in sync, so anything you write outside them is preserved. Project-specific guidance goes into reusable rules (added with `aim rule add`) that are merged into the rules region, not pasted inline. Mirrors like `CLAUDE.md` or `GEMINI.md` are symlinks so a single source of truth stays in `AGENTS.md` and the rules stay reusable across projects.
 
-Instead of the built-in scaffold, you can base `AGENTS.md` on a **project-instruction archetype** — a versioned `instructions/<name>/` directory (holding `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `OPENCODE.md`) published in a registered repo. `aim instructions use <alias>/<name>` (or `aim init --instructions <alias>/<name>`) pins the archetype as your base, and `aim sync` re-renders `AGENTS.md` from it while still layering your own rules on top. A governance policy can restrict which archetypes are allowed.
+Instead of the built-in scaffold, you can base `AGENTS.md` on a **project-instruction archetype**: a versioned directory holding `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `OPENCODE.md`, published in a registered repo. Any non-root subdirectory works (`instructions/<name>/` is the canonical spot). `aim archetype use <alias>/<name>` (or `aim init --archetype <alias>/<name>`) pins the archetype as your base, and `aim sync` re-renders `AGENTS.md` from it while still layering your own rules on top. A governance policy can restrict which archetypes are allowed.
 
 ### Skill and agent discovery
 

@@ -1,5 +1,4 @@
-manifest_version = 5
-instruction_template = "default"
+manifest_version = 7
 layout_profile = "claude"
 symlinks = [
     "CLAUDE.md",
@@ -29,12 +28,6 @@ bencium-marketplace = "https://github.com/bencium/bencium-marketplace"
 wshobson = "https://github.com/wshobson/agents/"
 jasperhg90 = "https://github.com/JasperHG90/skills"
 athola = "https://github.com/athola/claude-night-market"
-
-[[skill]]
-qualified_name = "anthropic/skill-creator"
-repo_alias = "anthropic"
-source_path = "skills/skill-creator"
-target_dir = ".claude/skills/skill-creator"
 
 [[skill]]
 qualified_name = "anthropic/theme-factory"
@@ -95,6 +88,12 @@ qualified_name = "jasperhg90/terminal-gif"
 repo_alias = "jasperhg90"
 source_path = "skills/documentation/terminal-gif"
 target_dir = ".claude/skills/terminal-gif"
+
+[[skill]]
+qualified_name = "anthropic/skill-creator"
+repo_alias = "anthropic"
+source_path = "skills/skill-creator"
+target_dir = ".claude/skills/skill-creator"
 
 [[subagent]]
 qualified_name = "0xfurai/github-actions-expert"

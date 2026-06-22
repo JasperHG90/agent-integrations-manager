@@ -353,6 +353,7 @@ def update_many(
     repo_alias: str | None = None,
     only_outdated: bool = False,
     force: bool = False,
+    override_risk: bool = False,
 ) -> list[dict]:
     """Update all (or a filtered subset of) installed agents in a project.
 
@@ -361,6 +362,7 @@ def update_many(
         repo_alias: When set, only update agents from this repo alias.
         only_outdated: When True, skip agents already at their resolved HEAD.
         force: When True, overwrite agents edited locally.
+        override_risk: When True, bypass a risk gate the user has acknowledged.
 
     Returns:
         One result dict per agent with keys ``qualified_name``, ``status``, ``detail``.
@@ -394,7 +396,9 @@ def update_many(
                 if new_version.sha == agent.current.sha:
                     outcomes.append(Outcome(agent.qualified_name, "noop", "at HEAD"))
                     continue
-            result = update(project_root, agent.qualified_name, force=force)
+            result = update(
+                project_root, agent.qualified_name, force=force, override_risk=override_risk
+            )
             outcomes.append(Outcome(agent.qualified_name, "updated", result.current.identifier()))
         except Exception as exc:
             outcomes.append(Outcome(agent.qualified_name, "error", str(exc)))

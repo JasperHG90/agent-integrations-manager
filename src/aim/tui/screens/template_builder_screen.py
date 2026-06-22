@@ -54,7 +54,7 @@ class TemplateBuilderScreen(Screen[None]):
             self._name = profile.name
             self._skills = list(profile.skills)
             self._agents = list(profile.agents)
-            self._rules = list(profile.rules)
+            self._rules = [r.qualified_name for r in profile.rules]
             self._mcp_servers = list(profile.mcp_servers)
         else:
             self._name = ""
@@ -69,7 +69,7 @@ class TemplateBuilderScreen(Screen[None]):
             name=self._name,
             skills=self._skills,
             agents=self._agents,
-            rules=self._rules,
+            rules=[profiles_mod.ProfileRule(qualified_name=name) for name in self._rules],
             mcp_servers=self._mcp_servers,
         )
 
@@ -325,7 +325,7 @@ class TemplateBuilderScreen(Screen[None]):
         self._name = result.profile.name
         self._skills = list(result.profile.skills)
         self._agents = list(result.profile.agents)
-        self._rules = list(result.profile.rules)
+        self._rules = [r.qualified_name for r in result.profile.rules]
         self._mcp_servers = list(result.profile.mcp_servers)
         self.query_one("#name", Input).value = self._name
         self._populate_all()

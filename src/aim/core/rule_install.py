@@ -359,6 +359,7 @@ def update_many(
     repo_alias: str | None = None,
     only_outdated: bool = False,
     force: bool = False,
+    override_risk: bool = False,
 ) -> list[dict]:
     """Update all (or a filtered subset of) installed rules in a project.
 
@@ -367,6 +368,7 @@ def update_many(
         repo_alias: If set, only update rules sourced from this repo alias.
         only_outdated: Skip rules already at their resolved SHA when True.
         force: Overwrite local edits to deployed files when True.
+        override_risk: Bypass a risk gate the user has acknowledged when True.
 
     Returns:
         One status dict per rule with keys ``qualified_name``, ``status``, ``detail``.
@@ -400,7 +402,9 @@ def update_many(
                 if new_version.sha == rule.current.sha:
                     outcomes.append(Outcome(rule.qualified_name, "noop", "at HEAD"))
                     continue
-            result = update(project_root, rule.qualified_name, force=force)
+            result = update(
+                project_root, rule.qualified_name, force=force, override_risk=override_risk
+            )
             outcomes.append(Outcome(rule.qualified_name, "updated", result.current.identifier()))
         except Exception as exc:
             outcomes.append(Outcome(rule.qualified_name, "error", str(exc)))

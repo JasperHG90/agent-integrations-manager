@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from aim.cli._shared import _friendly, _get_allow_insecure, _get_format, _here, friendly_error_types
+from aim.cli._shared import _friendly, _get_allow_insecure, _get_format, _here
 from aim.core import format as format_mod
 from aim.core import repos as repos_mod
 
@@ -115,14 +115,12 @@ def repo_refresh(
         typer.echo("no repos registered")
         return
     failures = 0
-    for a in aliases:
-        try:
-            repo = repos_mod.refresh(a, allow_insecure=allow_insecure)
-        except friendly_error_types() as exc:
+    for a, refreshed, err in repos_mod.refresh_many(aliases, allow_insecure=allow_insecure):
+        if err is not None:
             failures += 1
-            typer.echo(f"  {a}: {exc}", err=True)
+            typer.echo(f"  {a}: {err}", err=True)
             continue
-        sha = repo.last_sha[:12] if repo.last_sha else "?"
+        sha = refreshed.last_sha[:12] if refreshed and refreshed.last_sha else "?"
         typer.echo(f"refreshed {a}: HEAD={sha}")
     if failures:
         raise typer.Exit(code=1)

@@ -92,6 +92,32 @@ def _render_banner(project_root: Path) -> str:
     return "\n".join(lines)
 
 
+_MENU_ITEMS: list[tuple[str, str, str]] = [
+    ("I", "INIT", "create / edit aim.toml declarations"),
+    ("K", "LOCK", "resolve aim.toml into aim.lock.toml"),
+    ("Y", "SYNC", "apply aim.lock.toml to the project"),
+    ("X", "PRUNE", "remove artifacts not listed in aim.lock.toml"),
+    ("R", "REPOS", "registered skill source repositories"),
+    ("S", "SKILLS", "browse, search, install"),
+    ("A", "SUBAGENTS", "browse, search, install sub-agents"),
+    ("M", "MCP", "search registry, install MCP servers"),
+    ("U", "RULES", "global rules library"),
+    ("T", "TEMPLATES", "reusable project setups"),
+    ("B", "ARCHETYPES", "AGENTS.md base from a repo"),
+    ("P", "PROJECT", "installed skills/agents/MCP in the current project"),
+    ("C", "CONFIG", "roots, rule-repo overlays, init profiles"),
+    ("L", "PROFILES", "layout profiles for agent tooling paths"),
+    ("Q", "QUIT", ""),
+]
+
+
+def _render_menu() -> str:
+    """Render the navigation menu with aligned columns and generous spacing."""
+    width = max(len(name) for _, name, _ in _MENU_ITEMS)
+    lines = [f"    {key}    {name:<{width}}    {desc}".rstrip() for key, name, desc in _MENU_ITEMS]
+    return "\n" + "\n".join(lines) + "\n"
+
+
 class MainScreen(Screen[None]):
     """Landing screen with key-bound navigation to every other TUI screen."""
 
@@ -106,6 +132,7 @@ class MainScreen(Screen[None]):
         ("m", "open_mcp", "MCP servers"),
         ("u", "open_rules", "Rules"),
         ("t", "open_templates", "Templates"),
+        ("b", "open_archetypes", "Archetypes"),
         ("p", "open_project", "Project"),
         ("c", "open_config", "Config"),
         ("l", "open_layout_profiles", "Layout profiles"),
@@ -129,30 +156,11 @@ class MainScreen(Screen[None]):
             id="banner-box",
         )
         yield Vertical(
-            Static(
-                "\n"
-                "    I   INIT      create / edit aim.toml declarations\n"
-                "    K   LOCK      resolve aim.toml into aim.lock.toml\n"
-                "    Y   SYNC      apply aim.lock.toml to the project\n"
-                "    X   PRUNE     remove artifacts not listed in aim.lock.toml\n"
-                "    R   REPOS     registered skill source repositories\n"
-                "    S   SKILLS    browse, search, install\n"
-                "    A   SUBAGENTS browse, search, install sub-agents\n"
-                "    M   MCP       search registry, install MCP servers\n"
-                "    U   RULES     global rules library\n"
-                "    T   TEMPLATES reusable project setups\n"
-                "    P   PROJECT   installed skills/agents/MCP in the current project\n"
-                "    C   CONFIG    roots, rule-repo overlays, init profiles\n"
-                "    L   PROFILES  layout profiles for agent tooling paths\n"
-                "    Q   QUIT\n"
-                "\n",
-                classes="menu-item",
-                markup=False,
-            ),
+            Static(_render_menu() + "\n", classes="menu-item", markup=False),
             classes="menu",
         )
         yield Static(
-            "  I/K/Y/X/R/S/A/M/U/T/P/C/L  navigate    CTRL+P  palette    Q  quit",
+            "  I/K/Y/X/R/S/A/M/U/T/B/P/C/L  navigate    CTRL+P  palette    Q  quit",
             id="hint",
             markup=False,
         )
@@ -192,6 +200,12 @@ class MainScreen(Screen[None]):
         from aim.tui.screens.project_templates_screen import ProjectTemplatesScreen
 
         self.app.push_screen(ProjectTemplatesScreen(project_root=self._project_root))
+
+    def action_open_archetypes(self) -> None:
+        """Push the archetypes browse/search/select screen."""
+        from aim.tui.screens.archetypes_screen import ArchetypesScreen
+
+        self.app.push_screen(ArchetypesScreen(project_root=self._project_root))
 
     def action_open_project(self) -> None:
         """Push the installed-artifacts screen for the current project."""

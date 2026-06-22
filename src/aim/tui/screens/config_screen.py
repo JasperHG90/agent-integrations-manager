@@ -75,7 +75,6 @@ class ConfigScreen(Screen[None]):
             decl = declarations.load_or_default(self._project_root)
 
         active_profile = self._active_profile_label()
-        instruction_template = decl.instruction_template or "default"
         applied_rules = [r.qualified_name for r in (m.rules if m else decl.rules)]
 
         template_body = (
@@ -99,8 +98,6 @@ class ConfigScreen(Screen[None]):
                 ),
                 Static("Project root:", classes="config-heading", markup=False),
                 Input(value=str(self._project_root), id="proj-root"),
-                Static("Instruction template:", classes="config-heading", markup=False),
-                Input(value=instruction_template, id="proj-template"),
                 Static(
                     f"Applied rules ({len(applied_rules)}):",
                     classes="config-heading",
@@ -163,16 +160,10 @@ class ConfigScreen(Screen[None]):
             self._save_template()
 
     def _save_project(self) -> None:
-        """Re-run init against the edited project root and instruction template."""
+        """Re-run init against the edited project root."""
         project = Path(self.query_one("#proj-root", Input).value).expanduser()
-        instruction_template = self.query_one("#proj-template", Input).value.strip() or "default"
         try:
-            result = init_mod.run(
-                init_mod.InitOptions(
-                    project_root=project,
-                    instruction_template=instruction_template,
-                )
-            )
+            result = init_mod.run(init_mod.InitOptions(project_root=project))
         except Exception as exc:
             self.app.notify(f"save failed: {exc}", severity="error")
             return

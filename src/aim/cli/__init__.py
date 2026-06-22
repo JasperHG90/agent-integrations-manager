@@ -17,7 +17,7 @@ import typer
 from rich.console import Console
 
 from aim import __version__
-from aim.cli._lazy import LAZY_SUBCOMMANDS, LazyTyperGroup
+from aim.cli._lazy import LAZY_HIDDEN, LAZY_SUBCOMMANDS, LazyTyperGroup
 from aim.cli._shared import (
     _friendly,
     _get_allow_insecure,
@@ -41,14 +41,19 @@ LAZY_SUBCOMMANDS.update(
         "repo": "aim.cli.commands.repo:app",
         "skill": "aim.cli.commands.skill:app",
         "subagent": "aim.cli.commands.subagent:app",
-        "instructions": "aim.cli.commands.instructions:app",
+        "archetype": "aim.cli.commands.instructions:app",
         "db": "aim.cli.commands.db:app",
         "root": "aim.cli.commands.root:app",
-        "profile": "aim.cli.commands.profile:app",
+        "template": "aim.cli.commands.profile:app",
         "policy": "aim.cli.commands.policy:app",
         "mcp": "aim.cli.commands.mcp:app",
+        # Back-compat aliases; dispatch but hidden from --help.
+        "profile": "aim.cli.commands.profile:app",
+        "instructions": "aim.cli.commands.instructions:app",
     }
 )
+LAZY_HIDDEN.add("profile")
+LAZY_HIDDEN.add("instructions")
 
 # Re-exported for tests that import these private helpers by path.
 __all__ = ["_looks_like_url", "_parse_source_url", "app"]
@@ -346,14 +351,6 @@ def _prompt_instructions() -> str | None:
 @_friendly
 def init_cmd(
     project: Path | None = typer.Argument(None, help="Project root (default: current directory)."),
-    instruction_template: str = typer.Option(
-        # Literal value of aim.core.templates.BUILTIN_DEFAULT; hardcoded so importing
-        # aim.cli doesn't pull in the templates module (jinja2/sqlmodel) just for a default.
-        "default",
-        "--template",
-        "-t",
-        help="Instruction template name.",
-    ),
     symlink: list[str] = typer.Option(
         [],
         "--symlink",
@@ -364,6 +361,7 @@ def init_cmd(
     ),
     instructions: str | None = typer.Option(
         None,
+        "--archetype",
         "--instructions",
         help="Instruction archetype '<alias>/<name>', or 'builtin' for the default template.",
     ),
@@ -386,7 +384,6 @@ def init_cmd(
         chosen = _prompt_instructions()
     options = init_mod.InitOptions(
         project_root=root,
-        instruction_template=instruction_template,
         symlinks=tuple(symlink),
         layout_profile=layout_profile,
         instruction_archetype=chosen,

@@ -112,8 +112,8 @@ def load_or_create(project_root: Path) -> Manifest:
     """Load the existing lockfile, or seed a new Manifest from aim.toml metadata.
 
     Used by install/update/delete paths so that the first artifact written to
-    a project still produces a lockfile with instruction_template, symlinks, rules,
-    and layout profile copied from the user's declarations.
+    a project still produces a lockfile with symlinks, rules, and layout profile
+    copied from the user's declarations.
 
     Args:
         project_root: Project root directory containing the manifest.
@@ -130,7 +130,6 @@ def load_or_create(project_root: Path) -> Manifest:
         # Rules, like skills/agents, are resolved by `lock`; a freshly seeded
         # manifest starts with none and the install path appends the new one.
         m = Manifest(
-            instruction_template=decl.instruction_template,
             layout_profile=decl.layout_profile,
             symlinks=list(decl.symlinks),
         )

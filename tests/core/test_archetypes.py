@@ -6,7 +6,9 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from aim import cli
 from aim.core import (
     archetype_install,
     archetypes,
@@ -19,6 +21,8 @@ from aim.core import (
 )
 from aim.core import init as init_mod
 from tests.fixtures import git_fixtures
+
+_runner = CliRunner()
 
 
 def _repo_with_archetypes(tmp_path: Path, files: dict[str, str], name: str = "src") -> str:
@@ -48,6 +52,38 @@ def test_discover_indexes_instruction_dirs(home: Path, tmp_path: Path) -> None:
     # An archetype with only CLAUDE.md uses it as the base.
     assert rows["co/verbose"].instruction_path == "instructions/verbose/CLAUDE.md"
     assert rows["co/verbose"].available == "CLAUDE.md"
+
+
+def test_discover_picks_up_noncanonical_subdirs(home: Path, tmp_path: Path) -> None:
+    # Any non-root directory with an instruction file is an archetype, so a base
+    # can be authored anywhere in a repo (and then shared + locked).
+    url = _repo_with_archetypes(
+        tmp_path,
+        {
+            "bases/python/AGENTS.md": "# Python base\n",
+            "team/CLAUDE.md": "# Team base\n",
+            "AGENTS.md": "root, ignored\n",
+        },
+    )
+    repos.add("co", url, allow_empty=True)
+    rows = {r.qualified_name: r for r in archetypes.list_archetypes()}
+    assert "co/python" in rows
+    assert rows["co/python"].instruction_path == "bases/python/AGENTS.md"
+    assert "co/team" in rows
+    assert rows["co/team"].instruction_path == "team/CLAUDE.md"
+
+
+def test_canonical_location_wins_over_arbitrary(home: Path, tmp_path: Path) -> None:
+    url = _repo_with_archetypes(
+        tmp_path,
+        {
+            "instructions/lean/AGENTS.md": "# canonical lean\n",
+            "elsewhere/lean/AGENTS.md": "# other lean\n",
+        },
+    )
+    repos.add("co", url, allow_empty=True)
+    rows = {r.qualified_name: r for r in archetypes.list_archetypes()}
+    assert rows["co/lean"].instruction_path == "instructions/lean/AGENTS.md"
 
 
 def test_select_lock_sync_renders_archetype(home: Path, project_root: Path, tmp_path: Path) -> None:
@@ -141,6 +177,48 @@ def test_lock_is_unchanged_on_second_run_after_select(
     asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
     second = asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
     assert second.unchanged is True
+
+
+def test_cli_archetype_use_clear_round_trip(
+    home: Path, project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = _repo_with_archetypes(
+        tmp_path, {"instructions/lean/AGENTS.md": "# Lean Base\n\nBe terse.\n"}
+    )
+    repos.add("co", url, allow_empty=True)
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    monkeypatch.chdir(project_root)
+
+    res = _runner.invoke(cli.app, ["archetype", "use", "co/lean"])
+    assert res.exit_code == 0, res.output
+    declared = declarations.load(project_root).instruction_archetype
+    assert declared is not None and declared.qualified_name == "co/lean"
+
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
+    assert "Lean Base" in (project_root / "AGENTS.md").read_text()
+
+    res = _runner.invoke(cli.app, ["archetype", "clear"])
+    assert res.exit_code == 0, res.output
+    # Clearing reverts to the built-in instruction_template (no archetype).
+    assert declarations.load(project_root).instruction_archetype is None
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root, force=True)))
+    assert "Lean Base" not in (project_root / "AGENTS.md").read_text()
+
+
+def test_cli_instructions_alias_still_selects_archetype(
+    home: Path, project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = _repo_with_archetypes(tmp_path, {"instructions/lean/AGENTS.md": "# Lean\n"})
+    repos.add("co", url, allow_empty=True)
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    monkeypatch.chdir(project_root)
+
+    # The hidden back-compat `aim instructions` alias dispatches the same command.
+    res = _runner.invoke(cli.app, ["instructions", "use", "co/lean"])
+    assert res.exit_code == 0, res.output
+    declared = declarations.load(project_root).instruction_archetype
+    assert declared is not None and declared.qualified_name == "co/lean"
 
 
 def test_assert_archetype_allowed_permits_builtin_and_empty_list() -> None:

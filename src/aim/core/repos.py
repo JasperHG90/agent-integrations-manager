@@ -23,7 +23,14 @@ from pathlib import Path
 from sqlmodel import select
 
 from aim.core import content_guard, db, git, paths
-from aim.core.models import AgentIndex, ArchetypeIndex, RegisteredRepo, RuleIndex, SkillIndex
+from aim.core.models import (
+    AgentIndex,
+    ArchetypeIndex,
+    RegisteredRepo,
+    RuleIndex,
+    SkillIndex,
+    TemplateIndex,
+)
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -212,12 +219,14 @@ def add(
     _agents = importlib.import_module("aim.core.agents")
     _repo_rules = importlib.import_module("aim.core.repo_rules")
     _archetypes = importlib.import_module("aim.core.archetypes")
+    _repo_templates = importlib.import_module("aim.core.repo_templates")
 
     try:
         skill_result = _skills.index_repo(alias)
         agent_result = _agents.index_repo(alias)
         rule_result = _repo_rules.index_repo(alias)
         archetype_result = _archetypes.index_repo(alias)
+        template_result = _repo_templates.index_repo(alias)
     except Exception:
         # Roll back the registration so the next attempt isn't blocked.
         remove(alias)
@@ -227,12 +236,13 @@ def add(
         and not agent_result.indexed
         and not rule_result.indexed
         and not archetype_result.indexed
+        and not template_result.indexed
         and not allow_empty
     ):
         remove(alias)
         raise RepoHasNoArtifactsError(
-            f"{alias}: no SKILL.md, AGENT.md, rule .md, or instruction archetype "
-            f"found anywhere in the repository"
+            f"{alias}: no SKILL.md, AGENT.md, rule .md, instruction archetype, or "
+            f"project template found anywhere in the repository"
         )
     return repo
 
@@ -259,6 +269,10 @@ def artifact_kinds(alias: str) -> set[str]:
             select(ArchetypeIndex).where(ArchetypeIndex.repo_alias == alias).limit(1)
         ).first():  # type: ignore[arg-type]
             kinds.add("archetype")
+        if session.exec(
+            select(TemplateIndex).where(TemplateIndex.repo_alias == alias).limit(1)
+        ).first():  # type: ignore[arg-type]
+            kinds.add("template")
     return kinds
 
 
@@ -289,6 +303,7 @@ def remove(alias: str) -> None:
         session.exec(_delete_agent_index(alias))
         session.exec(_delete_rule_index(alias))
         session.exec(_delete_archetype_index(alias))
+        session.exec(_delete_template_index(alias))
         session.delete(row)
         session.commit()
     git.remove_clone(clone_dir(alias))
@@ -355,6 +370,15 @@ def _delete_archetype_index(alias: str):  # type: ignore[no-untyped-def]
     from aim.core.models import ArchetypeIndex as _ArchetypeIndex
 
     return _delete(_ArchetypeIndex).where(_ArchetypeIndex.repo_alias == alias)  # type: ignore[arg-type]
+
+
+def _delete_template_index(alias: str):  # type: ignore[no-untyped-def]
+    """Build a delete statement for a repo's template index rows."""
+    from sqlmodel import delete as _delete
+
+    from aim.core.models import TemplateIndex as _TemplateIndex
+
+    return _delete(_TemplateIndex).where(_TemplateIndex.repo_alias == alias)  # type: ignore[arg-type]
 
 
 def rename(old: str, new: str) -> RegisteredRepo:
@@ -458,6 +482,21 @@ def rename(old: str, new: str) -> RegisteredRepo:
                 )
             )
             session.delete(row)
+        for row in list(  # type: ignore[assignment]
+            session.exec(select(TemplateIndex).where(TemplateIndex.repo_alias == old)).all()  # type: ignore[arg-type]
+        ):
+            session.add(
+                TemplateIndex(
+                    qualified_name=f"{new}/{row.template_name}",
+                    repo_alias=new,
+                    template_name=row.template_name,
+                    template_toml_path=row.template_toml_path,
+                    title=row.title,
+                    description=row.description,
+                    indexed_at_sha=row.indexed_at_sha,
+                )
+            )
+            session.delete(row)
         session.commit()
 
     old_dir = clone_dir(old)
@@ -550,6 +589,23 @@ def rename(old: str, new: str) -> RegisteredRepo:
                             )
                         )
                         session.delete(row)
+                    for row in list(  # type: ignore[assignment]
+                        session.exec(
+                            select(TemplateIndex).where(TemplateIndex.repo_alias == new)  # type: ignore[arg-type]
+                        ).all()
+                    ):
+                        session.add(
+                            TemplateIndex(
+                                qualified_name=f"{old}/{row.template_name}",
+                                repo_alias=old,
+                                template_name=row.template_name,
+                                template_toml_path=row.template_toml_path,
+                                title=row.title,
+                                description=row.description,
+                                indexed_at_sha=row.indexed_at_sha,
+                            )
+                        )
+                        session.delete(row)
                     session.commit()
             raise
     return get(new)
@@ -559,31 +615,37 @@ class RefDisappearedError(RuntimeError):
     """default_ref no longer resolves on the remote (branch deleted, etc.)."""
 
 
-def refresh(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
-    """Fetch a repo's remote, update its tracked SHA, and reindex on change.
+def _fetch(alias: str, *, allow_insecure: bool = False) -> None:
+    """Fetch a repo's remote into its bare clone (network only, no DB writes).
 
-    Args:
-        alias: The repo alias to refresh.
-        allow_insecure: Permit insecure (non-https) URLs.
+    Safe to run concurrently across repos: it touches only the per-alias clone and
+    a read of the repo registry.
 
-    Returns:
-        The updated repo record.
+    Raises:
+        git.GitError: The fetch failed (wrapped with auth guidance when relevant).
+    """
+    row = get(alias)
+    content_guard.require_secure_url(row.url, allow_insecure=allow_insecure)
+    try:
+        git.get_backend().fetch(clone_dir(alias))
+    except git.GitError as exc:
+        raise _wrap_git_error(alias, row.url, exc) from exc
+
+
+def _resolve_and_reindex(alias: str, *, previous_sha: str | None) -> RegisteredRepo:
+    """Resolve the post-fetch SHA, persist it, and reindex when it changed.
+
+    Does the DB writes for a refresh, so callers run this serially to avoid SQLite
+    write contention.
 
     Raises:
         RefDisappearedError: If `default_ref` no longer resolves upstream.
     """
-    row = get(alias)
-    content_guard.require_secure_url(row.url, allow_insecure=allow_insecure)
-    previous_sha = row.last_sha
     repo_dir = clone_dir(alias)
-    try:
-        git.get_backend().fetch(repo_dir)
-    except git.GitError as exc:
-        raise _wrap_git_error(alias, row.url, exc) from exc
-
+    default_ref = get(alias).default_ref
     ref_missing = False
     try:
-        new_sha: str | None = git.get_backend().resolve_ref(repo_dir, row.default_ref)
+        new_sha: str | None = git.get_backend().resolve_ref(repo_dir, default_ref)
     except git.GitError:
         new_sha = None
         ref_missing = True
@@ -600,7 +662,7 @@ def refresh(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
 
     if ref_missing:
         raise RefDisappearedError(
-            f"{alias}: default ref {row.default_ref!r} no longer resolves upstream"
+            f"{alias}: default ref {default_ref!r} no longer resolves upstream"
         )
 
     if new_sha != previous_sha:
@@ -608,9 +670,77 @@ def refresh(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
         _agents = importlib.import_module("aim.core.agents")
         _repo_rules = importlib.import_module("aim.core.repo_rules")
         _archetypes = importlib.import_module("aim.core.archetypes")
+        _repo_templates = importlib.import_module("aim.core.repo_templates")
 
         _skills.index_repo(alias)
         _agents.index_repo(alias)
         _repo_rules.index_repo(alias)
         _archetypes.index_repo(alias)
+        _repo_templates.index_repo(alias)
     return fresh
+
+
+def refresh(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
+    """Fetch a repo's remote, update its tracked SHA, and reindex on change.
+
+    Args:
+        alias: The repo alias to refresh.
+        allow_insecure: Permit insecure (non-https) URLs.
+
+    Returns:
+        The updated repo record.
+
+    Raises:
+        RefDisappearedError: If `default_ref` no longer resolves upstream.
+    """
+    previous_sha = get(alias).last_sha
+    _fetch(alias, allow_insecure=allow_insecure)
+    return _resolve_and_reindex(alias, previous_sha=previous_sha)
+
+
+def refresh_many(
+    aliases: list[str], *, allow_insecure: bool = False
+) -> list[tuple[str, RegisteredRepo | None, Exception | None]]:
+    """Refresh several repos, fetching all of them in parallel.
+
+    Network fetches (the slow part) run concurrently in a thread pool; the DB
+    resolve/reindex step then runs serially per repo to avoid SQLite write
+    contention. Per-repo failures are returned, not raised, so one bad repo does
+    not abort the rest.
+
+    Args:
+        aliases: Repo aliases to refresh.
+        allow_insecure: Permit insecure (non-https) URLs.
+
+    Returns:
+        One ``(alias, repo_or_None, error_or_None)`` tuple per alias, in input order.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not aliases:
+        return []
+    previous = {alias: get(alias).last_sha for alias in aliases}
+
+    def _try_fetch(alias: str) -> tuple[str, Exception | None]:
+        try:
+            _fetch(alias, allow_insecure=allow_insecure)
+        except Exception as exc:
+            return (alias, exc)
+        return (alias, None)
+
+    fetch_errors: dict[str, Exception] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(aliases))) as pool:
+        for alias, err in pool.map(_try_fetch, aliases):
+            if err is not None:
+                fetch_errors[alias] = err
+
+    results: list[tuple[str, RegisteredRepo | None, Exception | None]] = []
+    for alias in aliases:
+        if alias in fetch_errors:
+            results.append((alias, None, fetch_errors[alias]))
+            continue
+        try:
+            results.append((alias, _resolve_and_reindex(alias, previous_sha=previous[alias]), None))
+        except Exception as exc:
+            results.append((alias, None, exc))
+    return results
