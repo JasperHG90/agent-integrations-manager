@@ -143,7 +143,9 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
     toml_path = tmp_path / "imported.toml"
     toml_path.write_text(
         'name = "imported-template"\n'
-        'instruction_template = "default"\n'
+        'description = "imported desc"\n'
+        'layout_profile = "claude"\n'
+        'symlinks = ["CLAUDE.md", "GEMINI.md"]\n'
         "[[rule]]\n"
         'qualified_name = "repo/imported-rule"\n'
         "[[skill]]\n"
@@ -165,6 +167,10 @@ async def test_builder_imports_toml(home: Path, project_root: Path, tmp_path: Pa
         await pilot.pause()
         assert isinstance(app.screen, TemplateBuilderScreen)
         assert app.screen.query_one("#name", Input).value == "imported-template"
+        # Project-layout metadata is restored into its inputs, not dropped.
+        assert app.screen.query_one("#description", Input).value == "imported desc"
+        assert app.screen.query_one("#layout-profile", Input).value == "claude"
+        assert app.screen.query_one("#symlinks", Input).value == "CLAUDE.md, GEMINI.md"
         rules_table = app.screen.query_one("#rules-table", DataTable)
         assert rules_table.row_count == 1
         assert rules_table.get_row_at(0)[0] == "repo/imported-rule"
@@ -178,6 +184,9 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
     url = _register_skill_rule_repo(tmp_path)
     profile = profiles.Profile(
         name="export-me",
+        description="a service template",
+        layout_profile="claude",
+        symlinks=["CLAUDE.md"],
         rules=[profiles.ProfileRule(qualified_name="rr/export-rule")],
         skills=[profiles.ProfileSkill(qualified_name="rr/skill")],
     )
@@ -209,6 +218,10 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
     assert 'qualified_name = "rr/skill"' in text
     # Each artifact is frozen to a SHA.
     assert text.count("sha = ") == 2
+    # Project-layout metadata is preserved, not silently dropped.
+    assert 'description = "a service template"' in text
+    assert 'layout_profile = "claude"' in text
+    assert "CLAUDE.md" in text
 
 
 @pytest.mark.asyncio

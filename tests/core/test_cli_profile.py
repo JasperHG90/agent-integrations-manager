@@ -44,11 +44,18 @@ def _plain(text: str) -> str:
 
 
 def test_export_then_import_round_trips(home: Path, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    url = f"file://{bare}"
+    repos.add("acme", url)
+    # Saved with no [[repo]] block / SHAs (as the old builder produced); export
+    # must resolve them from the local index so the shared TOML is reconstructable.
     profiles.save(
         profiles.Profile(
             name="svc",
             description="service template",
-            repos=[profiles.ProfileRepo(alias="acme", url="https://example.com/acme.git")],
             skills=[profiles.ProfileSkill(qualified_name="acme/foo")],
         )
     )
@@ -57,6 +64,9 @@ def test_export_then_import_round_trips(home: Path, tmp_path: Path) -> None:
     res = _runner.invoke(cli.app, ["template", "export", "svc", str(out)])
     assert res.exit_code == 0, _plain(res.output)
     assert out.exists()
+    exported = out.read_text(encoding="utf-8")
+    assert "[[repo]]" in exported
+    assert f'url = "{url}"' in exported
 
     res = _runner.invoke(cli.app, ["template", "import", str(out), "--name", "svc2"])
     assert res.exit_code == 0, _plain(res.output)
@@ -64,10 +74,9 @@ def test_export_then_import_round_trips(home: Path, tmp_path: Path) -> None:
     imported = profiles.load("svc2")
     assert imported.name == "svc2"
     assert imported.description == "service template"
-    assert imported.repos == [
-        profiles.ProfileRepo(alias="acme", url="https://example.com/acme.git")
-    ]
+    assert imported.repos == [profiles.ProfileRepo(alias="acme", url=url)]
     assert [s.qualified_name for s in imported.skills] == ["acme/foo"]
+    assert imported.skills[0].sha  # frozen at export
 
 
 def test_import_invalid_toml_is_friendly(home: Path, tmp_path: Path) -> None:

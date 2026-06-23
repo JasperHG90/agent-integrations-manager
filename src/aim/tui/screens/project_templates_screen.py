@@ -351,9 +351,12 @@ class ProjectTemplatesScreen(Screen[None]):
             self._notify_or_status("select a template to export")
             return
         try:
-            profile = profiles_mod.load(name)
+            profile = profiles_mod.enrich_from_index(profiles_mod.load(name))
         except profiles_mod.ProfileNotFoundError:
             self._status(f"template {name!r} not found")
+            return
+        except profiles_mod.TemplateArtifactUnresolvedError as exc:
+            self._status(f"export failed: {exc}")
             return
         self.app.push_screen(
             ExportTomlModal(profile, initial_path=f"{profile.name}.toml"),

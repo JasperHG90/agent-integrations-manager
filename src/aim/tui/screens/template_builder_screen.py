@@ -46,27 +46,44 @@ class TemplateBuilderScreen(Screen[None]):
         """
         super().__init__()
         self._name: str
+        self._description: str | None
+        self._layout_profile: str | None
+        self._symlinks: list[str]
         self._skills: list[profiles_mod.ProfileSkill]
         self._agents: list[profiles_mod.ProfileAgent]
         self._rules: list[str]
         self._mcp_servers: list[profiles_mod.ProfileMcpServer]
         if profile is not None:
             self._name = profile.name
+            self._description = profile.description
+            self._layout_profile = profile.layout_profile
+            self._symlinks = list(profile.symlinks)
             self._skills = list(profile.skills)
             self._agents = list(profile.agents)
             self._rules = [r.qualified_name for r in profile.rules]
             self._mcp_servers = list(profile.mcp_servers)
         else:
             self._name = ""
+            self._description = None
+            self._layout_profile = None
+            self._symlinks = []
             self._skills = []
             self._agents = []
             self._rules = []
             self._mcp_servers = []
 
     def _profile(self) -> profiles_mod.Profile:
-        """Build a Profile from the current in-memory builder state."""
+        """Build a Profile from the live inputs and in-memory artifact state."""
+        name = self.query_one("#name", Input).value.strip()
+        description = self.query_one("#description", Input).value.strip() or None
+        layout_profile = self.query_one("#layout-profile", Input).value.strip() or None
+        raw_symlinks = self.query_one("#symlinks", Input).value
+        symlinks = [s.strip() for s in raw_symlinks.split(",") if s.strip()]
         return profiles_mod.Profile(
-            name=self._name,
+            name=name,
+            description=description,
+            layout_profile=layout_profile,
+            symlinks=symlinks,
             skills=self._skills,
             agents=self._agents,
             rules=[profiles_mod.ProfileRule(qualified_name=name) for name in self._rules],
@@ -88,6 +105,14 @@ class TemplateBuilderScreen(Screen[None]):
         yield VerticalScroll(
             Static("Template name:", markup=False),
             Input(value=self._name, id="name"),
+            Static("Description (optional):", markup=False),
+            Input(value=self._description or "", id="description"),
+            Static("Layout profile (optional, e.g. claude):", markup=False),
+            Input(value=self._layout_profile or "", id="layout-profile"),
+            Static(
+                "Symlinks (optional, comma-separated, e.g. CLAUDE.md, GEMINI.md):", markup=False
+            ),
+            Input(value=", ".join(self._symlinks), id="symlinks"),
             Horizontal(
                 Vertical(
                     Static("Skills", classes="modal-title", markup=False),
@@ -332,11 +357,17 @@ class TemplateBuilderScreen(Screen[None]):
         if result is None:
             return
         self._name = result.profile.name
+        self._description = result.profile.description
+        self._layout_profile = result.profile.layout_profile
+        self._symlinks = list(result.profile.symlinks)
         self._skills = list(result.profile.skills)
         self._agents = list(result.profile.agents)
         self._rules = [r.qualified_name for r in result.profile.rules]
         self._mcp_servers = list(result.profile.mcp_servers)
         self.query_one("#name", Input).value = self._name
+        self.query_one("#description", Input).value = self._description or ""
+        self.query_one("#layout-profile", Input).value = self._layout_profile or ""
+        self.query_one("#symlinks", Input).value = ", ".join(self._symlinks)
         self._populate_all()
         self.app.notify(f"imported template from {result.path}")
 
@@ -350,7 +381,7 @@ class TemplateBuilderScreen(Screen[None]):
         """Open the TOML export modal seeded with the resolved profile."""
         try:
             profile = self._resolved_profile()
-        except profiles_mod.TemplateArtifactUnresolvedError as exc:
+        except Exception as exc:
             self._error(f"export failed: {exc}")
             return
         self.app.push_screen(

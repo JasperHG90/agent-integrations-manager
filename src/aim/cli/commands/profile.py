@@ -104,7 +104,7 @@ def profile_export(
     ),
 ) -> None:
     """Export a saved template to a shareable TOML file."""
-    profile = profiles_mod.load(name)
+    profile = profiles_mod.enrich_from_index(profiles_mod.load(name))
     text = profiles_mod.render_toml(profile)
     if path is not None and str(path) == "-":
         typer.echo(text)
