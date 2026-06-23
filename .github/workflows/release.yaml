@@ -55,6 +55,7 @@ jobs:
         with:
           path: artifacts/
           pattern: '*-dist'
+          merge-multiple: true
 
       - name: Detect pre-release
         id: prerelease
@@ -72,8 +73,10 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
           make_latest: ${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+          fail_on_unmatched_files: true
           files: |
-            artifacts/python-dist/*
+            artifacts/**/*.whl
+            artifacts/**/*.tar.gz
 
       - name: Update latest tag
         if: steps.prerelease.outputs.is_prerelease == 'false'
