@@ -35,47 +35,59 @@ def profile_save(
 def profile_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(
-        None, "--repo", help="List project templates discovered in a registered repo."
+        None, "--repo", help="Restrict to one registered repo (by its local alias)."
     ),
 ) -> None:
-    """List saved project templates, or templates discovered in a repo with --repo."""
-    if repo is not None:
-        from aim.core import repo_templates as repo_templates_mod
+    """List every template you can apply: locally-saved ones and those discovered
+    in registered repos. Use --repo <alias> to restrict to a single repo."""
+    from aim.core import repo_templates as repo_templates_mod
+    from aim.core import repos as repos_mod
 
-        template_rows = [
-            {
-                "qualified_name": t.qualified_name,
-                "name": t.template_name,
-                "description": t.description or "-",
-            }
-            for t in repo_templates_mod.list_templates(repo)
-        ]
-        format_mod.render(
-            template_rows,
-            _get_format(ctx),
-            title=f"templates in {repo}",
-            columns=["qualified_name", "name", "description"],
-            compact_columns=["qualified_name", "description"],
-        )
-        return
-    entries = profiles_mod.list_profiles()
-    rows = [
-        {
-            "name": p.name,
-            "symlinks": ",".join(p.symlinks) or "-",
-            "skills": len(p.skills),
-            "subagents": len(p.agents),
-            "mcp": len(p.mcp_servers),
-            "rules": len(p.rules),
-        }
-        for p in entries
-    ]
+    if repo is not None:
+        known = {r.alias for r in repos_mod.list_repos()}
+        if repo not in known:
+            hint = ", ".join(sorted(known)) or "none registered"
+            raise typer.BadParameter(
+                f"{repo!r} is not a registered repo alias (registered: {hint}). "
+                "Pass the local alias, e.g. 'jasperhg90', not the repo path.",
+                param_hint="--repo",
+            )
+        aliases = [repo]
+    else:
+        aliases = [r.alias for r in repos_mod.list_repos()]
+
+    rows: list[dict[str, object]] = []
+    for alias in aliases:
+        for t in repo_templates_mod.list_templates(alias):
+            rows.append(
+                {
+                    "qualified_name": t.qualified_name,
+                    "source": alias,
+                    "description": t.description or "-",
+                }
+            )
+    # Locally-saved templates are applied by bare name; only shown in the full list.
+    if repo is None:
+        for p in profiles_mod.list_profiles():
+            rows.append(
+                {
+                    "qualified_name": p.name,
+                    "source": "saved",
+                    "description": p.description or "-",
+                }
+            )
+
+    title = (
+        f"templates in {repo}"
+        if repo is not None
+        else "templates (apply with `aim template apply <name>`)"
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
-        title="templates saved",
-        columns=["name", "symlinks", "skills", "subagents", "mcp", "rules"],
-        compact_columns=["name", "skills", "subagents", "mcp", "rules"],
+        title=title,
+        columns=["qualified_name", "source", "description"],
+        compact_columns=["qualified_name", "source"],
     )
 
 

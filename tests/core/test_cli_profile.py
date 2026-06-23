@@ -132,6 +132,29 @@ def test_profile_alias_still_dispatches(home: Path) -> None:
     assert "aliased" in _plain(res.output)
 
 
+def test_list_includes_repo_templates_without_flag(home: Path, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            "skills/foo/SKILL.md": "# foo\n",
+            "templates/svc.toml": 'name = "svc"\n[[skill]]\nqualified_name = "src/foo"\n',
+        },
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("src", f"file://{bare}")
+
+    # The plain `template list` must surface repo-hosted templates, not just saved.
+    res = _runner.invoke(cli.app, ["template", "list"])
+    assert res.exit_code == 0, _plain(res.output)
+    assert "src/svc" in _plain(res.output)
+
+
+def test_list_bad_repo_alias_errors_with_hint(home: Path) -> None:
+    res = _runner.invoke(cli.app, ["template", "list", "--repo", "jasperhg90/skills"])
+    assert res.exit_code != 0
+    assert "not a registered repo alias" in _plain(res.output)
+
+
 def test_enrich_from_index_fills_repos_and_shas(home: Path, tmp_path: Path) -> None:
     working = git_fixtures.make_source_repo(
         tmp_path / "src",
