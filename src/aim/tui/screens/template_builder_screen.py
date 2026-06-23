@@ -73,6 +73,15 @@ class TemplateBuilderScreen(Screen[None]):
             mcp_servers=self._mcp_servers,
         )
 
+    def _resolved_profile(self) -> profiles_mod.Profile:
+        """Build the profile and resolve its [[repo]] block + frozen artifact SHAs.
+
+        Picked artifacts carry only a qualified_name; this fills in the source-repo
+        urls and per-artifact SHAs so the saved/exported template can reconstruct
+        its repos on another machine.
+        """
+        return profiles_mod.enrich_from_index(self._profile())
+
     def compose(self) -> ComposeResult:
         """Lay out the title, name input, content tables, and key hints."""
         yield Static("Template builder", id="title", markup=False)
@@ -338,8 +347,12 @@ class TemplateBuilderScreen(Screen[None]):
             return
 
     def action_export_toml(self) -> None:
-        """Open the TOML export modal seeded with the current profile."""
-        profile = self._profile()
+        """Open the TOML export modal seeded with the resolved profile."""
+        try:
+            profile = self._resolved_profile()
+        except profiles_mod.TemplateArtifactUnresolvedError as exc:
+            self._error(f"export failed: {exc}")
+            return
         self.app.push_screen(
             ExportTomlModal(profile, initial_path=f"{profile.name or 'template'}.toml"),
             self._on_export,
@@ -363,7 +376,7 @@ class TemplateBuilderScreen(Screen[None]):
             return
         self._name = name
         try:
-            profiles_mod.save(self._profile())
+            profiles_mod.save(self._resolved_profile())
         except Exception as exc:
             self._error(f"save failed: {exc}")
             return

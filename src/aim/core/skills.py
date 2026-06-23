@@ -249,6 +249,19 @@ class SkillNotIndexedError(KeyError):
     """Raised when the requested qualified_name is absent from the skill index."""
 
 
+def index_row(qualified_name: str) -> SkillIndex:
+    """Return the SkillIndex row for an indexed skill, or raise.
+
+    Raises:
+        SkillNotIndexedError: If no index row exists for the qualified name.
+    """
+    with db.session() as session:
+        row = session.get(SkillIndex, qualified_name)
+    if row is None:
+        raise SkillNotIndexedError(qualified_name)
+    return row
+
+
 def read_skill_content(qualified_name: str) -> str:
     """Return the raw SKILL.md content for an indexed skill.
 

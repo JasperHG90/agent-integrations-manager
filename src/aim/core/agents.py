@@ -308,6 +308,19 @@ class AgentNotIndexedError(KeyError):
     """The requested qualified_name doesn't appear in the agent index."""
 
 
+def index_row(qualified_name: str) -> AgentIndex:
+    """Return the AgentIndex row for an indexed agent, or raise.
+
+    Raises:
+        AgentNotIndexedError: If no index row exists for the qualified name.
+    """
+    with db.session() as session:
+        row = session.get(AgentIndex, qualified_name)
+    if row is None:
+        raise AgentNotIndexedError(qualified_name)
+    return row
+
+
 def read_agent_content(qualified_name: str) -> str:
     """Return the raw AGENT.md bytes for an indexed agent."""
     with db.session() as session:

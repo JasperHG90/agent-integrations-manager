@@ -7,6 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from aim import cli
@@ -120,3 +121,40 @@ def test_profile_alias_still_dispatches(home: Path) -> None:
     res = _runner.invoke(cli.app, ["profile", "list"])
     assert res.exit_code == 0, _plain(res.output)
     assert "aliased" in _plain(res.output)
+
+
+def test_enrich_from_index_fills_repos_and_shas(home: Path, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={"skills/foo/SKILL.md": "# foo\n", "rules/bar.md": "# bar\n"},
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("src", f"file://{bare}")
+    head = subprocess.run(
+        ["git", "-C", str(working), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # A builder-style template: artifacts by qualified_name only, no repos/SHAs.
+    built = profiles.Profile(
+        name="python-base",
+        skills=[profiles.ProfileSkill(qualified_name="src/foo")],
+        rules=[profiles.ProfileRule(qualified_name="src/bar")],
+    )
+
+    enriched = profiles.enrich_from_index(built)
+
+    assert enriched.repos == [profiles.ProfileRepo(alias="src", url=f"file://{bare}")]
+    assert enriched.skills[0].sha == head
+    assert enriched.rules[0].sha == head
+
+
+def test_enrich_from_index_unresolved_artifact_raises(home: Path) -> None:
+    built = profiles.Profile(
+        name="broken",
+        skills=[profiles.ProfileSkill(qualified_name="ghost/foo")],
+    )
+    with pytest.raises(profiles.TemplateArtifactUnresolvedError):
+        profiles.enrich_from_index(built)

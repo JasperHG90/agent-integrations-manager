@@ -59,6 +59,13 @@ class TemplateNotLockedError(RuntimeError):
     pass
 
 
+class TemplateArtifactUnresolvedError(RuntimeError):
+    """A template references an artifact that is absent from the local index, so its
+    source repo and SHA cannot be resolved. Add or refresh the repo and retry."""
+
+    pass
+
+
 class ProfileSkill(BaseModel):
     """A skill reference in a template, frozen to an exact commit `sha`.
 
@@ -379,6 +386,87 @@ def _render_toml_value(value: object) -> str:
         return "false"
     # Fall back to string for anything else.
     return f'"{_escape_toml_string(str(value))}"'
+
+
+def enrich_from_index(profile: Profile) -> Profile:
+    """Resolve a builder-created template's source repos and freeze artifact SHAs.
+
+    The TUI template builder references skills, agents, and rules by qualified_name
+    only. Fill in the two things a template needs to reconstruct elsewhere: the
+    ``[[repo]]`` block (each artifact's source-repo url, so apply can auto-register
+    the repos) and a frozen ``sha`` per artifact (the commit its repo was indexed
+    at). MCP servers are registry-sourced and need no repo entry. An artifact that
+    already carries a ``sha`` keeps it. Returns a new Profile; input is unchanged.
+
+    Raises:
+        TemplateArtifactUnresolvedError: If a referenced skill, agent, or rule is
+            not present in the local index (its repo was never added or needs a
+            refresh), so its repo url and SHA cannot be resolved.
+    """
+    from aim.core import agents as agents_mod
+    from aim.core import repo_rules as repo_rules_mod
+    from aim.core import repos as repos_mod
+    from aim.core import skills as skills_mod
+
+    repo_aliases: set[str] = set()
+
+    def _freeze_sha(
+        kind: str, qualified_name: str, existing_sha: str | None, lookup: object
+    ) -> str:
+        """Record the artifact's repo alias and return its SHA (existing or indexed)."""
+        repo_aliases.add(qualified_name.partition("/")[0])
+        if existing_sha:
+            return existing_sha
+        try:
+            row = lookup(qualified_name)  # type: ignore[operator]
+        except KeyError as exc:
+            raise TemplateArtifactUnresolvedError(
+                f"{kind} {qualified_name!r} is not in the local index; add or refresh "
+                f"its repo (`aim repo refresh`) before saving or exporting the template"
+            ) from exc
+        return row.indexed_at_sha
+
+    skills_out = [
+        ProfileSkill(
+            qualified_name=s.qualified_name,
+            sha=_freeze_sha("skill", s.qualified_name, s.sha, skills_mod.index_row),
+        )
+        for s in profile.skills
+    ]
+    agents_out = [
+        ProfileAgent(
+            qualified_name=a.qualified_name,
+            sha=_freeze_sha("agent", a.qualified_name, a.sha, agents_mod.index_row),
+        )
+        for a in profile.agents
+    ]
+    rules_out = [
+        ProfileRule(
+            qualified_name=r.qualified_name,
+            sha=_freeze_sha("rule", r.qualified_name, r.sha, repo_rules_mod.index_row),
+        )
+        for r in profile.rules
+    ]
+
+    def _repo_url(alias: str) -> str:
+        """Resolve a registered repo's url by alias, or raise a template error."""
+        try:
+            return repos_mod.get(alias).url
+        except KeyError as exc:
+            raise TemplateArtifactUnresolvedError(
+                f"repo {alias!r} is referenced by the template but not registered; "
+                f"run `aim repo add <url>` before saving or exporting"
+            ) from exc
+
+    repos_out = [ProfileRepo(alias=alias, url=_repo_url(alias)) for alias in sorted(repo_aliases)]
+    return profile.model_copy(
+        update={
+            "repos": repos_out,
+            "skills": skills_out,
+            "agents": agents_out,
+            "rules": rules_out,
+        }
+    )
 
 
 def from_project(name: str, project_root: Path) -> Profile:
