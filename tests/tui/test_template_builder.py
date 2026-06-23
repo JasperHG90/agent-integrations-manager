@@ -225,6 +225,44 @@ async def test_builder_exports_toml(home: Path, project_root: Path, tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_builder_preserves_archetype(home: Path, project_root: Path, tmp_path: Path) -> None:
+    from aim.core import archetypes
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "asrc",
+        files={"instructions/lean/AGENTS.md": "# Lean\n", "README.md": "x\n"},
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "abare.git")
+    url = f"file://{bare}"
+    repos.add("rr", url, allow_empty=True)
+    sha = archetypes.index_row("rr/lean").indexed_at_sha
+    profile = profiles.Profile(
+        name="with-arch",
+        repos=[profiles.ProfileRepo(alias="rr", url=url)],
+        archetype=profiles.ProfileArchetype(qualified_name="rr/lean", sha=sha),
+    )
+    export_path = tmp_path / "out.toml"
+
+    app = AimApp(project_root=project_root)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(TemplateBuilderScreen(profile))
+        await pilot.pause()
+        _unfocus_input(app)
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, ExportTomlModal)
+        app.screen.query_one("#path", Input).value = str(export_path)
+        await pilot.click("#go")
+        await pilot.pause()
+
+    text = export_path.read_text(encoding="utf-8")
+    # The repo-sourced archetype survives the builder, not downgraded to default.
+    assert "[archetype]" in text
+    assert 'qualified_name = "rr/lean"' in text
+
+
+@pytest.mark.asyncio
 async def test_builder_export_unresolved_artifact_shows_error(
     home: Path, project_root: Path
 ) -> None:

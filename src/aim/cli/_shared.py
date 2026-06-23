@@ -277,6 +277,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         profiles_mod.TemplateNotLockedError,
         profiles_mod.NoProjectTemplateError,
         profiles_mod.TemplateArtifactNotFoundError,
+        profiles_mod.TemplateArtifactUnresolvedError,
         sync_mod.SyncError,
         sync_mod.SyncDriftError,
         prune_mod.PruneError,

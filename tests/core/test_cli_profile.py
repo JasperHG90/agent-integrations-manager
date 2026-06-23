@@ -160,6 +160,18 @@ def test_enrich_from_index_fills_repos_and_shas(home: Path, tmp_path: Path) -> N
     assert enriched.rules[0].sha == head
 
 
+def test_export_unresolved_repo_is_friendly(home: Path, tmp_path: Path) -> None:
+    # A saved template referencing an unregistered repo must export with a clean
+    # `error:` message, never a raw traceback (the export now always enriches).
+    profiles.save(
+        profiles.Profile(name="orphan", skills=[profiles.ProfileSkill(qualified_name="ghost/foo")])
+    )
+    res = _runner.invoke(cli.app, ["template", "export", "orphan", str(tmp_path / "o.toml")])
+    assert res.exit_code == 1
+    assert "error:" in _plain(res.output)
+    assert "Traceback" not in res.output
+
+
 def test_enrich_from_index_unresolved_artifact_raises(home: Path) -> None:
     built = profiles.Profile(
         name="broken",

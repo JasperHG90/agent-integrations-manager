@@ -49,6 +49,9 @@ class TemplateBuilderScreen(Screen[None]):
         self._description: str | None
         self._layout_profile: str | None
         self._symlinks: list[str]
+        # The AGENTS.md base archetype is preserved as-is (the builder has no picker
+        # yet) so editing a template never silently drops a repo-sourced archetype.
+        self._archetype: profiles_mod.ProfileArchetype
         self._skills: list[profiles_mod.ProfileSkill]
         self._agents: list[profiles_mod.ProfileAgent]
         self._rules: list[str]
@@ -58,6 +61,7 @@ class TemplateBuilderScreen(Screen[None]):
             self._description = profile.description
             self._layout_profile = profile.layout_profile
             self._symlinks = list(profile.symlinks)
+            self._archetype = profile.archetype
             self._skills = list(profile.skills)
             self._agents = list(profile.agents)
             self._rules = [r.qualified_name for r in profile.rules]
@@ -67,6 +71,7 @@ class TemplateBuilderScreen(Screen[None]):
             self._description = None
             self._layout_profile = None
             self._symlinks = []
+            self._archetype = profiles_mod.ProfileArchetype()
             self._skills = []
             self._agents = []
             self._rules = []
@@ -84,6 +89,7 @@ class TemplateBuilderScreen(Screen[None]):
             description=description,
             layout_profile=layout_profile,
             symlinks=symlinks,
+            archetype=self._archetype,
             skills=self._skills,
             agents=self._agents,
             rules=[profiles_mod.ProfileRule(qualified_name=name) for name in self._rules],
@@ -360,6 +366,7 @@ class TemplateBuilderScreen(Screen[None]):
         self._description = result.profile.description
         self._layout_profile = result.profile.layout_profile
         self._symlinks = list(result.profile.symlinks)
+        self._archetype = result.profile.archetype
         self._skills = list(result.profile.skills)
         self._agents = list(result.profile.agents)
         self._rules = [r.qualified_name for r in result.profile.rules]

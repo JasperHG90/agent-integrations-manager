@@ -311,6 +311,11 @@ def test_template_version_migration(home: Path) -> None:
     # A non-int version is rejected.
     with pytest.raises(profiles.ProfileTomlError):
         profiles.parse_toml('version = "x"\nname = "bad"\n')
+    # Zero / negative versions are rejected (never silently stamped current).
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml('version = 0\nname = "zero"\n')
+    with pytest.raises(profiles.ProfileTomlError):
+        profiles.parse_toml('version = -3\nname = "neg"\n')
 
 
 def test_render_toml_drops_null_overrides(home: Path) -> None:

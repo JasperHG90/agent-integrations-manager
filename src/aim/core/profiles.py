@@ -339,10 +339,15 @@ def _migrate_template(raw: dict[str, object], *, source: str | None = None) -> d
         ProfileTomlError: If the version is not an int or is newer than supported.
     """
     version = raw.get("version", 1)
-    if not isinstance(version, int):
+    if not isinstance(version, int) or isinstance(version, bool):
         raise ProfileTomlError(
             f"template version in {source or 'profile'} must be an int, "
             f"got {type(version).__name__}"
+        )
+    if version < 1:
+        raise ProfileTomlError(
+            f"template {source or 'profile'} has invalid version {version}; "
+            f"must be between 1 and {CURRENT_TEMPLATE_VERSION}"
         )
     if version > CURRENT_TEMPLATE_VERSION:
         raise ProfileTomlError(
