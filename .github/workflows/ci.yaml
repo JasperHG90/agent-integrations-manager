@@ -34,7 +34,7 @@ jobs:
       hermes-runner: ${{ steps.filter.outputs.hermes-runner }}
       hermes-plugin: ${{ steps.filter.outputs.hermes-plugin }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -63,7 +63,7 @@ jobs:
       # isolated venv does not provide. It still runs locally via uv.
       SKIP: aim-check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run pre-commit checks
         uses: JasperHG90/toiminnot/actions/prek@main
         with:
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate aim governance policy
         uses: ./.github/actions/aim
         with:
