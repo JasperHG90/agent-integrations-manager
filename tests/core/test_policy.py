@@ -155,6 +155,28 @@ def test_active_rules_overrides_disable_and_custom() -> None:
     assert "c1" not in {r.id for r in policy.active_rules(pol)}
 
 
+def test_risk_per_kind_resolve_and_roundtrip() -> None:
+    pol = policy.from_mapping(
+        {
+            "risk": {
+                "classifier": True,
+                "llm_judge": False,
+                "skill": {"classifier": False},
+                "plugin": {"llm_judge": True},
+            }
+        }
+    )
+    assert pol.risk.resolve("skill") == (False, False)  # classifier overridden off
+    assert pol.risk.resolve("plugin") == (True, True)  # llm_judge overridden on
+    assert pol.risk.resolve("agent") == (True, False)  # inherits the global flags
+    assert pol.risk.active_for("skill") is False
+    assert pol.risk.active_for("plugin") is True
+    # round-trip through TOML preserves the per-kind overrides
+    back = policy.from_toml(policy.to_toml(pol))
+    assert back.risk.resolve("skill") == (False, False)
+    assert back.risk.resolve("plugin") == (True, True)
+
+
 # ---------------------------------------------------------------------------
 # enforcement predicates (pure)
 # ---------------------------------------------------------------------------

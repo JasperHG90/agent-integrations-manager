@@ -178,3 +178,47 @@ def test_same_name_same_target_shadowed(home: Path, tmp_path: Path) -> None:
     assert len(rows) == 1  # collapsed to one
     assert rows[0].source_path == "dup"  # shallower path wins
     assert any("shadowed" in w for w in plugins.take_skipped_warnings())
+
+
+def test_plugin_bundled_artifacts_not_indexed(home: Path, tmp_path: Path) -> None:
+    # A skill bundled inside a plugin's dir must not surface as a standalone skill.
+    from aim.core import skills
+
+    marketplace = {"name": "demo", "plugins": [{"name": "bundler", "source": "./bundler"}]}
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "bundler/.claude-plugin/plugin.json": json.dumps({"name": "bundler"}),
+            "bundler/skills/inner/SKILL.md": "# inner\n",
+            "skills/standalone/SKILL.md": "# standalone\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    names = {r.skill_name for r in skills.list_skills()}
+    assert "standalone" in names
+    assert "inner" not in names  # bundled in the 'bundler' plugin
+
+
+def test_plugin_version_from_plugin_json(home: Path, tmp_path: Path) -> None:
+    # The plugin's own plugin.json version is the source of truth; the marketplace
+    # entry's version is only a fallback.
+    marketplace = {
+        "name": "demo",
+        "plugins": [
+            {"name": "withpj", "source": "./withpj", "version": "9.9.9"},
+            {"name": "nopjver", "source": "./nopjver", "version": "0.1.0"},
+        ],
+    }
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "withpj/.claude-plugin/plugin.json": json.dumps({"name": "withpj", "version": "1.2.3"}),
+            "nopjver/.claude-plugin/plugin.json": json.dumps({"name": "nopjver"}),
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    versions = {r.plugin_name: r.version for r in plugins.list_plugins()}
+    assert versions["withpj"] == "1.2.3"  # plugin.json wins over the marketplace entry
+    assert versions["nopjver"] == "0.1.0"  # falls back to the marketplace entry version

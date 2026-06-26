@@ -196,7 +196,13 @@ def _gate_rule(
     policy.assert_repo_allowed(pol, alias, _repo_url(alias))
     policy.assert_artifact_allowed(pol, "rule", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"rule {qualified_name}")
-    risk.gate(content, qualified_name=qualified_name, pol=pol, override_risk=override_risk)
+    risk.gate(
+        content,
+        qualified_name=qualified_name,
+        pol=pol,
+        override_risk=override_risk,
+        kind="rule",
+    )
 
 
 def _deploy(

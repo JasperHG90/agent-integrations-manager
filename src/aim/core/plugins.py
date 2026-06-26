@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlmodel import delete, select
 
@@ -74,6 +75,25 @@ class IndexResult:
 def _rank(plugin: DiscoveredPlugin, kind_order: dict[str, int]) -> tuple[int, int, str]:
     """Precedence for deduplicating same-named plugins (lower wins)."""
     return (kind_order.get(plugin.kind, 99), plugin.source_path.count("/"), plugin.source_path)
+
+
+def owned_dir_prefixes(repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> set[str]:
+    """Source dirs of dir-kind plugins in a repo.
+
+    Skills/agents/rules living UNDER one of these are bundled with a plugin and
+    must not surface as standalone artifacts (filter with `is_plugin_owned`).
+    """
+    prefixes: set[str] = set()
+    for kind in plugin_kinds.load_kinds().values():
+        for plugin in kind.discover(repo_alias, repo_dir, sha, tree).plugins:
+            if plugin.source_unit == "dir":
+                prefixes.add(plugin.source_path.rstrip("/"))
+    return prefixes
+
+
+def is_plugin_owned(path: str, prefixes: set[str]) -> bool:
+    """True if a repo-relative path lives inside one of the plugin source dirs."""
+    return any(path == d or path.startswith(f"{d}/") for d in prefixes)
 
 
 def discover(repo_alias: str) -> IndexResult:

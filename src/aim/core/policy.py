@@ -61,6 +61,19 @@ class RiskRule(BaseModel):
     prompt: str = ""  # preset rules keep their prompt in-code; custom rules carry their own
 
 
+class RiskKindSettings(BaseModel):
+    """Per-artifact-type override of which risk screens run (None = inherit global)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    classifier: bool | None = None
+    llm_judge: bool | None = None
+
+
+# Artifact kinds that have a risk gate and support per-type risk overrides.
+_RISK_KINDS = ("skill", "agent", "rule", "mcp", "plugin", "archetype")
+
+
 class RiskSettings(BaseModel):
     """Configure risk scanning: which screens run, thresholds, and override rules."""
 
@@ -83,6 +96,27 @@ class RiskSettings(BaseModel):
     allow_override: bool = True
     # preset rule id -> severity override (str) or False to disable.
     preset_overrides: dict[str, str | bool] = Field(default_factory=dict)
+    # Per-artifact-type overrides of classifier/llm_judge, keyed by kind
+    # (skill/agent/rule/mcp/plugin/archetype). Absent keys inherit the flags above.
+    per_kind: dict[str, RiskKindSettings] = Field(default_factory=dict)
+
+    def resolve(self, kind: str | None) -> tuple[bool, bool]:
+        """Effective (classifier, llm_judge) for an artifact kind; global if no override."""
+        override = self.per_kind.get(kind) if kind else None
+        classifier = (
+            self.classifier
+            if override is None or override.classifier is None
+            else override.classifier
+        )
+        llm_judge = (
+            self.llm_judge if override is None or override.llm_judge is None else override.llm_judge
+        )
+        return classifier, llm_judge
+
+    def active_for(self, kind: str | None) -> bool:
+        """Whether any risk screen runs for this artifact kind."""
+        classifier, llm_judge = self.resolve(kind)
+        return classifier or llm_judge
 
 
 class Policy(BaseModel):
@@ -223,6 +257,14 @@ def from_mapping(data: dict) -> Policy:
     rules_t = dict(risk_t.pop("rules", {}) or {})
 
     preset_overrides = {k: v for k, v in rules_t.items() if k != "custom"}
+    per_kind = {
+        kind: RiskKindSettings(
+            classifier=risk_t[kind].get("classifier"),
+            llm_judge=risk_t[kind].get("llm_judge"),
+        )
+        for kind in _RISK_KINDS
+        if isinstance(risk_t.get(kind), dict)
+    }
     risk = RiskSettings(
         mode=str(risk_t.get("mode", "block")),
         classifier=bool(risk_t.get("classifier", False)),
@@ -234,6 +276,7 @@ def from_mapping(data: dict) -> Policy:
         load_custom=bool(rules_t.get("custom", True)),
         allow_override=bool(risk_t.get("allow_override", True)),
         preset_overrides=preset_overrides,
+        per_kind=per_kind,
     )
     custom_rules: list[RiskRule] = []
     for raw in data.get("rule", []) or []:
@@ -320,6 +363,14 @@ def to_mapping(policy: Policy) -> dict:
     rules: dict = dict(policy.risk.preset_overrides)
     rules["custom"] = policy.risk.load_custom
     risk["rules"] = rules
+    for kind, override in policy.risk.per_kind.items():
+        sub = {
+            k: v
+            for k, v in (("classifier", override.classifier), ("llm_judge", override.llm_judge))
+            if v is not None
+        }
+        if sub:
+            risk[kind] = sub
     doc["risk"] = risk
     if policy.custom_rules:
         doc["rule"] = [r.model_dump() for r in policy.custom_rules]

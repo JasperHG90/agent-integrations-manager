@@ -361,12 +361,13 @@ def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
         )
     # Guarded because gathering skill text is risk-only work; skip it when risk is off
     # (agents/rules already hold their content, so they call risk.gate unconditionally).
-    if pol.risk.classifier or pol.risk.llm_judge:
+    if pol.risk.active_for("skill"):
         risk.gate(
             _gather_skill_text(snap),
             qualified_name=plan.qualified_name,
             pol=pol,
             override_risk=override_risk,
+            kind="skill",
         )
     if plan.target_dir.exists():
         shutil.rmtree(plan.target_dir)

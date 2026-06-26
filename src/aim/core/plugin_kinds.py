@@ -142,6 +142,23 @@ def _coerce_owner(raw: object) -> tuple[str | None, str | None]:
     return (None, None)
 
 
+def _plugin_json_version(repo_dir: Path, sha: str, source_path: str) -> str | None:
+    """A claude plugin's own version from ``<source>/.claude-plugin/plugin.json``, if any.
+
+    This is the plugin's self-declared version, which is the source of truth — the
+    marketplace entry's ``version`` is only a fallback when the plugin.json lacks one.
+    """
+    backend = git.get_backend()
+    try:
+        data = json.loads(
+            backend.cat_file(repo_dir, sha, f"{source_path}/.claude-plugin/plugin.json")
+        )
+    except (git.GitError, json.JSONDecodeError):
+        return None
+    version = data.get("version") if isinstance(data, dict) else None
+    return version if isinstance(version, str) else None
+
+
 def _is_vendored(project_root: Path, plugin: InstalledPlugin) -> bool:
     """True when a plugin's vendored files are present on disk.
 
@@ -221,9 +238,10 @@ class ClaudeKind:
                         source_path=resolved,
                         source_unit="dir",
                         marketplace_name=name,
-                        version=entry.get("version")
-                        if isinstance(entry.get("version"), str)
-                        else None,
+                        version=_plugin_json_version(repo_dir, sha, resolved)
+                        or (
+                            entry.get("version") if isinstance(entry.get("version"), str) else None
+                        ),
                         description=entry.get("description")
                         if isinstance(entry.get("description"), str)
                         else None,

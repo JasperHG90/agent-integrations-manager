@@ -198,12 +198,13 @@ def _deploy(
                 f"{qualified_name}: hidden Unicode found in plugin files:\n" + "\n".join(hidden)
             )
         _surface_executable_surface(snap, qualified_name)
-        if pol.risk.classifier or pol.risk.llm_judge:
+        if pol.risk.active_for("plugin"):
             risk.gate(
                 install._gather_skill_text(snap),
                 qualified_name=qualified_name,
                 pol=pol,
                 override_risk=override_risk,
+                kind="plugin",
             )
         if target.exists():
             shutil.rmtree(target)
@@ -222,8 +223,14 @@ def _deploy(
             f"could not read {repo_alias}/{plugin_name}@{version.sha[:12]}: {exc}"
         ) from exc
     content_guard.assert_no_hidden_unicode(content, source=qualified_name)
-    if pol.risk.classifier or pol.risk.llm_judge:
-        risk.gate(content, qualified_name=qualified_name, pol=pol, override_risk=override_risk)
+    if pol.risk.active_for("plugin"):
+        risk.gate(
+            content,
+            qualified_name=qualified_name,
+            pol=pol,
+            override_risk=override_risk,
+            kind="plugin",
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return hashing.hash_text(content), target

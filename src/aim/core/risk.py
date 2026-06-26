@@ -132,20 +132,23 @@ class RiskConfig:
         return self.classifier or self.llm_judge
 
 
-def config_from_policy(pol: policy.Policy) -> RiskConfig:
+def config_from_policy(pol: policy.Policy, kind: str | None = None) -> RiskConfig:
     """Build a RiskConfig from a resolved policy's `[risk]` section.
 
     Args:
         pol: The governing policy whose risk settings and active rules apply.
+        kind: Artifact kind whose per-type classifier/llm_judge override applies;
+            None uses the global flags.
 
     Returns:
         The RiskConfig used to drive classification and enforcement.
     """
     r = pol.risk
+    classifier, llm_judge = r.resolve(kind)
     return RiskConfig(
         mode=r.mode,
-        classifier=r.classifier,
-        llm_judge=r.llm_judge,
+        classifier=classifier,
+        llm_judge=llm_judge,
         model_id=r.model_id,
         block_threshold=RiskLevel.from_severity(r.block_threshold),
         escalate_threshold=RiskLevel.from_severity(r.escalate_threshold),
@@ -844,21 +847,27 @@ def assert_acceptable_risk(
 
 
 def gate(
-    content: str, *, qualified_name: str, pol: policy.Policy, override_risk: bool = False
+    content: str,
+    *,
+    qualified_name: str,
+    pol: policy.Policy,
+    override_risk: bool = False,
+    kind: str | None = None,
 ) -> None:
     """Classify and enforce content at a deploy chokepoint using the policy's risk settings.
 
-    A no-op when risk is disabled.
+    A no-op when risk is disabled (for this ``kind``, after per-type overrides).
 
     Args:
         content: The artifact content to gate.
         qualified_name: Qualified name of the artifact, used as the source label.
         pol: The governing policy supplying risk settings.
         override_risk: Bypass blocking when the policy permits overrides.
+        kind: Artifact kind, so per-type risk overrides apply.
     """
     assert_acceptable_risk(
         content,
         source=qualified_name,
-        config=config_from_policy(pol),
+        config=config_from_policy(pol, kind),
         override_risk=override_risk,
     )

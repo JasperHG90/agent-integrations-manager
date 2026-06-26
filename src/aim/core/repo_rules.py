@@ -99,6 +99,10 @@ def discover(repo_alias: str) -> IndexResult:
     sha = git.get_backend().resolve_ref(repo_dir, repo.default_ref)
     paths = git.get_backend().ls_tree(repo_dir, sha)
 
+    from aim.core import plugins  # lazy import avoids a module-load cycle
+
+    plugin_dirs = plugins.owned_dir_prefixes(repo_alias, repo_dir, sha, paths)
+
     # Group candidates by rule name. Only `rules/` and `.claude/rules/` are
     # considered. Precedence: shallower path wins; at the same depth `rules/`
     # wins over `.claude/rules/`. Ties break by lexicographic path.
@@ -112,6 +116,8 @@ def discover(repo_alias: str) -> IndexResult:
 
         if not validation.is_safe_repo_path(p):
             continue
+        if plugins.is_plugin_owned(p, plugin_dirs):
+            continue  # bundled inside a plugin; not a standalone rule
 
         name = match.group("name")
         if not validation.is_valid_rule_name(name):
