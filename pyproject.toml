@@ -1,6 +1,6 @@
 [project]
 name = "aim"
-version = "0.3.3"
+version = "0.4.0"
 description = "Agent Integrations Manager: scaffold and manage agent-engineering projects (AGENTS.md, reusable skills, rules, MCP servers, sub-agents)."
 authors = [
     { name = "Jasper Ginn", email = "jasperginn@gmail.com" }
