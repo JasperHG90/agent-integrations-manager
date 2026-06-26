@@ -32,6 +32,8 @@ def kind_tag(kinds: set[str]) -> str:
         parts.append("rules")
     if "archetype" in kinds:
         parts.append("archetypes")
+    if "plugin" in kinds:
+        parts.append("plugins")
     return " + ".join(parts) if parts else "—"
 
 

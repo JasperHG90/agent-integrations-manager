@@ -273,6 +273,7 @@ def install(
             content_hash=content_hash,
             pin=pin,
             track=track,
+            risk_acknowledged=override_risk,
         )
         m.agents.append(installed)
         result = installed
@@ -282,6 +283,8 @@ def install(
         existing.source_path = row.source_path
         existing.target_path = str(target.relative_to(project_root))
         existing.content_hash = content_hash
+        if override_risk:
+            existing.risk_acknowledged = True
         if pin is not None:
             existing.pin = pin
         if track is not None:
@@ -342,6 +345,8 @@ def update(
     existing.content_hash = _write_agent(
         project_root, qualified_name, content, target, override_risk=override_risk
     )
+    if override_risk:
+        existing.risk_acknowledged = True
     manifest.save(project_root, m)
     declarations._update_agent(project_root, existing)
     return existing

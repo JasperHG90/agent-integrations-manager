@@ -276,6 +276,7 @@ def install(
             content_hash=content_hash,
             pin=pin,
             track=track,
+            risk_acknowledged=override_risk,
         )
         m.rules.append(installed)
         result = installed
@@ -284,6 +285,8 @@ def install(
         existing.repo_alias = row.repo_alias
         existing.source_path = row.rule_md_path
         existing.content_hash = content_hash
+        if override_risk:
+            existing.risk_acknowledged = True
         if pin is not None:
             existing.pin = pin
         if track is not None:
@@ -348,6 +351,8 @@ def update(
     )
     existing.push_history(new_version)
     existing.content_hash = hashing.hash_text(content)
+    if override_risk:
+        existing.risk_acknowledged = True
     manifest.save(project_root, m)
     declarations._update_rule(project_root, existing)
     return existing

@@ -323,7 +323,7 @@ def _sync_skill(
             version=installed.current,
             project_root=project_root,
         )
-        content_hash = install_mod._deploy(plan)
+        content_hash = install_mod._deploy(plan, override_risk=installed.risk_acknowledged)
     except Exception as exc:
         return None, f"{installed.qualified_name}: {exc}"
 
@@ -434,7 +434,12 @@ def _sync_agent(
             )
 
     try:
-        agent_install._gate_agent(project_root, installed.qualified_name, expected_content)
+        agent_install._gate_agent(
+            project_root,
+            installed.qualified_name,
+            expected_content,
+            override_risk=installed.risk_acknowledged,
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(expected_content, encoding="utf-8")
     except Exception as exc:
@@ -550,7 +555,12 @@ def _sync_rule(
             )
 
     try:
-        rule_install._gate_rule(project_root, installed.qualified_name, expected_content)
+        rule_install._gate_rule(
+            project_root,
+            installed.qualified_name,
+            expected_content,
+            override_risk=installed.risk_acknowledged,
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(expected_content, encoding="utf-8")
     except Exception as exc:
@@ -680,7 +690,6 @@ async def _sync_mcps(
 def _sync_plugin(
     project_root: Path,
     installed: InstalledPlugin,
-    profile: layout_profiles.LayoutProfile,
     *,
     force: bool,
 ) -> tuple[str | None, str | None]:
@@ -723,14 +732,13 @@ def _sync_plugin(
         plugin_name = installed.qualified_name.split("/", 1)[1]
         content_hash, _ = plugin_install._deploy(
             project_root,
-            profile,
             kind,
             repo_alias=installed.repo_alias,
             plugin_name=plugin_name,
             source_path=installed.source_path,
             version=installed.current,
             qualified_name=installed.qualified_name,
-            override_risk=False,
+            override_risk=installed.risk_acknowledged,
         )
     except Exception as exc:
         return None, f"{installed.qualified_name}: {exc}"
@@ -742,7 +750,6 @@ def _sync_plugin(
 async def _sync_plugins(
     project_root: Path,
     plugins_list: list[InstalledPlugin],
-    profile: layout_profiles.LayoutProfile,
     *,
     force: bool,
     callback: Callable[[str, str, str], object] | None,
@@ -757,9 +764,7 @@ async def _sync_plugins(
         """Reconcile one plugin off-thread and emit its progress notifications."""
         _notify(cb, "plugin", plugin.qualified_name, "syncing")
         try:
-            synced, error = await asyncio.to_thread(
-                _sync_plugin, project_root, plugin, profile, force=force
-            )
+            synced, error = await asyncio.to_thread(_sync_plugin, project_root, plugin, force=force)
         except SyncDriftError as exc:
             return None, str(exc)
         if error:
@@ -845,13 +850,13 @@ async def run(options: SyncOptions) -> SyncResult:
     result.synced_mcp = mcps_synced
 
     plugins_synced, plugin_errors = await _sync_plugins(
-        project_root, m.plugins, profile, force=options.force, callback=options.progress_callback
+        project_root, m.plugins, force=options.force, callback=options.progress_callback
     )
     result.synced_plugins = plugins_synced
     # Reconcile each kind's client config (claude settings.json/marketplace, etc.)
     # once, after vendoring, to avoid races between concurrently-synced plugins.
     if m.plugins:
-        await asyncio.to_thread(plugin_install.reconcile_registration, project_root, profile, m)
+        await asyncio.to_thread(plugin_install.reconcile_registration, project_root, m)
 
     if options.sync_agents:
         result.drift_warnings = await asyncio.to_thread(

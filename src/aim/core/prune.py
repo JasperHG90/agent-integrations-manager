@@ -497,7 +497,7 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
             try:
                 # m already excludes the pruned plugins, so refcount/regeneration
                 # in the kind sees only survivors.
-                pkind.unregister(project_root, profile, p, m)
+                pkind.unregister(project_root, p, m)
             except Exception as exc:
                 raise PruneError(
                     f"failed to update client config for {p.qualified_name}: {exc}"

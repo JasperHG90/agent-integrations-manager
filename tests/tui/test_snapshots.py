@@ -35,6 +35,23 @@ def _setup_repo_with_skills(tmp_path: Path, files: dict[str, str]) -> None:
     repos.add("anth", f"file://{bare}")
 
 
+def _setup_repo_with_plugin(tmp_path: Path) -> None:
+    import json
+
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "design-audit", "source": "./design-audit", "version": "1.0.0"}],
+    }
+    files = {
+        ".claude-plugin/marketplace.json": json.dumps(marketplace),
+        "design-audit/.claude-plugin/plugin.json": json.dumps({"name": "design-audit"}),
+        "design-audit/skills/audit/SKILL.md": "# audit\n",
+    }
+    working = git_fixtures.make_source_repo(tmp_path / "psrc", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "pbare.git")
+    repos.add("pm", f"file://{bare}")
+
+
 # ---------- Structural: cheap, robust to theme changes ----------
 
 
@@ -105,6 +122,34 @@ async def test_skills_screen_structure_two_skills(home: Path, tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_plugins_screen_structure_empty(home: Path) -> None:
+    from textual.widgets import DataTable
+
+    app = AimApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 0
+        assert table.columns  # columns set up
+
+
+@pytest.mark.asyncio
+async def test_plugins_screen_structure_one_plugin(home: Path, tmp_path: Path) -> None:
+    from textual.widgets import DataTable
+
+    _setup_repo_with_plugin(tmp_path)
+    app = AimApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 1
+
+
+@pytest.mark.asyncio
 async def test_rules_screen_structure_with_rule(home: Path, tmp_path: Path) -> None:
     from textual.widgets import DataTable
 
@@ -146,3 +191,8 @@ def test_snapshot_skills_populated(
 ) -> None:
     _setup_repo_with_skills(tmp_path, {"skills/review/SKILL.md": "# Review\n\nReview a PR.\n"})
     assert snap_compare(AimApp(), press=["s"])
+
+
+# No bitmap backstop for the plugins screen: it renders each plugin's short SHA,
+# which comes from a test-fixture git commit whose date (and thus SHA) is not
+# pinned — the structural row-count tests above cover the screen deterministically.

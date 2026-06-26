@@ -124,6 +124,7 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     from aim.tui.screens.config_screen import ConfigScreen
     from aim.tui.screens.layout_profiles_screen import LayoutProfilesScreen
     from aim.tui.screens.mcp_screen import McpScreen
+    from aim.tui.screens.plugin_screen import PluginsScreen
     from aim.tui.screens.project_screen import ProjectScreen
     from aim.tui.screens.project_templates_screen import ProjectTemplatesScreen
     from aim.tui.screens.repos_screen import ReposScreen
@@ -140,6 +141,7 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
             "Open MCP servers",
             lambda: app.push_screen(McpScreen(project_root=project_root)),
         ),
+        PaletteEntry("action", "Open Plugins", lambda: app.push_screen(PluginsScreen())),
         PaletteEntry("action", "Open Rules", lambda: app.push_screen(RulesScreen())),
         PaletteEntry(
             "action", "Open Project templates", lambda: app.push_screen(ProjectTemplatesScreen())

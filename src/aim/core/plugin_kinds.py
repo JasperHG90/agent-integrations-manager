@@ -32,7 +32,6 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from aim.core import git, paths, settings_json, validation
-from aim.core.layout_profiles import LayoutProfile
 from aim.core.models import InstalledPlugin, Manifest
 
 
@@ -86,19 +85,15 @@ class PluginKind(Protocol):
         """Find this kind's plugins in a repo tree (paths from ``git ls-tree``)."""
         ...
 
-    def vendor_target(
-        self, profile: LayoutProfile, *, repo_alias: str, plugin_name: str, source_path: str
-    ) -> str:
+    def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
         """Repo-root-relative path where core vendors this plugin's bytes."""
         ...
 
-    def register(self, project_root: Path, profile: LayoutProfile, m: Manifest) -> None:
+    def register(self, project_root: Path, m: Manifest) -> None:
         """Reconcile client config (e.g. settings.json) from the installed set. Idempotent."""
         ...
 
-    def unregister(
-        self, project_root: Path, profile: LayoutProfile, installed: InstalledPlugin, m: Manifest
-    ) -> None:
+    def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
         """Remove one plugin's client-config registration (``m`` already excludes it)."""
         ...
 
@@ -145,6 +140,17 @@ def _coerce_owner(raw: object) -> tuple[str | None, str | None]:
     if isinstance(raw, str):
         return (raw, None)
     return (None, None)
+
+
+def _is_vendored(project_root: Path, plugin: InstalledPlugin) -> bool:
+    """True when a plugin's vendored files are present on disk.
+
+    ``register`` reconciles client config from this — a plugin that failed to
+    vendor (e.g. a blocked risk gate on re-sync) must not get a marketplace or
+    settings.json entry pointing at files that aren't there.
+    """
+    target = paths.safe_project_path(project_root, plugin.target_dir)
+    return target is not None and target.exists()
 
 
 class ClaudeKind:
@@ -231,17 +237,20 @@ class ClaudeKind:
                 )
         return out
 
-    def _marketplace_dir(self, project_root: Path, profile: LayoutProfile, repo_alias: str) -> Path:
-        rel = f"{profile.plugins_dir}/{repo_alias}"
+    # Claude's paths are the kind's own concern, not a layout-profile field:
+    # settings.json is the client's fixed location; the vendor dir is aim's choice.
+    _PLUGINS_DIR = ".claude/plugins"
+    _SETTINGS_FILE = ".claude/settings.json"
+
+    def _marketplace_dir(self, project_root: Path, repo_alias: str) -> Path:
+        rel = f"{self._PLUGINS_DIR}/{repo_alias}"
         safe = paths.safe_project_path(project_root, rel)
         if safe is None:
-            raise ValueError(f"plugins_dir escapes project root: {profile.plugins_dir!r}")
+            raise ValueError(f"plugins path escapes project root: {rel!r}")
         return safe
 
-    def vendor_target(
-        self, profile: LayoutProfile, *, repo_alias: str, plugin_name: str, source_path: str
-    ) -> str:
-        return f"{profile.plugins_dir}/{repo_alias}/{plugin_name}"
+    def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
+        return f"{self._PLUGINS_DIR}/{repo_alias}/{plugin_name}"
 
     def _claude_plugins(self, m: Manifest, repo_alias: str) -> list[str]:
         return [
@@ -250,10 +259,8 @@ class ClaudeKind:
             if p.flavor == "claude" and p.repo_alias == repo_alias
         ]
 
-    def _write_marketplace(
-        self, project_root: Path, profile: LayoutProfile, repo_alias: str, names: list[str]
-    ) -> None:
-        mkt_dir = self._marketplace_dir(project_root, profile, repo_alias)
+    def _write_marketplace(self, project_root: Path, repo_alias: str, names: list[str]) -> None:
+        mkt_dir = self._marketplace_dir(project_root, repo_alias)
         doc = {
             "name": repo_alias,
             "owner": {"name": "aim"},
@@ -263,36 +270,39 @@ class ClaudeKind:
         cp.mkdir(parents=True, exist_ok=True)
         (cp / "marketplace.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
-    def register(self, project_root: Path, profile: LayoutProfile, m: Manifest) -> None:
-        # Reconcile every claude repo's marketplace + settings.json from the installed set.
+    def register(self, project_root: Path, m: Manifest) -> None:
+        # Reconcile every claude repo's marketplace + settings.json from the
+        # installed set — but only plugins actually vendored on disk, so a
+        # failed/blocked vendor never leaves a marketplace entry pointing at nothing.
         by_repo: dict[str, list[str]] = {}
         for p in m.plugins:
-            if p.flavor == "claude":
+            if p.flavor == "claude" and _is_vendored(project_root, p):
                 by_repo.setdefault(p.repo_alias, []).append(p.qualified_name.split("/", 1)[1])
         for repo_alias, names in by_repo.items():
-            self._write_marketplace(project_root, profile, repo_alias, names)
+            self._write_marketplace(project_root, repo_alias, names)
             settings_json.register(
                 project_root,
-                profile,
+                settings_file=self._SETTINGS_FILE,
                 marketplace_name=repo_alias,
-                marketplace_path=f"{profile.plugins_dir}/{repo_alias}",
+                marketplace_path=f"{self._PLUGINS_DIR}/{repo_alias}",
                 plugin_names=names,
             )
 
-    def unregister(
-        self, project_root: Path, profile: LayoutProfile, installed: InstalledPlugin, m: Manifest
-    ) -> None:
+    def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
         name = installed.qualified_name.split("/", 1)[1]
         settings_json.unregister(
-            project_root, profile, marketplace_name=installed.repo_alias, plugin_name=name
+            project_root,
+            settings_file=self._SETTINGS_FILE,
+            marketplace_name=installed.repo_alias,
+            plugin_name=name,
         )
         remaining = self._claude_plugins(m, installed.repo_alias)
         if remaining:
-            self._write_marketplace(project_root, profile, installed.repo_alias, remaining)
+            self._write_marketplace(project_root, installed.repo_alias, remaining)
         else:
             import shutil
 
-            mkt_dir = self._marketplace_dir(project_root, profile, installed.repo_alias)
+            mkt_dir = self._marketplace_dir(project_root, installed.repo_alias)
             if mkt_dir.exists():
                 shutil.rmtree(mkt_dir)
 
@@ -315,7 +325,7 @@ class ConfigSpec(BaseModel):
 
 class RegisterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    vendor_into: str  # path template, e.g. "{opencode_plugins}/{name}.{ext}"
+    vendor_into: str  # literal path template, e.g. ".opencode/plugins/{name}.{ext}"
     vendor_as: str = "file"  # "file" | "dir"
     config: list[ConfigSpec] = Field(default_factory=list)
 
@@ -329,15 +339,14 @@ class KindSpec(BaseModel):
     registration: RegisterSpec = Field(alias="register")
 
 
-def _ctx(profile: LayoutProfile, *, repo_alias: str, plugin_name: str, source_path: str) -> dict:
+def _ctx(*, repo_alias: str, plugin_name: str, source_path: str) -> dict:
+    """Placeholder context for a kind's path/config templates: per-plugin tokens only.
+
+    Deliberately closed to ``{repo}``/``{name}``/``{ext}`` — a kind owns its own
+    paths (literal), so no layout-profile fields leak into the template engine.
+    """
     ext = source_path.rsplit(".", 1)[-1] if "." in source_path else ""
-    return {
-        "repo": repo_alias,
-        "name": plugin_name,
-        "ext": ext,
-        "plugins_dir": profile.plugins_dir,
-        "opencode_plugins": profile.opencode_plugins_dir,
-    }
+    return {"repo": repo_alias, "name": plugin_name, "ext": ext}
 
 
 def _render(template: str, ctx: dict) -> str:
@@ -407,28 +416,21 @@ class DeclarativeKind:
             )
         return out
 
-    def vendor_target(
-        self, profile: LayoutProfile, *, repo_alias: str, plugin_name: str, source_path: str
-    ) -> str:
-        ctx = _ctx(profile, repo_alias=repo_alias, plugin_name=plugin_name, source_path=source_path)
+    def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
+        ctx = _ctx(repo_alias=repo_alias, plugin_name=plugin_name, source_path=source_path)
         return _render(self.spec.registration.vendor_into, ctx)
 
-    def register(self, project_root: Path, profile: LayoutProfile, m: Manifest) -> None:
-        for plugin in [p for p in m.plugins if p.flavor == self.name]:
-            self._apply(project_root, profile, plugin, remove=False)
+    def register(self, project_root: Path, m: Manifest) -> None:
+        for plugin in m.plugins:
+            if plugin.flavor == self.name and _is_vendored(project_root, plugin):
+                self._apply(project_root, plugin, remove=False)
 
-    def unregister(
-        self, project_root: Path, profile: LayoutProfile, installed: InstalledPlugin, m: Manifest
-    ) -> None:
-        self._apply(project_root, profile, installed, remove=True)
+    def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
+        self._apply(project_root, installed, remove=True)
 
-    def _apply(
-        self, project_root: Path, profile: LayoutProfile, plugin: InstalledPlugin, *, remove: bool
-    ) -> None:
+    def _apply(self, project_root: Path, plugin: InstalledPlugin, *, remove: bool) -> None:
         name = plugin.qualified_name.split("/", 1)[1]
-        ctx = _ctx(
-            profile, repo_alias=plugin.repo_alias, plugin_name=name, source_path=plugin.source_path
-        )
+        ctx = _ctx(repo_alias=plugin.repo_alias, plugin_name=name, source_path=plugin.source_path)
         for cfg in self.spec.registration.config:
             if cfg.format != "json":
                 continue  # json first; yaml/toml are easy follow-ons

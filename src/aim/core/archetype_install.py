@@ -107,6 +107,7 @@ def select(
         content_hash=hashing.hash_text(content),
         pin=pin,
         track=track,
+        risk_acknowledged=override_risk,
     )
     declarations.set_archetype(project_root, installed)
 
@@ -122,6 +123,8 @@ def select(
         previous.repo_url = installed.repo_url
         previous.source_path = row.instruction_path
         previous.content_hash = installed.content_hash
+        if override_risk:
+            previous.risk_acknowledged = True
         if pin is not None:
             previous.pin = pin
         if track is not None:

@@ -23,7 +23,6 @@ from aim.core import (
     agents_md,
     db,
     hashing,
-    layout_profiles,
     manifest,
     mcp_registry,
     paths,
@@ -306,11 +305,11 @@ def _audit_plugins(root: Path, m: manifest.Manifest, report: DoctorReport) -> No
     claude_plugins = [p for p in m.plugins if p.flavor == "claude" and p.marketplace_name]
     if not claude_plugins:
         return
-    profile = layout_profiles.resolve_active(root)
+    settings_file = ".claude/settings.json"
     try:
-        settings = settings_json.read_settings(root, profile)
+        settings = settings_json.read_settings(root, settings_file)
     except settings_json.SettingsJsonError as exc:
-        report.findings.append(Finding("error", root, f"invalid {profile.claude_settings}: {exc}"))
+        report.findings.append(Finding("error", root, f"invalid {settings_file}: {exc}"))
         return
     marketplaces = settings.get("extraKnownMarketplaces") or {}
     enabled = settings.get("enabledPlugins") or {}

@@ -434,6 +434,7 @@ def install(
             content_hash=content_hash,
             pin=pin,
             track=track,
+            risk_acknowledged=override_risk,
         )
         m.skills.append(installed)
         result = installed
@@ -443,6 +444,8 @@ def install(
         existing.source_path = plan.source_path
         existing.target_dir = str(plan.target_dir.relative_to(project_root))
         existing.content_hash = content_hash
+        if override_risk:
+            existing.risk_acknowledged = True
         if pin is not None:
             existing.pin = pin
         if track is not None:
@@ -615,6 +618,8 @@ def update(
     content_hash = _deploy(plan, override_risk=override_risk)
     existing.push_history(new_version)
     existing.content_hash = content_hash
+    if override_risk:
+        existing.risk_acknowledged = True
     manifest.save(project_root, m)
     declarations._update_skill(project_root, existing)
     return existing

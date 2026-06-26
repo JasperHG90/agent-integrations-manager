@@ -16,5 +16,6 @@ name_from = "stem"
 
 [register]
 # opencode auto-loads files dropped here — registration is just the file copy.
-vendor_into = "{opencode_plugins}/{name}.{ext}"
+# The path is the kind's own (literal); only {name}/{ext}/{repo} are interpolated.
+vendor_into = ".opencode/plugins/{name}.{ext}"
 vendor_as = "file"

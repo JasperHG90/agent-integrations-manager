@@ -101,6 +101,7 @@ _MENU_ITEMS: list[tuple[str, str, str]] = [
     ("S", "SKILLS", "browse, search, install"),
     ("A", "SUBAGENTS", "browse, search, install sub-agents"),
     ("M", "MCP", "search registry, install MCP servers"),
+    ("G", "PLUGINS", "browse, search, install plugins"),
     ("U", "RULES", "global rules library"),
     ("T", "TEMPLATES", "reusable project setups"),
     ("B", "ARCHETYPES", "AGENTS.md base from a repo"),
@@ -130,6 +131,7 @@ class MainScreen(Screen[None]):
         ("s", "open_skills", "Skills"),
         ("a", "open_agents", "Subagents"),
         ("m", "open_mcp", "MCP servers"),
+        ("g", "open_plugins", "Plugins"),
         ("u", "open_rules", "Rules"),
         ("t", "open_templates", "Templates"),
         ("b", "open_archetypes", "Archetypes"),
@@ -160,7 +162,7 @@ class MainScreen(Screen[None]):
             classes="menu",
         )
         yield Static(
-            "  I/K/Y/X/R/S/A/M/U/T/B/P/C/L  navigate    CTRL+P  palette    Q  quit",
+            "  I/K/Y/X/R/S/A/M/G/U/T/B/P/C/L  navigate    CTRL+P  palette    Q  quit",
             id="hint",
             markup=False,
         )
@@ -188,6 +190,12 @@ class MainScreen(Screen[None]):
         from aim.tui.screens.mcp_screen import McpScreen
 
         self.app.push_screen(McpScreen(project_root=self._project_root))
+
+    def action_open_plugins(self) -> None:
+        """Push the plugins browse/search/install screen."""
+        from aim.tui.screens.plugin_screen import PluginsScreen
+
+        self.app.push_screen(PluginsScreen())
 
     def action_open_rules(self) -> None:
         """Push the global rules library screen."""

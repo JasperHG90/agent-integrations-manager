@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="aim logo" width="320">
 </p>
 
-A lightweight package manager for your AI-assistant tooling: skills, sub-agents, MCP servers, and rules — version-pinned and tracked in your repo.
+A lightweight package manager for your AI-assistant tooling: skills, sub-agents, MCP servers, rules, and plugins — version-pinned and tracked in your repo.
 
 ## Contents
 
@@ -20,7 +20,7 @@ A lightweight package manager for your AI-assistant tooling: skills, sub-agents,
 
 Every AI coding assistant works better with the right context: project conventions, reusable rules, and curated tools. Today that context is scattered across copy-pasted prompts, hand-edited `CLAUDE.md` files, and git submodules nobody wants to maintain.
 
-`aim` turns that into a reproducible workflow. It installs versioned skills, agents, rules, and MCP servers from any git repo or registry, and scaffolds the agent instruction file your IDE expects. Everything is recorded in your project so the setup survives a fresh clone.
+`aim` turns that into a reproducible workflow. It installs versioned skills, agents, rules, MCP servers, and plugins from any git repo or registry, and scaffolds the agent instruction file your IDE expects. Everything is recorded in your project so the setup survives a fresh clone.
 
 ## Features
 
@@ -28,11 +28,12 @@ Every AI coding assistant works better with the right context: project conventio
 - **Share project-instruction archetypes** — base your `AGENTS.md` on a versioned archetype from any repo (`aim archetype use`), so a whole team starts from the same agent instructions while keeping their own rules layered on top.
 - **Install skills, agents, and rules from any repo** — register a git URL, browse the index, and install with per-artifact version pinning.
 - **Install MCP servers from the community registry** — search the public MCP registry and add servers to `.mcp.json` without hand-editing JSON.
-- **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, and rule.
+- **Install plugins, project-scoped** — `aim plugin add` vendors and SHA-pins a Claude (marketplace) or opencode plugin into your project, never globally. New clients plug in through a declarative "kind" file, with no `aim` change.
+- **A manifest that tells you what you installed** — `aim.lock.toml` is committed to your repo and tracks every skill, agent, MCP server, rule, and plugin.
 - **Skills that let your agent manage itself** — bundled `repo-add` and `artifact-installer` skills let your assistant add sources and install skills/agents/rules straight from a project chat.
 - **Hackable profiles** — layout profiles control where skills, rules, and agent files land (e.g. `.claude/`, `.gemini/`, or your own paths).
 - **Project templates for common stacks** — save a combo of skills, agents, MCP servers, and rules as a reusable template and bootstrap new projects in seconds.
-- **Governance policy + risk scanning** — a `[policy]` table in `aim.toml` can blacklist repos, block specific skills/agents/rules/MCP servers, restrict layout profiles, and turn on semantic risk classification of what an artifact *instructs*. Local for solo work, or sourced from an org policy repo and enforced in CI.
+- **Governance policy + risk scanning** — a `[policy]` table in `aim.toml` can blacklist repos, block specific skills/agents/rules/MCP servers/plugins, restrict layout profiles, and turn on semantic risk classification of what an artifact *instructs*. Local for solo work, or sourced from an org policy repo and enforced in CI.
 
 ## Installation
 
@@ -118,23 +119,27 @@ aim rule add anthropic/be-concise
 aim mcp search fetch
 aim mcp install fetch
 
-# 5. Update one artifact, a whole repo, or everything; roll back safely.
+# 5. Browse and install a plugin (vendored and pinned, project-scoped).
+aim plugin list
+aim plugin add <repo>/<plugin>
+
+# 6. Update one artifact, a whole repo, or everything; roll back safely.
 aim skill update anthropic/code-review
 aim skill update --all
 aim skill rollback anthropic/code-review
 
-# 6. Base AGENTS.md on a shared instruction archetype from a repo.
+# 7. Base AGENTS.md on a shared instruction archetype from a repo.
 aim archetype list
 aim archetype use myorg/lean
 
-# 7. Save a reusable project template, then stamp new projects from it.
+# 8. Save a reusable project template, then stamp new projects from it.
 aim template save my-stack path/to/project
 aim template apply my-stack path/to/new-project
 ```
 
 ## How it works
 
-Per-project state lives in `aim.lock.toml` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, rules, and MCP servers to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
+Per-project state lives in `aim.lock.toml` (resolved state) and `aim.toml` (user-editable declarations), both committed to your repo. The lock pins installed skills, agents, rules, MCP servers, and plugins to `(tag, sha, registry_version)` tuples and stores the last 10 versions in `history`, so rollback works even if the upstream repo or registry entry is temporarily unavailable.
 
 Global, machine-local state lives under [platformdirs](https://platformdirs.readthedocs.io/):
 
@@ -161,6 +166,30 @@ A registered repo can expose skills, agents, and rules in **any** location. `aim
 - Any `instructions/<name>/` (or `.aim/instructions/<name>/`) directory holding a standard instruction file, surfaced as a selectable project-instruction archetype. Unlike the others, archetypes are never discovered at the repo root.
 
 If the same name appears in multiple places, the shallower path wins. At the same depth, canonical `skills/`, `agents/`, and `rules/` prefixes win over `.claude/` and arbitrary paths, so existing convention-based repos keep working. Ties otherwise break by lexicographic path. Artifacts are referenced everywhere as `<repo_alias>/<name>`. Repos with no discoverable artifacts are rejected on `repo add` unless you pass `--allow-empty`.
+
+### Plugins and custom plugin formats
+
+A registered repo can also expose **plugins**. aim ships one built-in *kind*, `claude`, which reads a `.claude-plugin/marketplace.json` catalog; `aim plugin add` vendors the plugin's files into the project (SHA-pinned, like a skill) and enables it in `.claude/settings.json`. `aim plugin list` aggregates plugins across every marketplace and repo, with `--repo`/`--marketplace`/`--flavor` filters and a `sha` column you can pass to `--pin` (the upstream `version` is a label, not a git ref).
+
+A plugin written for one client can't install as another's, so aim never converts formats. Instead, the discover-and-install rules for each client are a **pluggable kind** you can add yourself, with no aim change. Drop a TOML file in `<config>/kinds/` (global) or a project's `.aim/kinds/`:
+
+```toml
+name = "opencode"            # the flavor this kind discovers
+
+[discover]
+manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]  # repo-relative globs
+name_from = "stem"           # plugin name is the matched file's stem
+
+[register]
+vendor_into = ".opencode/plugins/{name}.{ext}"  # only {repo}/{name}/{ext} are interpolated
+vendor_as = "file"           # "file" or "dir"
+# Optional: merge keys into a client config file on install (claude does this in code):
+# [[register.config]]
+# file = ".some-client/config.json"
+# set = { "plugins.{name}" = true }
+```
+
+aim then discovers and installs that client's plugins like any other artifact, SHA-pinned in `aim.lock.toml`. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/kinds/opencode.toml` for the working showcase.
 
 ### Versioning
 

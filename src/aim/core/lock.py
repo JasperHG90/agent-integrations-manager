@@ -298,6 +298,7 @@ def _lock_skill(
         content_hash=content_hash,
         pin=skill.pin,
         track=skill.track,
+        risk_acknowledged=skill.risk_acknowledged,
     )
     return installed, None
 
@@ -408,6 +409,7 @@ def _lock_agent(
         content_hash=content_hash,
         pin=agent.pin,
         track=agent.track,
+        risk_acknowledged=agent.risk_acknowledged,
     )
     return installed, None
 
@@ -524,6 +526,7 @@ def _lock_archetype(
             content_hash=content_hash,
             pin=declared.pin,
             track=declared.track,
+            risk_acknowledged=declared.risk_acknowledged,
         ),
         None,
     )
@@ -567,6 +570,7 @@ def _lock_rule(
         content_hash=content_hash,
         pin=rule.pin,
         track=rule.track,
+        risk_acknowledged=rule.risk_acknowledged,
     )
     return installed, None
 
@@ -650,7 +654,6 @@ def _hash_plugin_at_sha(plugin: DeclaredPlugin, sha: str, source_unit: str) -> s
 
 def _lock_plugin(
     plugin: DeclaredPlugin,
-    profile: layout_profiles.LayoutProfile,
     cached: InstalledPlugin | None = None,
 ) -> tuple[InstalledPlugin | None, str | None]:
     """Lock a single declared plugin to a concrete InstalledPlugin.
@@ -685,7 +688,6 @@ def _lock_plugin(
         except Exception as exc:
             return None, f"{plugin.qualified_name}: {exc}"
         target_rel = kind.vendor_target(
-            profile,
             repo_alias=plugin.repo_alias,
             plugin_name=plugin_name,
             source_path=plugin.source_path,
@@ -703,13 +705,13 @@ def _lock_plugin(
         content_hash=content_hash,
         pin=plugin.pin,
         track=plugin.track,
+        risk_acknowledged=plugin.risk_acknowledged,
     )
     return installed, None
 
 
 async def _lock_plugins(
     plugins: list[DeclaredPlugin],
-    profile: layout_profiles.LayoutProfile,
     callback: Callable[[str, str, str], object] | None,
     cached_by_name: dict[str, InstalledPlugin] | None = None,
 ) -> tuple[list[InstalledPlugin], list[str]]:
@@ -723,7 +725,7 @@ async def _lock_plugins(
         """Lock one plugin off-thread and emit progress notifications."""
         _notify(callback, "plugin", plugin.qualified_name, "locking")
         installed, error = await asyncio.to_thread(
-            _lock_plugin, plugin, profile, lookup.get(plugin.qualified_name)
+            _lock_plugin, plugin, lookup.get(plugin.qualified_name)
         )
         if error:
             _notify(callback, "plugin", plugin.qualified_name, "error")
@@ -1121,7 +1123,7 @@ async def run(options: LockOptions) -> LockResult:
     agents_task = _lock_agents(decl.agents, options.progress_callback, cached_agents)
     mcps_task = _lock_mcps(decl.mcp_servers, options.progress_callback)
     rules_task = _lock_rules(decl.rules, options.progress_callback, cached_rules)
-    plugins_task = _lock_plugins(decl.plugins, profile, options.progress_callback, cached_plugins)
+    plugins_task = _lock_plugins(decl.plugins, options.progress_callback, cached_plugins)
 
     (
         (skills_locked, skill_errors),

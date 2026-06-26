@@ -66,8 +66,9 @@ def plugin_list(
         rows,
         _get_format(ctx),
         title="plugins indexed",
-        columns=["qualified_name", "flavor", "marketplace_name", "version", "description"],
-        compact_columns=["qualified_name", "flavor", "description"],
+        columns=["qualified_name", "flavor", "marketplace_name", "version", "sha", "description"],
+        compact_columns=["qualified_name", "flavor", "sha", "description"],
+        row_extractor={"sha": "short_sha"},
     )
 
 
@@ -83,8 +84,9 @@ def plugin_search(
         rows,
         _get_format(ctx),
         title=f"plugins matching {query!r}",
-        columns=["qualified_name", "flavor", "marketplace_name", "version", "description"],
-        compact_columns=["qualified_name", "flavor", "description"],
+        columns=["qualified_name", "flavor", "marketplace_name", "version", "sha", "description"],
+        compact_columns=["qualified_name", "flavor", "sha", "description"],
+        row_extractor={"sha": "short_sha"},
     )
 
 

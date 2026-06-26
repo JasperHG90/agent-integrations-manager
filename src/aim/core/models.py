@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
 
@@ -175,6 +175,12 @@ class PluginIndex(SQLModel, table=True):  # type: ignore[call-arg]
     keywords: str = ""  # CSV for search only
     indexed_at_sha: str
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def short_sha(self) -> str:
+        """First 7 chars of the indexed SHA — the value to pass to `--pin`."""
+        return self.indexed_at_sha[:7]
+
 
 CURRENT_DECLARATIONS_VERSION = 9  # v9 adds the plugins surface
 
@@ -200,6 +206,9 @@ class DeclaredSkill(BaseModel):
     target_dir: str
     track: str | None = None
     pin: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
 
 class DeclaredAgent(BaseModel):
@@ -213,6 +222,9 @@ class DeclaredAgent(BaseModel):
     target_path: str
     track: str | None = None
     pin: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
 
 class DeclaredRule(BaseModel):
@@ -225,6 +237,9 @@ class DeclaredRule(BaseModel):
     source_path: str  # path of the rule .md file relative to repo root
     track: str | None = None
     pin: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
 
 class DeclaredMcpServer(BaseModel):
@@ -253,6 +268,9 @@ class DeclaredPlugin(BaseModel):
     marketplace_name: str | None = None  # upstream marketplace name (claude only)
     track: str | None = None
     pin: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
 
 BUILTIN_ARCHETYPE = "default"
@@ -273,6 +291,9 @@ class DeclaredArchetype(BaseModel):
     source_path: str | None = None  # the chosen base instruction file, relative to repo root
     track: str | None = None
     pin: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     @property
     def is_builtin(self) -> bool:
@@ -362,6 +383,9 @@ class InstalledSkill(BaseModel):
     # v2 fields:
     pin: str | None = None  # exact tag — update refuses to advance past this
     track: str | None = None  # "latest-tag" | "<branch>" | "<ref>" — overrides repo.default_ref
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     def push_history(self, new_current: SkillVersion) -> None:
         """Promote new_current to current, pushing the old one onto capped history."""
@@ -436,6 +460,9 @@ class InstalledAgent(BaseModel):
     content_hash: str | None = None  # sha256 of installed file text (drift detection)
     pin: str | None = None
     track: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     def push_history(self, new_current: SkillVersion) -> None:
         """Promote new_current to current, pushing the old one onto capped history."""
@@ -461,6 +488,9 @@ class InstalledRule(BaseModel):
     content_hash: str | None = None  # sha256 of installed file text (drift detection)
     pin: str | None = None
     track: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     def push_history(self, new_current: SkillVersion) -> None:
         """Promote new_current to current, pushing the old one onto capped history."""
@@ -494,6 +524,9 @@ class InstalledPlugin(BaseModel):
     content_hash: str | None = None  # sha256 of vendored file tree (drift detection)
     pin: str | None = None
     track: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     def push_history(self, new_current: SkillVersion) -> None:
         """Promote new_current to current, pushing the old one onto capped history."""
@@ -521,6 +554,9 @@ class InstalledArchetype(BaseModel):
     content_hash: str | None = None  # sha256 of the installed base body (drift detection)
     pin: str | None = None
     track: str | None = None
+    # --override-risk; lets sync re-vendor without re-blocking. Sticky across
+    # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
 
     def push_history(self, new_current: SkillVersion) -> None:
         """Promote new_current to current, pushing the old one onto capped history."""

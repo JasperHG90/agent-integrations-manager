@@ -276,6 +276,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         plugin_install_mod.PluginNotInstalledError,
         plugin_install_mod.PluginFlavorUnsupportedError,
         plugin_install_mod.PluginSourcePathChangedError,
+        plugin_install_mod.PluginPinError,
         settings_json_mod.SettingsJsonError,
         templates_mod.TemplateNotFoundError,
         manifest_mod.ManifestNotFoundError,

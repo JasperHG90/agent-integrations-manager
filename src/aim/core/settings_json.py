@@ -5,9 +5,10 @@ aim manages exactly two keys — ``extraKnownMarketplaces`` and
 a **local-directory marketplace** pointing at aim's vendored copy, so Claude
 loads the pinned bytes without fetching upstream.
 
-Modeled on the preserve-unmanaged-keys discipline of the ``.mcp.json`` writer
-(``mcp_registry``), but it spans two maps plus a side ``marketplace.json``, so it
-is not a verbatim copy. Keys are written without reordering the user's existing
+The target file is passed in (``settings_file``, a repo-root-relative path) — the
+caller (the claude kind) owns that path, so nothing here depends on a layout
+profile. Modeled on the preserve-unmanaged-keys discipline of the ``.mcp.json``
+writer (``mcp_registry``). Keys are written without reordering the user's existing
 content (``settings.json`` is hand-edited far more than ``.mcp.json``).
 """
 
@@ -17,25 +18,19 @@ import json
 from pathlib import Path
 
 from aim.core import content_guard
-from aim.core.layout_profiles import LayoutProfile
 
 
 class SettingsJsonError(ValueError):
-    """Raised when ``.claude/settings.json`` is present but not a JSON object."""
+    """Raised when the settings file is present but not a JSON object."""
 
 
-def settings_path(project_root: Path, profile: LayoutProfile) -> Path:
-    """Return the project's ``.claude/settings.json`` path for this profile."""
-    return project_root / profile.claude_settings
-
-
-def read_settings(project_root: Path, profile: LayoutProfile) -> dict:
-    """Read settings.json, returning an empty dict when absent or empty.
+def read_settings(project_root: Path, settings_file: str) -> dict:
+    """Read the settings file, returning an empty dict when absent or empty.
 
     Raises:
         SettingsJsonError: The file exists but is invalid JSON or not an object.
     """
-    path = settings_path(project_root, profile)
+    path = project_root / settings_file
     if not path.exists():
         return {}
     text = path.read_text(encoding="utf-8")
@@ -50,9 +45,9 @@ def read_settings(project_root: Path, profile: LayoutProfile) -> dict:
     return data
 
 
-def write_settings(project_root: Path, profile: LayoutProfile, data: dict) -> Path:
-    """Write settings.json with stable 2-space indentation, preserving key order."""
-    path = settings_path(project_root, profile)
+def write_settings(project_root: Path, settings_file: str, data: dict) -> Path:
+    """Write the settings file with stable 2-space indentation, preserving key order."""
+    path = project_root / settings_file
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return path
@@ -60,8 +55,8 @@ def write_settings(project_root: Path, profile: LayoutProfile, data: dict) -> Pa
 
 def register(
     project_root: Path,
-    profile: LayoutProfile,
     *,
+    settings_file: str,
     marketplace_name: str,
     marketplace_path: str,
     plugin_names: list[str],
@@ -76,7 +71,7 @@ def register(
     """
     content_guard.assert_no_hidden_unicode(marketplace_name, source="marketplace name")
     content_guard.assert_no_hidden_unicode(marketplace_path, source="marketplace path")
-    data = read_settings(project_root, profile)
+    data = read_settings(project_root, settings_file)
 
     mkts = data.setdefault("extraKnownMarketplaces", {})
     if not isinstance(mkts, dict):
@@ -86,18 +81,25 @@ def register(
     enabled = data.setdefault("enabledPlugins", {})
     if not isinstance(enabled, dict):
         raise SettingsJsonError("enabledPlugins must be a JSON object")
-    for name in plugin_names:
-        key = f"{name}@{marketplace_name}"
+    desired = {f"{name}@{marketplace_name}" for name in plugin_names}
+    for key in desired:
         content_guard.assert_no_hidden_unicode(key, source="enabledPlugins key")
         enabled[key] = True
+    # Reconcile: drop stale enablements for this marketplace that are no longer
+    # vendored, so a removed/blocked plugin can't linger enabled in settings.json.
+    suffix = f"@{marketplace_name}"
+    for key in [
+        k for k in enabled if isinstance(k, str) and k.endswith(suffix) and k not in desired
+    ]:
+        del enabled[key]
 
-    return write_settings(project_root, profile, data)
+    return write_settings(project_root, settings_file, data)
 
 
 def unregister(
     project_root: Path,
-    profile: LayoutProfile,
     *,
+    settings_file: str,
     marketplace_name: str,
     plugin_name: str,
 ) -> Path:
@@ -107,7 +109,7 @@ def unregister(
     ``enabledPlugins`` key references ``@<marketplace>``, the
     ``extraKnownMarketplaces`` entry is removed too (refcount).
     """
-    data = read_settings(project_root, profile)
+    data = read_settings(project_root, settings_file)
     enabled = data.get("enabledPlugins")
     if isinstance(enabled, dict):
         enabled.pop(f"{plugin_name}@{marketplace_name}", None)
@@ -117,4 +119,4 @@ def unregister(
             mkts = data.get("extraKnownMarketplaces")
             if isinstance(mkts, dict):
                 mkts.pop(marketplace_name, None)
-    return write_settings(project_root, profile, data)
+    return write_settings(project_root, settings_file, data)

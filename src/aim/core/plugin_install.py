@@ -27,7 +27,6 @@ from aim.core import (
     git,
     hashing,
     install,
-    layout_profiles,
     manifest,
     paths,
     plugin_kinds,
@@ -36,12 +35,15 @@ from aim.core import (
     repos,
     risk,
 )
-from aim.core.layout_profiles import LayoutProfile
 from aim.core.models import InstalledPlugin, Manifest, SkillVersion
 
 
 class PluginNotInstalledError(KeyError):
     """No entry for this plugin in the project manifest."""
+
+    def __str__(self) -> str:
+        name = self.args[0] if self.args else "plugin"
+        return f"{name} is not installed in this project"
 
 
 class PluginFlavorUnsupportedError(RuntimeError):
@@ -50,6 +52,10 @@ class PluginFlavorUnsupportedError(RuntimeError):
 
 class PluginSourcePathChangedError(RuntimeError):
     """On `update`, the plugin's source_path inside its repo moved upstream."""
+
+
+class PluginPinError(RuntimeError):
+    """A user-supplied --pin value is not a resolvable git ref/sha in the repo."""
 
 
 _install_warnings: list[str] = []
@@ -149,7 +155,6 @@ def _surface_executable_surface(snap: Path, qualified_name: str) -> None:
 # --------------------------------------------------------------------------- #
 def _deploy(
     project_root: Path,
-    profile: LayoutProfile,
     kind: plugin_kinds.PluginKind,
     *,
     repo_alias: str,
@@ -161,7 +166,7 @@ def _deploy(
 ) -> tuple[str, Path]:
     """Snapshot, gate, and vendor a plugin at the locked version. Returns (hash, target)."""
     rel = kind.vendor_target(
-        profile, repo_alias=repo_alias, plugin_name=plugin_name, source_path=source_path
+        repo_alias=repo_alias, plugin_name=plugin_name, source_path=source_path
     )
     target = paths.safe_project_path(project_root, rel)
     if target is None:
@@ -211,7 +216,7 @@ def _deploy(
     return hashing.hash_text(content), target
 
 
-def reconcile_registration(project_root: Path, profile: LayoutProfile, m: Manifest) -> None:
+def reconcile_registration(project_root: Path, m: Manifest) -> None:
     """Reconcile every loaded kind's client config from the installed set (idempotent).
 
     Used by `sync` after vendoring, and by install/update/rollback. Each kind
@@ -219,7 +224,7 @@ def reconcile_registration(project_root: Path, profile: LayoutProfile, m: Manife
     file-drop kinds → no-op).
     """
     for kind in plugin_kinds.load_kinds(project_root).values():
-        kind.register(project_root, profile, m)
+        kind.register(project_root, m)
 
 
 def _check_local_edits(project_root: Path, existing: InstalledPlugin, *, force: bool) -> None:
@@ -255,13 +260,20 @@ def install_plugin(
     project_root = project_root.resolve()
     row = plugins.index_row(qualified_name)
     kind = _kind_for(row.flavor, project_root)
-    version = install.resolve_install_version(
-        row.repo_alias, row.source_path, track=track, pin=pin, artifact_name="plugin.json"
-    )
-    profile = layout_profiles.resolve_active(project_root)
+    try:
+        version = install.resolve_install_version(
+            row.repo_alias, row.source_path, track=track, pin=pin, artifact_name="plugin.json"
+        )
+    except git.GitError as exc:
+        if pin is not None:
+            raise PluginPinError(
+                f"--pin {pin!r} is not a git ref in repo {row.repo_alias!r}; pin a tag or a "
+                "short SHA from `aim plugin list` (the 'version' column is an upstream label, "
+                "not a git ref)"
+            ) from exc
+        raise
     content_hash, target = _deploy(
         project_root,
-        profile,
         kind,
         repo_alias=row.repo_alias,
         plugin_name=row.plugin_name,
@@ -288,6 +300,7 @@ def install_plugin(
             content_hash=content_hash,
             pin=pin,
             track=track,
+            risk_acknowledged=override_risk,
         )
         m.plugins.append(result)
     else:
@@ -298,13 +311,15 @@ def install_plugin(
         existing.target_dir = target_rel
         existing.marketplace_name = marketplace_name
         existing.content_hash = content_hash
+        if override_risk:
+            existing.risk_acknowledged = True
         if pin is not None:
             existing.pin = pin
         if track is not None:
             existing.track = track
         result = existing
     manifest.save(project_root, m)
-    kind.register(project_root, profile, m)
+    kind.register(project_root, m)
     declarations._update_plugin(project_root, result)
     return result
 
@@ -339,10 +354,8 @@ def update(
     _check_local_edits(project_root, existing, force=force)
     if new_version.sha == existing.current.sha:
         return existing
-    profile = layout_profiles.resolve_active(project_root)
     content_hash, target = _deploy(
         project_root,
-        profile,
         kind,
         repo_alias=existing.repo_alias,
         plugin_name=row.plugin_name,
@@ -353,9 +366,11 @@ def update(
     )
     existing.push_history(new_version)
     existing.content_hash = content_hash
+    if override_risk:
+        existing.risk_acknowledged = True
     existing.target_dir = str(target.relative_to(project_root))
     manifest.save(project_root, m)
-    kind.register(project_root, profile, m)
+    kind.register(project_root, m)
     declarations._update_plugin(project_root, existing)
     return existing
 
@@ -415,14 +430,13 @@ def delete(project_root: Path, qualified_name: str) -> None:
     existing = _find_installed(m, qualified_name)
     if existing is None:
         raise PluginNotInstalledError(qualified_name)
-    profile = layout_profiles.resolve_active(project_root)
     _remove_vendored(project_root, existing)
     m.plugins = [p for p in m.plugins if p.qualified_name != qualified_name]
     manifest.save(project_root, m)
     # Unregister via the kind (config cleanup), if its spec is still loaded.
     kind = plugin_kinds.get_kind(existing.flavor, project_root)
     if kind is not None:
-        kind.unregister(project_root, profile, existing, m)
+        kind.unregister(project_root, existing, m)
     declarations._remove_plugin(project_root, qualified_name)
 
 
@@ -438,11 +452,9 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
     kind = _kind_for(existing.flavor, project_root)
     _check_local_edits(project_root, existing, force=force)
     target_version = existing.history[0]
-    profile = layout_profiles.resolve_active(project_root)
     plugin_name = qualified_name.split("/", 1)[1]
     content_hash, target = _deploy(
         project_root,
-        profile,
         kind,
         repo_alias=existing.repo_alias,
         plugin_name=plugin_name,
@@ -457,6 +469,6 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
     existing.content_hash = content_hash
     existing.target_dir = str(target.relative_to(project_root))
     manifest.save(project_root, m)
-    kind.register(project_root, profile, m)
+    kind.register(project_root, m)
     declarations._update_plugin(project_root, existing)
     return existing

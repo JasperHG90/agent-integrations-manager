@@ -24,6 +24,31 @@ def test_parse_round_trip() -> None:
     assert parsed.symlinks == ["CLAUDE.md"]
 
 
+def test_parse_drops_removed_fields() -> None:
+    # Profiles written by older aim versions carry fields the model no longer
+    # defines: agent_dialect (pre-v2) and the plugin path fields now owned by
+    # each plugin kind. parse_toml must drop them, not raise.
+    legacy = (
+        'name = "legacy"\n'
+        'skills_dir = ".claude/skills"\n'
+        'agent_dialect = "claude"\n'
+        'plugins_dir = ".claude/plugins"\n'
+        'opencode_plugins_dir = ".opencode/plugins"\n'
+        'claude_settings = ".claude/settings.json"\n'
+    )
+    parsed = layout_profiles.parse_toml(legacy)
+    assert parsed.name == "legacy"
+    assert parsed.skills_dir == ".claude/skills"
+    assert not hasattr(parsed, "plugins_dir")
+
+
+def test_parse_wraps_validation_error() -> None:
+    # An invalid field surfaces as the module's own error type, not a raw
+    # pydantic ValidationError leaking through parse_toml.
+    with pytest.raises(layout_profiles.LayoutProfileTomlError):
+        layout_profiles.parse_toml('name = "ok"\nskills_dir = "../escape"\n')
+
+
 def test_rejects_invalid_name() -> None:
     with pytest.raises(ValueError):
         layout_profiles.LayoutProfile(name="UpperCase", skills_dir=".claude/skills")

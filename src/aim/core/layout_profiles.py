@@ -21,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlmodel import select
 
 from aim.core import db, manifest, paths, policy
@@ -74,12 +74,6 @@ class LayoutProfile(BaseModel):
     agents_dir: str = ".claude/agents"
     agents_md: str = "AGENTS.md"
     mcp_json: str = ".mcp.json"
-    # Plugins (vendored, SHA-locked). Claude plugins are vendored under
-    # plugins_dir/<repo_alias>/ (a local-directory marketplace) and enabled in
-    # claude_settings; opencode plugins are vendored under opencode_plugins_dir.
-    plugins_dir: str = ".claude/plugins"
-    opencode_plugins_dir: str = ".opencode/plugins"
-    claude_settings: str = ".claude/settings.json"
     symlinks: list[str] = Field(default_factory=list)
 
     @field_validator("name")
@@ -108,9 +102,6 @@ class LayoutProfile(BaseModel):
         "agents_dir",
         "agents_md",
         "mcp_json",
-        "plugins_dir",
-        "opencode_plugins_dir",
-        "claude_settings",
     )
     @classmethod
     def _validate_relative_path(cls, value: str) -> str:
@@ -276,9 +267,11 @@ def parse_toml(text: str, *, source: str | None = None) -> LayoutProfile:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise LayoutProfileTomlError(f"invalid TOML in {source or 'profile'}: {exc}") from exc
-    # Drop the legacy agent_dialect field from pre-v2 declarations and default
-    # missing rules_mode to "files" so existing profiles remain valid.
-    raw.pop("agent_dialect", None)
+    # Drop fields removed from the model so profiles written by older aim versions
+    # still parse: agent_dialect (pre-v2) and the plugin path fields now owned by
+    # each plugin kind. Default missing rules_mode to "files" for the same reason.
+    for _removed in ("agent_dialect", "plugins_dir", "opencode_plugins_dir", "claude_settings"):
+        raw.pop(_removed, None)
     raw.setdefault("rules_mode", "files")
     # tomllib returns nested dicts as regular dicts; Pydantic handles them.
     try:
@@ -286,6 +279,8 @@ def parse_toml(text: str, *, source: str | None = None) -> LayoutProfile:
     except LayoutProfileNameError as exc:
         # Reserved names are a parse-time concern too.
         raise LayoutProfileTomlError(str(exc)) from exc
+    except ValidationError as exc:
+        raise LayoutProfileTomlError(f"invalid {source or 'profile'}: {exc}") from exc
 
 
 def render_toml(profile: LayoutProfile, *, read_only_copy: bool = False) -> str:
@@ -314,9 +309,6 @@ def render_toml(profile: LayoutProfile, *, read_only_copy: bool = False) -> str:
     lines.append(f'agents_dir = "{profile.agents_dir}"')
     lines.append(f'agents_md = "{profile.agents_md}"')
     lines.append(f'mcp_json = "{profile.mcp_json}"')
-    lines.append(f'plugins_dir = "{profile.plugins_dir}"')
-    lines.append(f'opencode_plugins_dir = "{profile.opencode_plugins_dir}"')
-    lines.append(f'claude_settings = "{profile.claude_settings}"')
     if profile.symlinks:
         lines.append(f"symlinks = {_render_string_list(profile.symlinks)}")
     lines.append("")

@@ -14,6 +14,7 @@ GOVERNANCE_ERRORS: tuple[type[Exception], ...] = (
     policy.PolicyViolationError,
     policy.PolicyError,
     risk.RiskBlockedError,
+    risk.RiskDependencyError,  # risk model/judge unavailable — notify, don't crash the worker
     content_guard.HiddenUnicodeError,
     content_guard.InsecureTransportError,
 )

@@ -246,6 +246,7 @@ def _update_skill(project_root: Path, installed: object) -> None:
         target_dir=installed.target_dir,
         pin=installed.pin,
         track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
     )
     decl.skills = [s for s in decl.skills if s.qualified_name != installed.qualified_name]
     decl.skills.append(declared)
@@ -305,6 +306,7 @@ def _update_agent(project_root: Path, installed: object) -> None:
         target_path=installed.target_path,
         pin=installed.pin,
         track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
     )
     decl.agents = [a for a in decl.agents if a.qualified_name != installed.qualified_name]
     decl.agents.append(declared)
@@ -342,6 +344,7 @@ def _update_rule(project_root: Path, installed: object) -> None:
         source_path=installed.source_path,
         pin=installed.pin,
         track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
     )
     decl.rules = [r for r in decl.rules if r.qualified_name != installed.qualified_name]
     decl.rules.append(declared)
@@ -366,6 +369,7 @@ def set_archetype(project_root: Path, installed: object) -> None:
         source_path=installed.source_path,
         pin=installed.pin,
         track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
     )
     decl.repos[installed.repo_alias] = installed.repo_url
     save(project_root, decl)
@@ -449,6 +453,7 @@ def _update_plugin(project_root: Path, installed: object) -> None:
         marketplace_name=installed.marketplace_name,
         pin=installed.pin,
         track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
     )
     decl.plugins = [p for p in decl.plugins if p.qualified_name != installed.qualified_name]
     decl.plugins.append(declared)

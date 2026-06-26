@@ -17,7 +17,7 @@ name = "opencode"
 manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js", "plugins/*.ts"]
 name_from = "stem"
 [register]
-vendor_into = "{opencode_plugins}/{name}.{ext}"
+vendor_into = ".opencode/plugins/{name}.{ext}"
 vendor_as = "file"
 """
 

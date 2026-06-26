@@ -9,6 +9,7 @@ import pytest
 
 from aim.core import (
     declarations,
+    install,
     lock,
     manifest,
     paths,
@@ -26,7 +27,7 @@ name = "opencode"
 manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]
 name_from = "stem"
 [register]
-vendor_into = "{opencode_plugins}/{name}.{ext}"
+vendor_into = ".opencode/plugins/{name}.{ext}"
 vendor_as = "file"
 """
 
@@ -36,6 +37,24 @@ def _install_opencode_kind() -> None:
     d = paths.user_config_dir() / "kinds"
     d.mkdir(parents=True, exist_ok=True)
     (d / "opencode.toml").write_text(OPENCODE_KIND_TOML)
+
+
+# A declarative kind whose vendor_into deliberately escapes the project root.
+ESCAPE_KIND_TOML = """
+name = "escaper"
+[discover]
+manifest = [".escaper/*.ts"]
+name_from = "stem"
+[register]
+vendor_into = "../../escape/{name}.{ext}"
+vendor_as = "file"
+"""
+
+
+def _install_escape_kind() -> None:
+    d = paths.user_config_dir() / "kinds"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "escaper.toml").write_text(ESCAPE_KIND_TOML)
 
 
 def _marketplace_files(*, with_hook: bool = False) -> dict[str, str]:
@@ -260,3 +279,115 @@ def test_prune_removes_undeclared_plugin(home: Path, project_root: Path, tmp_pat
 def test_install_unknown_plugin_errors(home: Path, project_root: Path) -> None:
     with pytest.raises(plugin_install.plugins.PluginNotIndexedError):
         plugin_install.install_plugin(project_root, "ghost/plugin")
+
+
+def test_declarative_vendor_into_escape_blocked(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A declarative kind is author-controlled data; a vendor_into that escapes the
+    # project root must be refused, not written outside the tree.
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={".escaper/logger.ts": "export const plugin = 1\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    _install_escape_kind()
+    repos.add("a", f"file://{bare}")
+    with pytest.raises(install.ManifestPathEscapeError):
+        plugin_install.install_plugin(project_root, "a/logger")
+    assert not (project_root.parent / "escape").exists()  # nothing written outside root
+
+
+def test_register_skips_unvendored_plugin(home: Path, project_root: Path, tmp_path: Path) -> None:
+    # A plugin in the manifest whose vendored files are absent (e.g. a blocked
+    # re-vendor on sync) must NOT get a marketplace/settings entry pointing at
+    # nothing — the half-state bug.
+    _add_marketplace(tmp_path)
+    plugin_install.install_plugin(project_root, "a/design-audit")  # vendored + registered
+    m = manifest.load(project_root)
+    ghost = m.plugins[0].model_copy(
+        update={
+            "qualified_name": "a/typography",
+            "target_dir": ".claude/plugins/a/typography",
+            "content_hash": "deadbeef",
+        }
+    )
+    m.plugins.append(ghost)
+    manifest.save(project_root, m)
+    plugin_install.reconcile_registration(project_root, manifest.load(project_root))
+    settings = _settings(project_root)
+    assert settings["enabledPlugins"]["design-audit@a"] is True  # present -> registered
+    assert "typography@a" not in settings["enabledPlugins"]  # missing files -> skipped
+    mp = json.loads(
+        (
+            project_root / ".claude" / "plugins" / "a" / ".claude-plugin" / "marketplace.json"
+        ).read_text()
+    )
+    assert {p["name"] for p in mp["plugins"]} == {"design-audit"}
+
+
+def test_override_risk_persisted_through_lock(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # --override-risk must be recorded so a lock+sync reproduction re-vendors a
+    # risk-flagged plugin without re-tripping the gate (sync passes the flag).
+    _add_marketplace(tmp_path)
+    installed = plugin_install.install_plugin(project_root, "a/design-audit", override_risk=True)
+    assert installed.risk_acknowledged is True
+    declared = next(
+        p for p in declarations.load(project_root).plugins if p.qualified_name == "a/design-audit"
+    )
+    assert declared.risk_acknowledged is True
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+    locked = next(
+        p for p in manifest.load(project_root).plugins if p.qualified_name == "a/design-audit"
+    )
+    assert locked.risk_acknowledged is True
+
+
+def test_override_risk_defaults_false(home: Path, project_root: Path, tmp_path: Path) -> None:
+    _add_marketplace(tmp_path)
+    installed = plugin_install.install_plugin(project_root, "a/typography")
+    assert installed.risk_acknowledged is False
+
+
+def _record_sync_override_risk(
+    monkeypatch: pytest.MonkeyPatch, project_root: Path, *, override_risk: bool
+) -> list[bool]:
+    """Install a plugin (optionally risk-acknowledged), lock, wipe the vendored
+    tree, then sync with `_deploy` patched to record the override_risk it gets.
+
+    Returns the recorded override_risk values from the sync run.
+    """
+    plugin_install.install_plugin(project_root, "a/design-audit", override_risk=override_risk)
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+
+    real_deploy = plugin_install._deploy
+    seen: list[bool] = []
+
+    def recording_deploy(*args: object, **kwargs: object) -> tuple[str, Path]:
+        seen.append(bool(kwargs["override_risk"]))
+        return real_deploy(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plugin_install, "_deploy", recording_deploy)
+    shutil.rmtree(project_root / ".claude" / "plugins")  # force a re-vendor on sync
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root, sync_agents=False)))
+    return seen
+
+
+def test_sync_passes_persisted_override_risk_to_deploy(
+    home: Path, project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The whole point of persisting the flag: sync must hand it to _deploy so the
+    # risk gate stays bypassed when re-vendoring, not just record it in the lockfile.
+    _add_marketplace(tmp_path)
+    seen = _record_sync_override_risk(monkeypatch, project_root, override_risk=True)
+    assert seen == [True]
+
+
+def test_sync_deploy_override_risk_false_without_acknowledgment(
+    home: Path, project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Inverse: a plugin installed without --override-risk must sync with the gate armed.
+    _add_marketplace(tmp_path)
+    seen = _record_sync_override_risk(monkeypatch, project_root, override_risk=False)
+    assert seen == [False]
