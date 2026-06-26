@@ -16,8 +16,11 @@ from sqlmodel import SQLModel
 class RegisteredRepo(SQLModel, table=True):  # type: ignore[call-arg]
     """A skill source repo registered globally on this machine."""
 
-    alias: str = SQLField(primary_key=True)
-    url: str
+    alias: str = SQLField(primary_key=True)  # local, per-machine handle
+    # Source-agnostic identity = sha256(normalize_repo_url(url))[:16]. Stable across
+    # clone-URL forms and machines; the join token written to committed lockfiles.
+    repo_id: str = SQLField(index=True, unique=True)
+    url: str  # the user's chosen clone URL (ssh/https), per-machine
     default_ref: str = "HEAD"  # branch/tag to track on refresh
     last_fetched_at: datetime | None = None
     last_sha: str | None = None
@@ -182,7 +185,7 @@ class PluginIndex(SQLModel, table=True):  # type: ignore[call-arg]
         return self.indexed_at_sha[:7]
 
 
-CURRENT_DECLARATIONS_VERSION = 9  # v9 adds the plugins surface
+CURRENT_DECLARATIONS_VERSION = 10  # v10 makes on-disk repo identity source-agnostic
 
 
 class DeclaredRepo(BaseModel):
@@ -348,7 +351,7 @@ class ProjectDeclarations(BaseModel):
     plugins: list[DeclaredPlugin] = Field(default_factory=list)
 
 
-CURRENT_MANIFEST_VERSION = 15  # v15 adds the plugins surface
+CURRENT_MANIFEST_VERSION = 16  # v16 makes on-disk repo identity source-agnostic
 HISTORY_CAP = 10
 
 
@@ -505,7 +508,8 @@ class InstalledPlugin(BaseModel):
 
     A plugin is vendored (copied) into the project at the locked SHA, exactly
     like a skill. For Claude, ``marketplace_name`` is the aim-local marketplace
-    registered in `.claude/settings.json` (namespaced by repo alias); the
+    registered in `.claude/settings.json`, namespaced by the source-agnostic repo
+    id (``aim-<repo_id>``) so the committed `.claude/` files are portable; the
     enablement key is ``<plugin_name>@<marketplace_name>``. For opencode there
     is no marketplace and the vendored files auto-load.
     """

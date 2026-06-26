@@ -79,17 +79,34 @@ def test_add_rejects_bad_alias(home: Path) -> None:
         repos.add("Bad Alias", "file:///tmp/nope")
 
 
-def test_add_duplicate_errors(home: Path, bare_remote: tuple[Path, Path]) -> None:
+def test_add_same_url_is_idempotent(home: Path, bare_remote: tuple[Path, Path]) -> None:
+    # Re-adding the same upstream repo (by identity) reuses the existing record
+    # instead of cloning a duplicate — even if the URL form/alias differ.
+    _, bare = bare_remote
+    first = repos.add("anthropic", f"file://{bare}")
+    again = repos.add("anthropic", f"file://{bare}")
+    assert again.alias == first.alias == "anthropic"
+    # A different alias for the same URL still dedups to the first registration.
+    deduped = repos.add("other", f"file://{bare}")
+    assert deduped.alias == "anthropic"
+    assert [r.alias for r in repos.list_repos()] == ["anthropic"]
+
+
+def test_add_alias_reuse_for_different_url_errors(
+    home: Path, bare_remote: tuple[Path, Path], tmp_path: Path
+) -> None:
     _, bare = bare_remote
     repos.add("anthropic", f"file://{bare}")
+    other = _build_repo_with(tmp_path, {"skills/x/SKILL.md": "# x\n"})[1]
     with pytest.raises(repos.RepoExistsError):
-        repos.add("anthropic", f"file://{bare}")
+        repos.add("anthropic", f"file://{other}")
 
 
-def test_list_and_get(home: Path, bare_remote: tuple[Path, Path]) -> None:
+def test_list_and_get(home: Path, bare_remote: tuple[Path, Path], tmp_path: Path) -> None:
     _, bare = bare_remote
+    other = _build_repo_with(tmp_path, {"skills/x/SKILL.md": "# x\n"})[1]
     repos.add("a", f"file://{bare}")
-    repos.add("b", f"file://{bare}")
+    repos.add("b", f"file://{other}")
     aliases = [r.alias for r in repos.list_repos()]
     assert aliases == ["a", "b"]
     assert repos.get("a").alias == "a"
@@ -140,10 +157,13 @@ def test_rename_moves_clone(home: Path, bare_remote: tuple[Path, Path]) -> None:
     assert repos.get("new").alias == "new"
 
 
-def test_rename_to_existing_errors(home: Path, bare_remote: tuple[Path, Path]) -> None:
+def test_rename_to_existing_errors(
+    home: Path, bare_remote: tuple[Path, Path], tmp_path: Path
+) -> None:
     _, bare = bare_remote
+    other = _build_repo_with(tmp_path, {"skills/x/SKILL.md": "# x\n"})[1]
     repos.add("a", f"file://{bare}")
-    repos.add("b", f"file://{bare}")
+    repos.add("b", f"file://{other}")
     with pytest.raises(repos.RepoExistsError):
         repos.rename("a", "b")
 

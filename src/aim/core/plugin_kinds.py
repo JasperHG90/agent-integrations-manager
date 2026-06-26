@@ -31,7 +31,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aim.core import git, paths, settings_json, validation
+from aim.core import git, paths, policy, settings_json, validation
 from aim.core.models import InstalledPlugin, Manifest
 
 
@@ -170,6 +170,23 @@ def _is_vendored(project_root: Path, plugin: InstalledPlugin) -> bool:
     return target is not None and target.exists()
 
 
+def _aim_marketplace_name(repo_id: str) -> str:
+    """Return the aim-local marketplace name for a repo identity token.
+
+    Source-agnostic (``aim-<repo_id>``) so the committed `.claude/settings.json`
+    enablement keys and vendor paths are portable across machines and clone-URL
+    forms — these `.claude/` files are committed and are NOT alias-translated.
+    """
+    return f"aim-{repo_id}"
+
+
+def _repo_id_for_alias(repo_alias: str) -> str:
+    """Resolve a registered repo alias to its source-agnostic identity token."""
+    from aim.core import repos
+
+    return policy.repo_id_for_url(repos.get(repo_alias).url)
+
+
 class ClaudeKind:
     """Built-in kind for Claude Code marketplace plugins."""
 
@@ -260,27 +277,32 @@ class ClaudeKind:
     _PLUGINS_DIR = ".claude/plugins"
     _SETTINGS_FILE = ".claude/settings.json"
 
-    def _marketplace_dir(self, project_root: Path, repo_alias: str) -> Path:
-        rel = f"{self._PLUGINS_DIR}/{repo_alias}"
+    def _marketplace_dir(self, project_root: Path, repo_id: str) -> Path:
+        rel = f"{self._PLUGINS_DIR}/{_aim_marketplace_name(repo_id)}"
         safe = paths.safe_project_path(project_root, rel)
         if safe is None:
             raise ValueError(f"plugins path escapes project root: {rel!r}")
         return safe
 
     def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
-        return f"{self._PLUGINS_DIR}/{repo_alias}/{plugin_name}"
+        # Vendor under the id-based marketplace dir so the committed `.claude/`
+        # tree is portable (alias-independent) across machines.
+        repo_id = _repo_id_for_alias(repo_alias)
+        return f"{self._PLUGINS_DIR}/{_aim_marketplace_name(repo_id)}/{plugin_name}"
 
-    def _claude_plugins(self, m: Manifest, repo_alias: str) -> list[str]:
+    def _claude_plugins_for_id(self, project_root: Path, m: Manifest, repo_id: str) -> list[str]:
         return [
             p.qualified_name.split("/", 1)[1]
             for p in m.plugins
-            if p.flavor == "claude" and p.repo_alias == repo_alias
+            if p.flavor == "claude"
+            and policy.repo_id_for_url(p.repo_url) == repo_id
+            and _is_vendored(project_root, p)
         ]
 
-    def _write_marketplace(self, project_root: Path, repo_alias: str, names: list[str]) -> None:
-        mkt_dir = self._marketplace_dir(project_root, repo_alias)
+    def _write_marketplace(self, project_root: Path, repo_id: str, names: list[str]) -> None:
+        mkt_dir = self._marketplace_dir(project_root, repo_id)
         doc = {
-            "name": repo_alias,
+            "name": _aim_marketplace_name(repo_id),
             "owner": {"name": "aim"},
             "plugins": [{"name": n, "source": f"./{n}"} for n in names],
         }
@@ -292,35 +314,39 @@ class ClaudeKind:
         # Reconcile every claude repo's marketplace + settings.json from the
         # installed set — but only plugins actually vendored on disk, so a
         # failed/blocked vendor never leaves a marketplace entry pointing at nothing.
+        # Group by source-agnostic repo id so the committed files are portable.
         by_repo: dict[str, list[str]] = {}
         for p in m.plugins:
             if p.flavor == "claude" and _is_vendored(project_root, p):
-                by_repo.setdefault(p.repo_alias, []).append(p.qualified_name.split("/", 1)[1])
-        for repo_alias, names in by_repo.items():
-            self._write_marketplace(project_root, repo_alias, names)
+                repo_id = policy.repo_id_for_url(p.repo_url)
+                by_repo.setdefault(repo_id, []).append(p.qualified_name.split("/", 1)[1])
+        for repo_id, names in by_repo.items():
+            mkt_name = _aim_marketplace_name(repo_id)
+            self._write_marketplace(project_root, repo_id, names)
             settings_json.register(
                 project_root,
                 settings_file=self._SETTINGS_FILE,
-                marketplace_name=repo_alias,
-                marketplace_path=f"{self._PLUGINS_DIR}/{repo_alias}",
+                marketplace_name=mkt_name,
+                marketplace_path=f"{self._PLUGINS_DIR}/{mkt_name}",
                 plugin_names=names,
             )
 
     def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
         name = installed.qualified_name.split("/", 1)[1]
+        repo_id = policy.repo_id_for_url(installed.repo_url)
         settings_json.unregister(
             project_root,
             settings_file=self._SETTINGS_FILE,
-            marketplace_name=installed.repo_alias,
+            marketplace_name=_aim_marketplace_name(repo_id),
             plugin_name=name,
         )
-        remaining = self._claude_plugins(m, installed.repo_alias)
+        remaining = self._claude_plugins_for_id(project_root, m, repo_id)
         if remaining:
-            self._write_marketplace(project_root, installed.repo_alias, remaining)
+            self._write_marketplace(project_root, repo_id, remaining)
         else:
             import shutil
 
-            mkt_dir = self._marketplace_dir(project_root, installed.repo_alias)
+            mkt_dir = self._marketplace_dir(project_root, repo_id)
             if mkt_dir.exists():
                 shutil.rmtree(mkt_dir)
 

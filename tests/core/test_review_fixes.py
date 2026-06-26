@@ -213,12 +213,12 @@ def test_rollback_works_after_repo_rename(home: Path, project_root: Path, tmp_pa
     repos.refresh("a")
     install.update(project_root, "a/foo")
 
-    # Rename the repo locally. The manifest entry still uses qualified_name
-    # "a/foo" and repo_alias "a", so rollback should still work — the snapshot
-    # path uses the historic alias, and the cached clone may even be gone.
+    # Rename the repo locally. The committed lockfile is identity-keyed (by the
+    # repo's URL, which the rename does not change), so on load it transparently
+    # resolves to the repo's CURRENT local alias — rollback works under it.
     repos.rename("a", "renamed")
 
-    rolled = install.rollback(project_root, "a/foo")
+    rolled = install.rollback(project_root, "renamed/foo")
     target = project_root / ".claude" / "skills" / "foo"
     assert rolled.current.identifier()  # didn't crash
     assert (target / "SKILL.md").read_text() == "# v1\n"

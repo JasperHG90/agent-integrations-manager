@@ -97,7 +97,55 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
         # v9 adds the optional [[plugin]] surface. Additive.
         raw.setdefault("plugins", [])
         raw["manifest_version"] = 9
+        version = 9
+    if version < 10:
+        # v10 makes the on-disk repo identity source-agnostic: `[repos]` is rekeyed
+        # from alias->url to repo_id->normalized_url, and every artifact's
+        # qualified_name/repo_alias is rewritten to id form. Deterministic, so two
+        # teammates' independent first-run rewrites converge byte-for-byte.
+        _rekey_v9_to_v10_id_form(raw)
+        raw["manifest_version"] = 10
     return raw
+
+
+def _rekey_v9_to_v10_id_form(raw: dict[str, Any]) -> None:
+    """Rewrite a v9 alias-keyed declarations mapping to v10 id-keyed form, in place.
+
+    Args:
+        raw: The parsed v9 declarations mapping (plural artifact keys).
+    """
+    from aim.core import policy
+
+    repos_map = raw.get("repos", {}) or {}
+    alias_to_id = {alias: policy.repo_id_for_url(url) for alias, url in repos_map.items()}
+    raw["repos"] = {
+        alias_to_id[alias]: policy.normalize_repo_url(url)
+        for alias, url in repos_map.items()
+        if alias in alias_to_id
+    }
+    for key in ("skills", "agents", "rules", "plugins"):
+        for entry in raw.get(key, []) or []:
+            _rekey_artifact_to_id(entry, alias_to_id)
+    archetype = raw.get("archetype")
+    if isinstance(archetype, dict) and archetype.get("repo_alias") is not None:
+        _rekey_artifact_to_id(archetype, alias_to_id)
+
+
+def _rekey_artifact_to_id(entry: dict[str, Any], alias_to_id: dict[str, str]) -> None:
+    """Rewrite one artifact dict's repo_alias/qualified_name from alias to id form.
+
+    Args:
+        entry: The artifact mapping to mutate in place.
+        alias_to_id: Mapping of local alias to repo identity token.
+    """
+    alias = entry.get("repo_alias")
+    repo_id = alias_to_id.get(alias) if isinstance(alias, str) else None
+    if repo_id is None:
+        return
+    entry["repo_alias"] = repo_id
+    qn = entry.get("qualified_name")
+    if isinstance(qn, str) and "/" in qn:
+        entry["qualified_name"] = f"{repo_id}/{qn.split('/', 1)[1]}"
 
 
 # TOML uses singular array-of-table headers; the models use plural field names.
@@ -136,6 +184,180 @@ def _singularize_table_headers(text: str) -> str:
     return "\n".join(out)
 
 
+def _resolve_disk_repos(disk_repos: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve the on-disk id-keyed `[repos]` table to local alias/url mappings.
+
+    For each `repo_id -> normalized_url` on disk, the local alias is the registered
+    repo's alias when the identity is known on this machine, else a default
+    `owner-repo` alias derived from the URL — WITHOUT cloning or registering. The
+    in-memory URL is the local repo's chosen clone URL (ssh/https) when registered,
+    else the normalized URL from disk, so per-machine variation never reaches disk.
+
+    Args:
+        disk_repos: The on-disk `[repos]` mapping (repo_id -> normalized URL).
+
+    Returns:
+        A pair ``(id_to_alias, alias_to_url)`` for rebuilding alias-form models.
+    """
+    from aim.core import repos as repos_mod
+
+    id_to_alias: dict[str, str] = {}
+    alias_to_url: dict[str, str] = {}
+    for repo_id, disk_url in disk_repos.items():
+        repo = repos_mod.get_by_id(repo_id)
+        if repo is not None:
+            id_to_alias[repo_id] = repo.alias
+            alias_to_url[repo.alias] = repo.url
+        else:
+            alias = repos_mod.derive_default_alias(disk_url)
+            id_to_alias[repo_id] = alias
+            alias_to_url[alias] = disk_url
+    return id_to_alias, alias_to_url
+
+
+def _from_disk(raw: dict[str, Any]) -> dict[str, Any]:
+    """Translate an on-disk id-keyed declarations mapping to alias-form, in place.
+
+    Resolves each `repo_id` to a local alias (registered or default-derived, no
+    clone), rewrites `[repos]` to `alias -> local_url`, and rewrites every
+    artifact's `qualified_name`/`repo_alias` from id form to alias form. Downstream
+    code then operates entirely on aliases, unchanged.
+
+    Args:
+        raw: The migrated (id-form) declarations mapping.
+
+    Returns:
+        The same mapping, mutated to alias form.
+    """
+    disk_repos = raw.get("repos", {}) or {}
+    id_to_alias, alias_to_url = _resolve_disk_repos(disk_repos)
+    raw["repos"] = dict(sorted(alias_to_url.items()))
+    for key in ("skills", "agents", "rules", "plugins"):
+        for entry in raw.get(key, []) or []:
+            _rekey_artifact_from_id(entry, id_to_alias)
+    archetype = raw.get("archetype")
+    if isinstance(archetype, dict) and archetype.get("repo_alias") is not None:
+        _rekey_artifact_from_id(archetype, id_to_alias)
+    pol = raw.get("policy")
+    if isinstance(pol, dict) and isinstance(pol.get("repo"), str) and pol["repo"]:
+        from aim.core import policy
+
+        pol["repo"] = policy.local_policy_repo_url(pol["repo"])
+    _template_from_id(raw.get("template"))
+    return raw
+
+
+def _rekey_artifact_from_id(entry: dict[str, Any], id_to_alias: dict[str, str]) -> None:
+    """Rewrite one artifact dict's repo_alias/qualified_name from id to alias form.
+
+    Args:
+        entry: The artifact mapping to mutate in place.
+        id_to_alias: Mapping of repo identity token to local alias.
+    """
+    repo_id = entry.get("repo_alias")
+    alias = id_to_alias.get(repo_id) if isinstance(repo_id, str) else None
+    if alias is None:
+        return
+    entry["repo_alias"] = alias
+    qn = entry.get("qualified_name")
+    if isinstance(qn, str) and "/" in qn:
+        entry["qualified_name"] = f"{alias}/{qn.split('/', 1)[1]}"
+
+
+def _template_to_id(tmpl: dict[str, Any] | None) -> None:
+    """Rewrite a declared template's identity (`qualified_name`/`repo_alias`/`url`) to id form.
+
+    The template repo is registry-backed, so it gets the same id-form treatment as
+    artifacts: a content-addressed `repo_alias`/`qualified_name` and a normalized URL,
+    so the committed file is byte-identical across machines.
+
+    Args:
+        tmpl: The serialized template mapping (or None when no template is recorded).
+    """
+    from aim.core import policy
+
+    if not (isinstance(tmpl, dict) and isinstance(tmpl.get("url"), str) and tmpl["url"]):
+        return
+    repo_id = policy.repo_id_for_url(tmpl["url"])
+    tmpl["url"] = policy.normalize_repo_url(tmpl["url"])
+    if isinstance(tmpl.get("repo_alias"), str):
+        tmpl["repo_alias"] = repo_id
+    qn = tmpl.get("qualified_name")
+    if isinstance(qn, str) and "/" in qn:
+        tmpl["qualified_name"] = f"{repo_id}/{qn.split('/', 1)[1]}"
+
+
+def _template_from_id(tmpl: dict[str, Any] | None) -> None:
+    """Resolve a declared template's id-form identity to the local alias/URL (no clone).
+
+    The local alias and clone URL come from the registered repo when its identity is
+    known on this machine, else a default `owner-repo` alias and the on-disk URL — so
+    downstream `profile check/update` resolves the template via the local index.
+
+    Args:
+        tmpl: The serialized (id-form) template mapping (or None).
+    """
+    from aim.core import policy
+    from aim.core import repos as repos_mod
+
+    if not (isinstance(tmpl, dict) and isinstance(tmpl.get("url"), str) and tmpl["url"]):
+        return
+    repo = repos_mod.get_by_id(policy.repo_id_for_url(tmpl["url"]))
+    if repo is not None:
+        alias, local_url = repo.alias, repo.url
+    else:
+        alias, local_url = repos_mod.derive_default_alias(tmpl["url"]), tmpl["url"]
+    tmpl["repo_alias"] = alias
+    tmpl["url"] = local_url
+    qn = tmpl.get("qualified_name")
+    if isinstance(qn, str) and "/" in qn:
+        tmpl["qualified_name"] = f"{alias}/{qn.split('/', 1)[1]}"
+
+
+def _to_disk(decl: ProjectDeclarations) -> dict[str, Any]:
+    """Serialize declarations to an on-disk id-keyed mapping (source-agnostic).
+
+    Builds `[repos]` as `repo_id -> normalize_repo_url(url)` and rewrites every
+    artifact's `qualified_name`/`repo_alias` to id form, so the committed file is
+    byte-identical across machines for the same project. The plugin
+    `marketplace_name` is already id-based (``aim-<repo_id>``) and passes through.
+
+    Args:
+        decl: The in-memory (alias-form) declarations.
+
+    Returns:
+        A JSON-mode mapping ready for TOML serialization.
+    """
+    from aim.core import policy
+
+    data = decl.model_dump(mode="json", exclude_none=True)
+    alias_repos = data.get("repos", {}) or {}
+    alias_to_id = {alias: policy.repo_id_for_url(url) for alias, url in alias_repos.items()}
+    # Sort by repo_id so the on-disk [repos] order is identical across machines
+    # regardless of local alias insertion order.
+    data["repos"] = {
+        rid: norm
+        for rid, norm in sorted(
+            (alias_to_id[alias], policy.normalize_repo_url(url))
+            for alias, url in alias_repos.items()
+        )
+    }
+    for key in ("skills", "agents", "rules", "plugins"):
+        for entry in data.get(key, []) or []:
+            _rekey_artifact_to_id(entry, alias_to_id)
+    archetype = data.get("archetype")
+    if isinstance(archetype, dict) and archetype.get("repo_alias") is not None:
+        _rekey_artifact_to_id(archetype, alias_to_id)
+    # The org-policy repo is a direct clone target with no [repos] indirection. Store it
+    # NORMALIZED for cross-machine determinism; the local clone form is re-derived on load
+    # from the per-machine record `policy.record_policy_repo_url` writes at bind time.
+    pol = data.get("policy")
+    if isinstance(pol, dict) and isinstance(pol.get("repo"), str) and pol["repo"]:
+        pol["repo"] = policy.normalize_repo_url(pol["repo"])
+    _template_to_id(data.get("template"))
+    return data
+
+
 def load(project_root: Path) -> ProjectDeclarations:
     """Load and migrate the project's `aim.toml` into a validated model.
 
@@ -156,7 +378,8 @@ def load(project_root: Path) -> ProjectDeclarations:
         if singular in raw:
             raw[plural] = raw.pop(singular)
     migrated = _migrate(raw)
-    return ProjectDeclarations.model_validate(migrated)
+    alias_form = _from_disk(migrated)
+    return ProjectDeclarations.model_validate(alias_form)
 
 
 def load_or_default(project_root: Path) -> ProjectDeclarations:
@@ -182,7 +405,7 @@ def save(project_root: Path, declarations: ProjectDeclarations) -> None:
         declarations: The declarations to persist.
     """
     path = paths.project_declarations_path(project_root)
-    data = declarations.model_dump(mode="json", exclude_none=True)
+    data = _to_disk(declarations)
     text = tomli_w.dumps(data)
     text = _singularize_table_headers(text)
     path.write_text(text + "\n", encoding="utf-8")

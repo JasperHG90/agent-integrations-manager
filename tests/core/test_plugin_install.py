@@ -93,32 +93,45 @@ def _settings(project_root: Path) -> dict:
     return json.loads((project_root / ".claude" / "settings.json").read_text())
 
 
+def _mkt(repo_alias: str = "a") -> str:
+    """The aim-local marketplace name for a registered repo: ``aim-<repo_id>``.
+
+    The plugin client-config surface (settings.json key + vendor dir) is keyed by
+    the source-agnostic repo id, not the per-machine alias, so the committed
+    `.claude/` files are portable.
+    """
+    from aim.core import policy
+
+    return f"aim-{policy.repo_id_for_url(repos.get(repo_alias).url)}"
+
+
 def test_install_claude_vendors_and_registers(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
     _add_marketplace(tmp_path)
     installed = plugin_install.install_plugin(project_root, "a/design-audit")
+    mkt = _mkt()
 
-    vendored = project_root / ".claude" / "plugins" / "a" / "design-audit"
+    vendored = project_root / ".claude" / "plugins" / mkt / "design-audit"
     assert (vendored / "skills" / "audit" / "SKILL.md").exists()
     # aim-authored local marketplace manifest points at the vendored copy.
     mp = json.loads(
         (
-            project_root / ".claude" / "plugins" / "a" / ".claude-plugin" / "marketplace.json"
+            project_root / ".claude" / "plugins" / mkt / ".claude-plugin" / "marketplace.json"
         ).read_text()
     )
-    assert mp["name"] == "a"
+    assert mp["name"] == mkt
     assert {p["name"] for p in mp["plugins"]} == {"design-audit"}
 
     settings = _settings(project_root)
-    assert settings["extraKnownMarketplaces"]["a"]["source"]["source"] == "directory"
-    assert settings["extraKnownMarketplaces"]["a"]["source"]["path"] == ".claude/plugins/a"
-    assert settings["enabledPlugins"]["design-audit@a"] is True
+    assert settings["extraKnownMarketplaces"][mkt]["source"]["source"] == "directory"
+    assert settings["extraKnownMarketplaces"][mkt]["source"]["path"] == f".claude/plugins/{mkt}"
+    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True
 
     m = manifest.load(project_root)
     assert [p.qualified_name for p in m.plugins] == ["a/design-audit"]
     assert installed.flavor == "claude"
-    assert installed.marketplace_name == "a"
+    assert installed.marketplace_name == mkt
     assert installed.content_hash
 
 
@@ -168,20 +181,21 @@ def test_remove_refcounts_marketplace(home: Path, project_root: Path, tmp_path: 
     _add_marketplace(tmp_path)
     plugin_install.install_plugin(project_root, "a/design-audit")
     plugin_install.install_plugin(project_root, "a/typography")
+    mkt = _mkt()
 
     # Removing one leaves the shared marketplace entry in place.
     plugin_install.delete(project_root, "a/design-audit")
     settings = _settings(project_root)
-    assert "a" in settings["extraKnownMarketplaces"]
-    assert "design-audit@a" not in settings["enabledPlugins"]
-    assert settings["enabledPlugins"]["typography@a"] is True
-    assert not (project_root / ".claude" / "plugins" / "a" / "design-audit").exists()
+    assert mkt in settings["extraKnownMarketplaces"]
+    assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
+    assert settings["enabledPlugins"][f"typography@{mkt}"] is True
+    assert not (project_root / ".claude" / "plugins" / mkt / "design-audit").exists()
 
     # Removing the last one drops the marketplace entry entirely.
     plugin_install.delete(project_root, "a/typography")
     settings = _settings(project_root)
-    assert "a" not in settings.get("extraKnownMarketplaces", {})
-    assert "typography@a" not in settings.get("enabledPlugins", {})
+    assert mkt not in settings.get("extraKnownMarketplaces", {})
+    assert f"typography@{mkt}" not in settings.get("enabledPlugins", {})
 
 
 def test_security_extractor_surfaces_executable_surface(
@@ -222,19 +236,20 @@ def test_lock_sync_roundtrip(home: Path, project_root: Path, tmp_path: Path) -> 
     (project_root / ".claude" / "settings.json").unlink()
 
     asyncio.run(sync.run(sync.SyncOptions(project_root=project_root, sync_agents=False)))
+    mkt = _mkt()
     assert (
         project_root
         / ".claude"
         / "plugins"
-        / "a"
+        / mkt
         / "design-audit"
         / "skills"
         / "audit"
         / "SKILL.md"
     ).exists()
     settings = _settings(project_root)
-    assert settings["enabledPlugins"]["design-audit@a"] is True
-    assert "a" in settings["extraKnownMarketplaces"]
+    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True
+    assert mkt in settings["extraKnownMarketplaces"]
 
 
 def test_update_and_rollback(home: Path, project_root: Path, tmp_path: Path) -> None:
@@ -248,7 +263,7 @@ def test_update_and_rollback(home: Path, project_root: Path, tmp_path: Path) -> 
     repos.refresh("a")
 
     updated = plugin_install.update(project_root, "a/design-audit")
-    vendored = project_root / ".claude" / "plugins" / "a" / "design-audit" / "skills" / "audit"
+    vendored = project_root / ".claude" / "plugins" / _mkt() / "design-audit" / "skills" / "audit"
     assert vendored.joinpath("SKILL.md").read_text() == "# audit v2\n"
     assert len(updated.history) == 1
 
@@ -266,14 +281,15 @@ def test_prune_removes_undeclared_plugin(home: Path, project_root: Path, tmp_pat
     declarations._remove_plugin(project_root, "a/design-audit", "claude")
 
     prune.run(prune.PruneOptions(project_root=project_root, force=True))
+    mkt = _mkt()
 
     m = manifest.load(project_root)
     assert [p.qualified_name for p in m.plugins] == ["a/typography"]
-    assert not (project_root / ".claude" / "plugins" / "a" / "design-audit").exists()
+    assert not (project_root / ".claude" / "plugins" / mkt / "design-audit").exists()
     settings = _settings(project_root)
-    assert "design-audit@a" not in settings["enabledPlugins"]
-    assert settings["enabledPlugins"]["typography@a"] is True  # survivor kept
-    assert "a" in settings["extraKnownMarketplaces"]  # marketplace refcount survives
+    assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
+    assert settings["enabledPlugins"][f"typography@{mkt}"] is True  # survivor kept
+    assert mkt in settings["extraKnownMarketplaces"]  # marketplace refcount survives
 
 
 def test_install_unknown_plugin_errors(home: Path, project_root: Path) -> None:
@@ -303,11 +319,12 @@ def test_register_skips_unvendored_plugin(home: Path, project_root: Path, tmp_pa
     # nothing — the half-state bug.
     _add_marketplace(tmp_path)
     plugin_install.install_plugin(project_root, "a/design-audit")  # vendored + registered
+    mkt = _mkt()
     m = manifest.load(project_root)
     ghost = m.plugins[0].model_copy(
         update={
             "qualified_name": "a/typography",
-            "target_dir": ".claude/plugins/a/typography",
+            "target_dir": f".claude/plugins/{mkt}/typography",
             "content_hash": "deadbeef",
         }
     )
@@ -315,11 +332,11 @@ def test_register_skips_unvendored_plugin(home: Path, project_root: Path, tmp_pa
     manifest.save(project_root, m)
     plugin_install.reconcile_registration(project_root, manifest.load(project_root))
     settings = _settings(project_root)
-    assert settings["enabledPlugins"]["design-audit@a"] is True  # present -> registered
-    assert "typography@a" not in settings["enabledPlugins"]  # missing files -> skipped
+    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True  # present -> registered
+    assert f"typography@{mkt}" not in settings["enabledPlugins"]  # missing files -> skipped
     mp = json.loads(
         (
-            project_root / ".claude" / "plugins" / "a" / ".claude-plugin" / "marketplace.json"
+            project_root / ".claude" / "plugins" / mkt / ".claude-plugin" / "marketplace.json"
         ).read_text()
     )
     assert {p["name"] for p in mp["plugins"]} == {"design-audit"}

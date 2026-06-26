@@ -196,6 +196,12 @@ def _register_repo(alias: str, url: str, allow_insecure: bool) -> str | None:
     Returns:
         An error string describing a registration failure, or None on success.
     """
+    # Identity-level dedup: the URL may already be registered under a different
+    # local alias (a teammate's lockfile loads to whichever alias is local). Reuse
+    # that registration rather than cloning a duplicate.
+    existing = repos.get_by_url(url)
+    if existing is not None:
+        alias = existing.alias
     try:
         repo = repos.get(alias)
         # Re-indexing (DELETE + many INSERT per kind, serialized through the DB lock)
@@ -212,11 +218,23 @@ def _register_repo(alias: str, url: str, allow_insecure: bool) -> str | None:
         return None
     except repos.RepoNotFoundError:
         pass
+    # Not registered anywhere: auto-add under a default owner-repo alias (the alias
+    # from the lockfile is only a per-machine label and may collide locally).
+    add_alias = alias if not _alias_taken(alias) else repos.derive_default_alias(url)
     try:
-        repos.add(alias, url, allow_empty=True, allow_insecure=allow_insecure)
+        repos.add(add_alias, url, allow_empty=True, allow_insecure=allow_insecure)
     except Exception as exc:
-        return f"repo {alias}: failed to register {url}: {exc}"
+        return f"repo {add_alias}: failed to register {url}: {exc}"
     return None
+
+
+def _alias_taken(alias: str) -> bool:
+    """Return whether a repo alias is already registered locally."""
+    try:
+        repos.get(alias)
+    except repos.RepoNotFoundError:
+        return False
+    return True
 
 
 async def _ensure_repos(pairs: dict[str, str], allow_insecure: bool) -> list[str]:

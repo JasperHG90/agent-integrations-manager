@@ -43,15 +43,14 @@ def _get_allow_insecure(ctx: typer.Context) -> bool:
 
 
 def _normalize_repo_url(url: str) -> str:
-    """Canonicalize a git URL for equality comparison: drop a trailing `.git`,
-    rewrite `git@host:path` to `https://host/path`, and lowercase."""
-    u = url.strip()
-    if u.startswith("git@") and ":" in u:
-        host, _, path = u[len("git@") :].partition(":")
-        u = f"https://{host}/{path}"
-    if u.endswith(".git"):
-        u = u[:-4]
-    return u.rstrip("/").lower()
+    """Canonicalize a git URL for equality comparison.
+
+    Thin wrapper over `policy.normalize_repo_url` (the single implementation), kept
+    so existing CLI callers and tests import it from here.
+    """
+    from aim.core import policy
+
+    return policy.normalize_repo_url(url)
 
 
 def _alias_from_url(url: str) -> str:

@@ -210,9 +210,12 @@ def test_sync_auto_registers_missing_repo(home: Path, project_root: Path, tmp_pa
 
     shutil.rmtree(target)
 
+    # The repo is no longer registered, so its on-disk identity resolves to a
+    # default `owner-repo` alias (aliases are per-machine; identity is the URL).
+    expected_alias = repos.derive_default_alias(f"file://{bare}")
     result = asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
-    assert "a/foo" in result.synced_skills
-    assert target.exists()
+    assert f"{expected_alias}/foo" in result.synced_skills
+    assert (project_root / ".claude" / "skills" / "foo").exists()
 
 
 def test_sync_profile_override_writes_correct_agent_file(

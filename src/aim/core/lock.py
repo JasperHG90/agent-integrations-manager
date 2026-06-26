@@ -692,7 +692,13 @@ def _lock_plugin(
             plugin_name=plugin_name,
             source_path=plugin.source_path,
         )
-        marketplace_name = plugin.repo_alias if kind.uses_marketplace else None
+        marketplace_name = (
+            plugin_kinds._aim_marketplace_name(
+                policy.repo_id_for_url(repos.get(plugin.repo_alias).url)
+            )
+            if kind.uses_marketplace
+            else None
+        )
     installed = InstalledPlugin(
         qualified_name=plugin.qualified_name,
         repo_alias=plugin.repo_alias,

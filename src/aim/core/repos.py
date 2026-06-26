@@ -22,7 +22,7 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from aim.core import content_guard, db, git, paths
+from aim.core import content_guard, db, git, paths, policy
 from aim.core.models import (
     AgentIndex,
     ArchetypeIndex,
@@ -176,10 +176,12 @@ def add(
         allow_insecure: Permit insecure (non-https) URLs.
 
     Returns:
-        The newly registered repo record.
+        The newly registered repo record. When a repo with the same identity
+        (`repo_id`) is already registered under any alias, that existing record is
+        returned unchanged — the URL is not re-cloned under a duplicate alias.
 
     Raises:
-        RepoExistsError: If the alias is already registered.
+        RepoExistsError: If the alias is already registered (to a different repo).
         RepoHasNoArtifactsError: If no skills, agents, or rules are found and
             `allow_empty` is False; the clone is removed so registration
             leaves no state behind.
@@ -190,7 +192,17 @@ def add(
     # project's aim.toml policy is in scope — not here, since registering a repo is
     # a global cache operation with no project context.
     paths.ensure_global_dirs()
+    repo_id = policy.repo_id_for_url(url)
     with db.session() as session:
+        # Identity-level dedup: the same upstream repo (regardless of the clone-URL
+        # form or alias) is registered once. Reuse the existing record instead of
+        # cloning a duplicate — this is what makes a teammate's `sync` of a lockfile
+        # that references the repo under a different alias resolve to the local one.
+        by_id = session.exec(
+            select(RegisteredRepo).where(RegisteredRepo.repo_id == repo_id)  # type: ignore[arg-type]
+        ).first()
+        if by_id is not None:
+            return by_id
         existing = session.get(RegisteredRepo, alias)
         if existing is not None:
             raise RepoExistsError(alias)
@@ -205,6 +217,7 @@ def add(
         head_sha = None
     repo = RegisteredRepo(
         alias=alias,
+        repo_id=repo_id,
         url=url,
         default_ref=default_ref,
         last_fetched_at=datetime.now(UTC),
@@ -296,6 +309,67 @@ def get(alias: str) -> RegisteredRepo:
     if row is None:
         raise RepoNotFoundError(alias)
     return row
+
+
+def get_by_id(repo_id: str) -> RegisteredRepo | None:
+    """Return the registered repo whose source-agnostic identity is `repo_id`.
+
+    Args:
+        repo_id: The `sha256(normalize_repo_url(url))[:16]` identity token.
+
+    Returns:
+        The matching repo, or None when no repo with that identity is registered.
+    """
+    with db.session() as session:
+        return session.exec(
+            select(RegisteredRepo).where(RegisteredRepo.repo_id == repo_id)  # type: ignore[arg-type]
+        ).first()
+
+
+def get_by_url(url: str) -> RegisteredRepo | None:
+    """Return the registered repo whose URL matches `url` after normalization.
+
+    Compares by identity (`repo_id`), so ssh/https forms of the same repo match.
+
+    Args:
+        url: A git URL in any clone form.
+
+    Returns:
+        The matching repo, or None when the URL is not registered.
+    """
+    return get_by_id(policy.repo_id_for_url(url))
+
+
+def derive_default_alias(url: str) -> str:
+    """Derive a default local alias for a repo URL as ``owner-repo``.
+
+    The alias is a per-machine handle; this is the form auto-assigned when `sync`
+    (or a load of a lockfile referencing an unregistered repo) needs to name a repo
+    that has no local registration. It is the last two path segments joined by `-`,
+    sanitized to the alias charset, with a numeric suffix on collision with an
+    already-registered alias.
+
+    Args:
+        url: A git URL in any clone form.
+
+    Returns:
+        A valid, currently-unused alias.
+    """
+    norm = policy.normalize_repo_url(url)  # host/owner/repo, lowercased, no .git
+    # Strip the scheme, then drop the host, keeping the owner/repo path segments.
+    rest = norm.split("://", 1)[1] if "://" in norm else norm
+    path_segments = [s for s in rest.split("/")[1:] if s]
+    tail = path_segments[-2:] if len(path_segments) >= 2 else path_segments
+    base = re.sub(r"[^a-z0-9_-]", "-", "-".join(tail)).strip("-") or "repo"
+    if not _ALIAS_RE.fullmatch(base):
+        base = "repo"
+    taken = {r.alias for r in list_repos()}
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
 
 
 def remove(alias: str) -> None:
@@ -439,12 +513,16 @@ def rename(old: str, new: str) -> RegisteredRepo:
             raise RepoExistsError(new)
         renamed = RegisteredRepo(
             alias=new,
+            repo_id=existing.repo_id,
             url=existing.url,
             default_ref=existing.default_ref,
             last_fetched_at=existing.last_fetched_at,
             last_sha=existing.last_sha,
         )
         session.delete(existing)
+        # Flush the delete before inserting the renamed row: both carry the same
+        # (unique) repo_id, so the old row must be gone before the new one lands.
+        session.flush()
         session.add(renamed)
         # Move skill and agent index rows too.
         for row in list(session.exec(select(SkillIndex).where(SkillIndex.repo_alias == old)).all()):  # type: ignore[arg-type]
@@ -542,12 +620,14 @@ def rename(old: str, new: str) -> RegisteredRepo:
                 if cur is not None:
                     restored = RegisteredRepo(
                         alias=old,
+                        repo_id=cur.repo_id,
                         url=cur.url,
                         default_ref=cur.default_ref,
                         last_fetched_at=cur.last_fetched_at,
                         last_sha=cur.last_sha,
                     )
                     session.delete(cur)
+                    session.flush()  # same repo_id on both rows; remove old before insert
                     session.add(restored)
                     for row in list(
                         session.exec(select(SkillIndex).where(SkillIndex.repo_alias == new)).all()

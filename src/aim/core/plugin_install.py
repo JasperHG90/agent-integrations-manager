@@ -303,7 +303,11 @@ def install_plugin(
         qualified_name=qualified_name,
         override_risk=override_risk,
     )
-    marketplace_name = row.repo_alias if getattr(kind, "uses_marketplace", False) else None
+    marketplace_name = (
+        plugin_kinds._aim_marketplace_name(policy.repo_id_for_url(repos.get(row.repo_alias).url))
+        if getattr(kind, "uses_marketplace", False)
+        else None
+    )
 
     m = _load_manifest(project_root)
     existing = _find_installed(m, qualified_name, row.flavor)

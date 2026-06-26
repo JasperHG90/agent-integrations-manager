@@ -83,3 +83,39 @@ def test_manifest_rejects_unknown_fields(project_root: Path) -> None:
 
     with pytest.raises(ValidationError):
         manifest_mod.load(project_root)
+
+
+def test_legacy_json_migrates_to_id_keyed_lockfile(project_root: Path) -> None:
+    """A legacy `.atm/manifest.json` migrates through `_from_disk` to a valid,
+    id-keyed TOML lockfile (the migration rewrites to id form + drops repo_url)."""
+    from aim.core import policy
+
+    url = "https://github.com/anthropics/skills"
+    legacy = {
+        "manifest_version": 15,
+        "skills": [
+            {
+                "qualified_name": "anthropic/code-review",
+                "repo_alias": "anthropic",
+                "repo_url": url,
+                "source_path": "skills/code-review",
+                "target_dir": ".claude/skills/code-review",
+                "current": {"tag": None, "sha": "a" * 40, "installed_at": "2026-01-01T00:00:00Z"},
+            }
+        ],
+    }
+    json_path = project_root / ".atm" / "manifest.json"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(legacy))
+
+    from aim.core import repos
+
+    m = manifest_mod.load(project_root)
+    # Repo unregistered -> identity resolves to a default alias from the URL.
+    alias = repos.derive_default_alias(url)
+    assert [s.qualified_name for s in m.skills] == [f"{alias}/code-review"]
+    assert m.skills[0].repo_url == url  # re-derived from the on-disk [repos] URL
+    assert not json_path.exists()  # legacy file removed
+    lock_text = (project_root / "aim.lock.toml").read_text()
+    assert policy.repo_id_for_url(url) in lock_text  # [repos] is id-keyed
+    assert "repo_url" not in lock_text  # per-artifact repo_url dropped on disk

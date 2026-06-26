@@ -59,6 +59,62 @@ def test_at_head_launch_skips_alembic_upgrade(home: Path, monkeypatch: pytest.Mo
     assert calls == ["head"]
 
 
+def _repo_id_index_is_unique(db_path: Path, rows: list[tuple[str, str]]) -> bool | None:
+    """Build a `registeredrepo` DB at the pre-repo_id revision, seed `rows`, upgrade to
+    head, and report whether the resulting `repo_id` index is unique (None if absent).
+
+    Args:
+        db_path: Where to create the throwaway SQLite database.
+        rows: ``(alias, url)`` pairs to seed before the repo_id migration runs.
+    """
+    from alembic import command
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "d4f2a1b6c8e0")  # pre repo_id
+        with engine.begin() as conn:
+            for alias, url in rows:
+                conn.exec_driver_sql(
+                    "INSERT INTO registeredrepo (alias, url, default_ref) VALUES (?, ?, 'HEAD')",
+                    (alias, url),
+                )
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "head")  # must not raise
+        with engine.connect() as conn:
+            indexes = [
+                ix
+                for ix in inspect(conn).get_indexes("registeredrepo")
+                if ix["column_names"] == ["repo_id"]
+            ]
+            return bool(indexes[0]["unique"]) if indexes else None  # SQLite reports 1/0
+    finally:
+        engine.dispose()
+
+
+def test_repo_id_index_unique_on_collision_free_legacy_db(home: Path, tmp_path: Path) -> None:
+    """A pre-repo_id DB with no duplicate upstream repos backfills cleanly to a UNIQUE
+    repo_id index — the universal case for DBs created after the dedup fix."""
+    assert _repo_id_index_is_unique(tmp_path / "clean.db", [("r1", "https://github.com/org/one")])
+
+
+def test_repo_id_index_non_unique_on_duplicate_legacy_db(home: Path, tmp_path: Path) -> None:
+    """A pre-repo_id DB with two aliases for ONE upstream repo (two clone-URL forms that
+    normalize equal) must upgrade WITHOUT a unique-index abort.
+
+    The old alias-only `add` allowed this; both rows backfill to the same repo_id. A
+    unique index would abort the upgrade — and since migrations run on first DB touch,
+    the user could not even run `aim repo remove` to recover (deadlock). The adaptive
+    index falls back to non-unique; `repos.add`/`get_by_id` enforce identity going forward.
+    """
+    is_unique = _repo_id_index_is_unique(
+        tmp_path / "dup.db",
+        [("r1", "https://github.com/org/repo"), ("r2", "https://github.com/org/repo.git")],
+    )
+    assert is_unique is False  # index exists (not None) but fell back to non-unique
+
+
 def test_head_revision_matches_script_head(home: Path) -> None:
     """`db.HEAD_REVISION` must equal Alembic's script head, or the cheap check rots.
 

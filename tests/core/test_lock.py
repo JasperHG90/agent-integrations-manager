@@ -31,6 +31,16 @@ def _setup_project_with_skill(
     return working, bare, "a/foo"
 
 
+def _repo_url(repo_alias: str) -> str:
+    """Real clone URL of a registered repo; identity-keyed serialization needs the
+    same URL the repo is registered under (a placeholder would resolve to a
+    different repo_id and fail to round-trip)."""
+    try:
+        return repos.get(repo_alias).url
+    except repos.RepoNotFoundError:
+        return "file://placeholder"
+
+
 def _write_aim_toml(
     project_root: Path,
     *,
@@ -41,7 +51,7 @@ def _write_aim_toml(
     qualified_name: str = "a/foo",
 ) -> None:
     decl = ProjectDeclarations(
-        repos={repo_alias: "file://placeholder"},
+        repos={repo_alias: _repo_url(repo_alias)},
         skills=[
             _decl_skill(qualified_name, repo_alias, source_path, target_dir, pin=pin),
         ],
@@ -256,7 +266,7 @@ def test_lock_pin_tag_moved_to_new_sha_writes_and_preserves_other_installed_at(
     init_mod.run(init_mod.InitOptions(project_root=project_root))
 
     decl = ProjectDeclarations(
-        repos={"a": "file://placeholder", "b": "file://placeholder"},
+        repos={"a": _repo_url("a"), "b": _repo_url("b")},
         skills=[
             DeclaredSkill(
                 qualified_name="a/foo",
@@ -379,7 +389,9 @@ def test_lock_reorders_skills_triggers_write_preserves_installed_at(
             )
             for name in order
         ]
-        declarations.save(project_root, ProjectDeclarations(repos={"a": "file://x"}, skills=skills))
+        declarations.save(
+            project_root, ProjectDeclarations(repos={"a": _repo_url("a")}, skills=skills)
+        )
 
     _decl(["a/foo", "a/bar"])
     _run_lock(project_root)
@@ -411,7 +423,7 @@ def test_lock_partial_error_writes_and_raises(
     init_mod.run(init_mod.InitOptions(project_root=project_root))
 
     decl = ProjectDeclarations(
-        repos={"a": "file://placeholder"},
+        repos={"a": _repo_url("a")},
         skills=[
             DeclaredSkill(
                 qualified_name="a/foo",

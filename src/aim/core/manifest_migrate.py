@@ -281,6 +281,75 @@ def _v14_to_v15(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v15_to_v16(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v15 manifest forward to v16.
+
+    v16 makes the on-disk repo identity source-agnostic. A synthetic `[repos]`
+    table (``repo_id -> normalized_url``) is derived from the artifacts' alias+url,
+    every artifact's `qualified_name`/`repo_alias` is rewritten to id form, the
+    per-artifact `repo_url` is dropped (re-derived on load), and each claude
+    plugin's aim-local `marketplace_name`/`target_dir` are rewritten to the
+    ``aim-<repo_id>`` form. Deterministic so teammates' first-run rewrites converge.
+
+    Args:
+        raw: The decoded manifest mapping at version 15.
+
+    Returns:
+        The same mapping, mutated in place, stamped at version 16.
+    """
+    from aim.core.policy import normalize_repo_url, repo_id_for_url
+
+    artifact_keys = ("skills", "agents", "rules", "plugins")
+    # Build repo_id -> normalized_url from every artifact's (repo_alias, repo_url).
+    alias_to_id: dict[str, str] = {}
+    repos: dict[str, str] = {}
+
+    def _record(entry: dict[str, Any]) -> None:
+        alias = entry.get("repo_alias")
+        url = entry.get("repo_url")
+        if isinstance(alias, str) and isinstance(url, str):
+            rid = repo_id_for_url(url)
+            alias_to_id[alias] = rid
+            repos[rid] = normalize_repo_url(url)
+
+    for key in artifact_keys:
+        for entry in raw.get(key, []) or []:
+            _record(entry)
+    archetype = raw.get("archetype")
+    if isinstance(archetype, dict) and archetype.get("repo_alias") is not None:
+        _record(archetype)
+
+    def _rewrite(entry: dict[str, Any], *, is_plugin: bool) -> None:
+        alias = entry.get("repo_alias")
+        rid = alias_to_id.get(alias) if isinstance(alias, str) else None
+        entry.pop("repo_url", None)
+        if rid is None:
+            return
+        entry["repo_alias"] = rid
+        qn = entry.get("qualified_name")
+        if isinstance(qn, str) and "/" in qn:
+            name = qn.split("/", 1)[1]
+            entry["qualified_name"] = f"{rid}/{name}"
+        else:
+            name = None
+        if is_plugin:
+            mkt = entry.get("marketplace_name")
+            if isinstance(mkt, str):  # claude: aim-local marketplace -> id form
+                entry["marketplace_name"] = f"aim-{rid}"
+                if name is not None:
+                    entry["target_dir"] = f".claude/plugins/aim-{rid}/{name}"
+
+    for key in artifact_keys:
+        for entry in raw.get(key, []) or []:
+            _rewrite(entry, is_plugin=(key == "plugins"))
+    if isinstance(archetype, dict) and archetype.get("repo_alias") is not None:
+        _rewrite(archetype, is_plugin=False)
+
+    raw["repos"] = {rid: repos[rid] for rid in sorted(repos)}
+    raw["manifest_version"] = 16
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
@@ -297,6 +366,7 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     12: _v12_to_v13,
     13: _v13_to_v14,
     14: _v14_to_v15,
+    15: _v15_to_v16,
 }
 
 

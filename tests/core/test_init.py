@@ -4,6 +4,7 @@ from pathlib import Path
 
 from aim.core import declarations as declarations_mod
 from aim.core import init as init_mod
+from aim.core import repos as repos_mod
 from aim.core.models import DeclaredRule
 
 
@@ -70,7 +71,12 @@ def test_re_init_preserves_repo_sourced_rules(home: Path, project_root: Path) ->
 
     init_mod.run(init_mod.InitOptions(project_root=project_root))
     decl = declarations_mod.load(project_root)
-    assert [r.qualified_name for r in decl.rules] == ["anth/first"]
+    # The repo is unregistered, so its on-disk identity resolves to a default alias
+    # on load (identity is the URL; the alias is a per-machine label). The rule
+    # declaration itself must survive re-init.
+    expected_alias = repos_mod.derive_default_alias("file:///tmp/anth")
+    assert [r.qualified_name for r in decl.rules] == [f"{expected_alias}/first"]
+    assert [r.repo_alias for r in decl.rules] == [expected_alias]
 
 
 def test_init_does_not_seed_rules(home: Path, project_root: Path) -> None:

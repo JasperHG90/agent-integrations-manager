@@ -233,6 +233,23 @@ def normalize_repo_url(url: str) -> str:
     return u.rstrip("/").lower()
 
 
+def repo_id_for_url(url: str) -> str:
+    """Return a repo's stable, source-agnostic identity token.
+
+    The identity is ``sha256(normalize_repo_url(url))[:16]`` — a short,
+    content-addressed join token between artifacts and the ``[repos]`` table. It
+    is independent of the per-machine clone-URL form (ssh vs https) and alias, so
+    the committed `aim.toml`/`aim.lock.toml` are byte-identical across machines.
+
+    Args:
+        url: The git URL (any clone form) identifying the repo.
+
+    Returns:
+        The 16-hex-char repo identity token.
+    """
+    return hashlib.sha256(normalize_repo_url(url).encode("utf-8")).hexdigest()[:16]
+
+
 def from_mapping(data: dict) -> Policy:
     """Build a Policy from a parsed mapping.
 
@@ -470,6 +487,48 @@ def _org_snapshot_key(repo_url: str) -> str:
     return f"policy:org_snapshot:{digest}"
 
 
+def _policy_url_key(repo_url: str) -> str:
+    """Return the GlobalSetting key under which a policy repo's local clone URL is stored."""
+    return f"policy:repo_url:{repo_id_for_url(repo_url)}"
+
+
+def record_policy_repo_url(repo_url: str) -> None:
+    """Persist this machine's clone-URL form for a policy repo, keyed by its identity.
+
+    The committed `[policy] repo` / `policy_repo` are stored normalized (so the files are
+    byte-identical across machines), but the policy repo is cloned directly — there is no
+    `[repos]` indirection. Recording the local form here (at `bind`) lets the normalized
+    on-disk value be re-derived to this machine's URL on load, so `refresh`/`fetch` use
+    the user's ssh/https form rather than the normalized one. Stored separately from the
+    snapshot so a corrupt snapshot cannot lose it (resolution must still fail closed).
+
+    Args:
+        repo_url: The clone URL the user supplied for this machine.
+    """
+    with db.session() as session:
+        key = _policy_url_key(repo_url)
+        row = session.get(GlobalSetting, key)
+        if row is None:
+            session.add(GlobalSetting(key=key, value=repo_url))
+        else:
+            row.value = repo_url
+        session.commit()
+
+
+def local_policy_repo_url(committed_url: str) -> str:
+    """Return this machine's clone URL for a policy repo identity, or `committed_url`.
+
+    Falls back to the committed (normalized) URL when no local form was recorded on this
+    machine (e.g. a teammate who has not run `aim policy bind`/`refresh` yet).
+
+    Args:
+        committed_url: The normalized URL read from `aim.toml`/`aim.lock.toml`.
+    """
+    with db.session() as session:
+        row = session.get(GlobalSetting, _policy_url_key(committed_url))
+    return row.value if row is not None else committed_url
+
+
 def fetch_org_policy(
     repo_url: str, ref: str = "HEAD", *, allow_insecure: bool = False
 ) -> tuple[Policy, str]:
@@ -633,6 +692,7 @@ def bind(repo_url: str, ref: str = "HEAD", *, allow_insecure: bool = False) -> R
     """
     pol, sha = fetch_org_policy(repo_url, ref, allow_insecure=allow_insecure)
     cache_org_snapshot(repo_url, ref, sha, pol)
+    record_policy_repo_url(repo_url)
     return ResolvedPolicy(pol, "org", repo_url, compute_hash(pol))
 
 
