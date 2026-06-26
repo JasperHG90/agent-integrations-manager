@@ -226,7 +226,7 @@ def _drift(
     declared_agent_qnames = {a.qualified_name for a in decl.agents}
     declared_mcp_aliases = {mc.alias for mc in decl.mcp_servers}
     declared_rule_qnames = {r.qualified_name for r in decl.rules}
-    declared_plugin_qnames = {p.qualified_name for p in decl.plugins}
+    declared_plugin_keys = {(p.qualified_name, p.flavor) for p in decl.plugins}
     declared_symlinks = set(decl.symlinks)
 
     # Patterns that matched at least one drift candidate OR kept item.
@@ -265,7 +265,11 @@ def _drift(
     for mc in m.mcp_servers:
         _maybe("mcp", mc.alias, mc.alias in declared_mcp_aliases)
     for plug in m.plugins:
-        _maybe("plugin", plug.target_dir, plug.qualified_name in declared_plugin_qnames)
+        _maybe(
+            "plugin",
+            plug.target_dir,
+            (plug.qualified_name, plug.flavor) in declared_plugin_keys,
+        )
 
     warnings = _obsolete_pattern_warnings(exclude_patterns, matched_patterns)
     return candidates, kept, warnings

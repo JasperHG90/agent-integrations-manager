@@ -164,9 +164,9 @@ class PluginIndex(SQLModel, table=True):  # type: ignore[call-arg]
     """
 
     qualified_name: str = SQLField(primary_key=True)  # "<alias>/<plugin_name>"
+    flavor: str = SQLField(primary_key=True)  # "claude"|"opencode"; same name across kinds coexists
     repo_alias: str = SQLField(index=True)
     plugin_name: str = SQLField(index=True)
-    flavor: str  # "claude" | "opencode"
     source_path: str  # path of the plugin DIRECTORY (or file) relative to repo root
     marketplace_name: str | None = None  # upstream marketplace name (claude only)
     version: str | None = None

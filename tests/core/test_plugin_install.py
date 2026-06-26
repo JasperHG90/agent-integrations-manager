@@ -263,7 +263,7 @@ def test_prune_removes_undeclared_plugin(home: Path, project_root: Path, tmp_pat
     plugin_install.install_plugin(project_root, "a/typography")
     asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))  # proper lockfile
     # Simulate the user editing aim.toml to drop one plugin (still locked + on disk).
-    declarations._remove_plugin(project_root, "a/design-audit")
+    declarations._remove_plugin(project_root, "a/design-audit", "claude")
 
     prune.run(prune.PruneOptions(project_root=project_root, force=True))
 
@@ -391,3 +391,61 @@ def test_sync_deploy_override_risk_false_without_acknowledgment(
     _add_marketplace(tmp_path)
     seen = _record_sync_override_risk(monkeypatch, project_root, override_risk=False)
     assert seen == [False]
+
+
+def _add_same_name_two_flavors(tmp_path: Path) -> None:
+    """Register one repo exposing a `logger` plugin under BOTH the claude and opencode kinds.
+
+    The claude `logger` is listed in marketplace.json (dir plugin); the opencode
+    `logger` is the `.opencode/plugins/logger.ts` file the opencode kind discovers
+    by convention. The kind must be installed BEFORE `repos.add` so discovery
+    indexes both at registration time.
+    """
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "logger", "source": "./logger", "version": "1.0.0"}],
+    }
+    files = {
+        ".claude-plugin/marketplace.json": json.dumps(marketplace),
+        "logger/.claude-plugin/plugin.json": json.dumps({"name": "logger"}),
+        "logger/skills/log/SKILL.md": "# log\n",
+        ".opencode/plugins/logger.ts": "export const plugin = 1\n",
+    }
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    _install_opencode_kind()  # must precede `repos.add` so opencode files index
+    repos.add("a", f"file://{bare}")
+
+
+def test_same_name_coexists_across_flavors(home: Path, project_root: Path, tmp_path: Path) -> None:
+    # The SAME plugin name under DIFFERENT kinds must coexist end to end: both
+    # index, both install to distinct vendored paths, both land in the manifest,
+    # and a bare (no-flavor) index lookup is reported as ambiguous.
+    _add_same_name_two_flavors(tmp_path)
+
+    indexed = plugins.list_plugins()
+    assert {(r.qualified_name, r.flavor) for r in indexed} == {
+        ("a/logger", "claude"),
+        ("a/logger", "opencode"),
+    }
+
+    claude = plugin_install.install_plugin(project_root, "a/logger", flavor="claude")
+    opencode = plugin_install.install_plugin(project_root, "a/logger", flavor="opencode")
+    assert claude.flavor == "claude"
+    assert opencode.flavor == "opencode"
+    # Distinct vendored paths — the claude dir plugin and the opencode file drop.
+    assert claude.target_dir != opencode.target_dir
+    assert (project_root / claude.target_dir / "skills" / "log" / "SKILL.md").exists()
+    assert (project_root / ".opencode" / "plugins" / "logger.ts").read_text() == (
+        "export const plugin = 1\n"
+    )
+
+    m = manifest.load(project_root)
+    assert {(p.qualified_name, p.flavor) for p in m.plugins} == {
+        ("a/logger", "claude"),
+        ("a/logger", "opencode"),
+    }
+
+    # A bare lookup spanning two kinds is ambiguous without a flavor.
+    with pytest.raises(plugins.PluginAmbiguousFlavorError):
+        plugins.index_row("a/logger")

@@ -45,6 +45,21 @@ class PluginNotIndexedError(KeyError):
     """The requested qualified_name doesn't appear in the plugin index."""
 
 
+class PluginAmbiguousFlavorError(KeyError):
+    """A plugin name resolves to multiple kinds; the caller must pass a flavor."""
+
+    def __init__(self, qualified_name: str, flavors: list[str]) -> None:
+        self.qualified_name = qualified_name
+        self.flavors = flavors
+        super().__init__(qualified_name)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.qualified_name} is ambiguous across targets: {', '.join(self.flavors)}; "
+            "pass --target"
+        )
+
+
 @dataclass(frozen=True)
 class IndexResult:
     """Outcome of discovering plugins/marketplaces in a repo at a resolved SHA."""
@@ -90,18 +105,22 @@ def discover(repo_alias: str) -> IndexResult:
         for warning in found.warnings:
             _warn_skip(warning)
 
-    # Deduplicate plugins by name (PK is "<alias>/<name>"); precedence picks one.
-    by_name: dict[str, list[DiscoveredPlugin]] = {}
+    # Deduplicate by (name, kind): the same name under DIFFERENT kinds coexists
+    # (the index PK is qualified_name + flavor). Only same-name-same-kind collides,
+    # broken by path precedence.
+    by_id: dict[tuple[str, str], list[DiscoveredPlugin]] = {}
     for plugin in candidates:
-        by_name.setdefault(plugin.name, []).append(plugin)
+        by_id.setdefault((plugin.name, plugin.kind), []).append(plugin)
     indexed: list[DiscoveredPlugin] = []
     shadowed: list[DiscoveredPlugin] = []
-    for _, group in sorted(by_name.items()):
+    for _, group in sorted(by_id.items()):
         group.sort(key=lambda p: _rank(p, kind_order))
         indexed.append(group[0])
         for dupe in group[1:]:
             shadowed.append(dupe)
-            _warn_skip(f"{repo_alias}: plugin name {dupe.name!r} shadowed ({dupe.source_path})")
+            _warn_skip(
+                f"{repo_alias}: plugin {dupe.name!r} ({dupe.kind}) shadowed ({dupe.source_path})"
+            )
 
     return IndexResult(
         repo_alias=repo_alias,
@@ -161,22 +180,32 @@ def index_repo(repo_alias: str) -> IndexResult:
     return result
 
 
-def index_row(qualified_name: str) -> PluginIndex:
-    """Return the PluginIndex row for an indexed plugin, or raise."""
+def index_row(qualified_name: str, flavor: str | None = None) -> PluginIndex:
+    """Return the PluginIndex row for an indexed plugin.
+
+    A name can resolve to more than one row when multiple kinds expose it; pass
+    ``flavor`` to disambiguate. Raises PluginNotIndexedError if none match, or
+    PluginAmbiguousFlavorError if several match and no flavor was given.
+    """
     with db.session() as session:
-        row = session.get(PluginIndex, qualified_name)
-    if row is None:
+        stmt = select(PluginIndex).where(PluginIndex.qualified_name == qualified_name)  # type: ignore[arg-type]
+        if flavor is not None:
+            stmt = stmt.where(PluginIndex.flavor == flavor)  # type: ignore[arg-type]
+        rows = list(session.exec(stmt).all())
+    if not rows:
         raise PluginNotIndexedError(qualified_name)
-    return row
+    if len(rows) > 1:
+        raise PluginAmbiguousFlavorError(qualified_name, sorted(r.flavor for r in rows))
+    return rows[0]
 
 
-def read_plugin_content(qualified_name: str) -> str:
+def read_plugin_content(qualified_name: str, flavor: str | None = None) -> str:
     """Return a human-readable manifest for an indexed plugin.
 
     Claude plugins show their ``plugin.json`` when present; other (file-based)
     kinds show the plugin file itself.
     """
-    row = index_row(qualified_name)
+    row = index_row(qualified_name, flavor)
     repo_dir = repos.clone_dir(row.repo_alias)
     backend = git.get_backend()
     if row.flavor == "claude":

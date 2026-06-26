@@ -22,6 +22,22 @@ _PLUGIN_DEPLOY_ERRORS: tuple[type[BaseException], ...] = (  # noqa: RUF005
     git.GitError,
 ) + tui_errors.GOVERNANCE_ERRORS
 
+# DataTable row keys must be unique, but a plugin name can repeat across kinds
+# (a "claude" and an "opencode" plugin both named "logger"). Encode the identity
+# pair into one key string and decode it back when a row is acted on.
+_ROW_KEY_SEP = "\t"
+
+
+def _row_key(qualified_name: str, flavor: str) -> str:
+    """Build a unique DataTable row key from a plugin's (qualified_name, flavor)."""
+    return f"{qualified_name}{_ROW_KEY_SEP}{flavor}"
+
+
+def _parse_row_key(key: str) -> tuple[str, str]:
+    """Decode a composite row key back into its (qualified_name, flavor) pair."""
+    qualified_name, _, flavor = key.partition(_ROW_KEY_SEP)
+    return qualified_name, flavor
+
 
 class PluginsScreen(Screen[None]):
     """Browse, search, view, and install indexed plugins into a project."""
@@ -41,7 +57,7 @@ class PluginsScreen(Screen[None]):
         """Initialize the screen with no active repo filter or pending install."""
         super().__init__()
         self._repo_filter: str | None = None
-        self._installing: tuple[str, PluginInstallConfig] | None = None
+        self._installing: tuple[str, str, PluginInstallConfig] | None = None
 
     def compose(self) -> ComposeResult:
         """Yield the title, search bar, plugins table, status line, and hint."""
@@ -58,7 +74,7 @@ class PluginsScreen(Screen[None]):
     def on_mount(self) -> None:
         """Set up table columns, populate all plugins, and focus the table."""
         table = self.query_one(DataTable)
-        table.add_columns("qualified name", "flavor", "sha", "description")
+        table.add_columns("qualified name", "target", "sha", "description")
         self._populate("")
         table.focus()
 
@@ -97,11 +113,12 @@ class PluginsScreen(Screen[None]):
                 r.flavor,
                 r.short_sha,
                 (r.description or "")[:50],
-                key=r.qualified_name,
+                # Composite key: the same name under different kinds must not collide.
+                key=_row_key(r.qualified_name, r.flavor),
             )
         if selected is not None:
             try:
-                table.move_cursor(row=table.get_row_index(selected), animate=False)
+                table.move_cursor(row=table.get_row_index(_row_key(*selected)), animate=False)
             except Exception:
                 pass
         self._status(f"{len(rows)} plugin(s){filter_label}")
@@ -130,26 +147,29 @@ class PluginsScreen(Screen[None]):
         """Move keyboard focus to the search bar."""
         self.query_one("#search-bar", Input).focus()
 
-    def _selected(self) -> str | None:
-        """Return the qualified name of the highlighted row, or None if empty."""
+    def _selected(self) -> tuple[str, str] | None:
+        """Return the (qualified_name, flavor) of the highlighted row, or None if empty."""
         table = self.query_one(DataTable)
         if table.row_count == 0:
             return None
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        return str(row_key.value) if row_key and row_key.value is not None else None
+        if row_key is None or row_key.value is None:
+            return None
+        return _parse_row_key(str(row_key.value))
 
     def action_view_current(self) -> None:
         """Open the selected plugin's full description + manifest in a scrollable modal."""
-        qn = self._selected()
-        if qn is None:
+        selected = self._selected()
+        if selected is None:
             if self.query_one(DataTable).row_count == 0:
                 self.app.notify("no plugins indexed — add a repo first", severity="warning")
             else:
                 self._status("no row selected")
             return
+        qn, flavor = selected
         try:
-            row = plugins.index_row(qn)
-            content = plugins.read_plugin_content(qn)
+            row = plugins.index_row(qn, flavor)
+            content = plugins.read_plugin_content(qn, flavor)
         except plugins.PluginNotIndexedError as exc:
             self.app.notify(f"view failed: {exc}", severity="error")
             return
@@ -168,30 +188,32 @@ class PluginsScreen(Screen[None]):
 
     def action_install_current(self) -> None:
         """Prompt for install config for the selected plugin, then install it."""
-        qn = self._selected()
-        if qn is None:
+        selected = self._selected()
+        if selected is None:
             if self.query_one(DataTable).row_count == 0:
                 self.app.notify("no plugins indexed — add a repo first", severity="warning")
             else:
                 self._status("no row selected")
             return
+        qn, flavor = selected
         self.app.push_screen(
             PluginInstallModal(qn),
-            lambda cfg: self._install(qn, cfg),
+            lambda cfg: self._install(qn, flavor, cfg),
         )
 
-    def _install(self, qualified_name: str, cfg: PluginInstallConfig | None) -> None:
+    def _install(self, qualified_name: str, flavor: str, cfg: PluginInstallConfig | None) -> None:
         """Kick off a threaded install for a plugin, or no-op if config is None.
 
         Args:
             qualified_name: Fully qualified name of the plugin to install.
+            flavor: The plugin's kind, disambiguating same-name-different-kind rows.
             cfg: Install configuration from the modal; None means the user cancelled.
         """
         if cfg is None:
             return
         # The risk scan can pull a model or call a judge — run off the UI thread so the
         # TUI doesn't freeze. Errors/warnings are surfaced from the worker.
-        self._installing = (qualified_name, cfg)
+        self._installing = (qualified_name, flavor, cfg)
         self._status(f"scanning {qualified_name}…")
         self.run_worker(self._do_install_thread, exclusive=True, thread=True)
 
@@ -199,11 +221,12 @@ class PluginsScreen(Screen[None]):
         """Run the pending install on a worker thread and report results to the UI."""
         if self._installing is None:
             return
-        qualified_name, cfg = self._installing
+        qualified_name, flavor, cfg = self._installing
         try:
             result = plugin_install.install_plugin(
                 cfg.project_root,
                 qualified_name,
+                flavor=flavor,
                 pin=cfg.pin,
                 track=cfg.track,
                 override_risk=cfg.override_risk,

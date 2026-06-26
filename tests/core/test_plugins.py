@@ -152,3 +152,29 @@ def test_search_matches_description(home: Path, tmp_path: Path) -> None:
     bare = _build(tmp_path, _claude_marketplace_files())
     repos.add("a", f"file://{bare}")
     assert [r.plugin_name for r in plugins.search("audit")] == ["design-audit"]
+
+
+def test_same_name_same_target_shadowed(home: Path, tmp_path: Path) -> None:
+    # Two plugins with the same name AND same kind collide; the shallower path
+    # wins (per _rank) and the other is shadowed with a warning. (Same name under
+    # DIFFERENT kinds is the coexistence case, tested in test_plugin_install.)
+    marketplace = {
+        "name": "demo",
+        "plugins": [
+            {"name": "dup", "source": "./nested/dup"},
+            {"name": "dup", "source": "./dup"},
+        ],
+    }
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "nested/dup/.claude-plugin/plugin.json": json.dumps({"name": "dup"}),
+            "dup/.claude-plugin/plugin.json": json.dumps({"name": "dup"}),
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    rows = [r for r in plugins.list_plugins() if r.plugin_name == "dup"]
+    assert len(rows) == 1  # collapsed to one
+    assert rows[0].source_path == "dup"  # shallower path wins
+    assert any("shadowed" in w for w in plugins.take_skipped_warnings())

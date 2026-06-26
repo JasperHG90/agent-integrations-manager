@@ -455,21 +455,31 @@ def _update_plugin(project_root: Path, installed: object) -> None:
         track=installed.track,
         risk_acknowledged=installed.risk_acknowledged,
     )
-    decl.plugins = [p for p in decl.plugins if p.qualified_name != installed.qualified_name]
+    # Same name under a different flavor coexists, so replace only the entry that
+    # matches BOTH qualified_name AND flavor — not every entry sharing the name.
+    decl.plugins = [
+        p
+        for p in decl.plugins
+        if not (p.qualified_name == installed.qualified_name and p.flavor == installed.flavor)
+    ]
     decl.plugins.append(declared)
     decl.repos[installed.repo_alias] = installed.repo_url
     save(project_root, decl)
 
 
-def _remove_plugin(project_root: Path, qualified_name: str) -> None:
+def _remove_plugin(project_root: Path, qualified_name: str, flavor: str) -> None:
     """Drop a declared plugin and prune its repo binding if now unused.
 
     Args:
         project_root: Directory whose `aim.toml` should be updated.
         qualified_name: The `repo_alias/name` of the plugin to remove.
+        flavor: The flavor of the plugin to remove; same name under a different
+            flavor is left in place.
     """
     decl = load_or_default(project_root)
-    decl.plugins = [p for p in decl.plugins if p.qualified_name != qualified_name]
+    decl.plugins = [
+        p for p in decl.plugins if not (p.qualified_name == qualified_name and p.flavor == flavor)
+    ]
     _prune_repo_if_unused(decl, qualified_name.split("/", 1)[0])
     save(project_root, decl)
 

@@ -273,6 +273,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         mcp_registry_mod.McpRegistryError,
         mcp_registry_mod.McpMappingError,
         plugins_mod.PluginNotIndexedError,
+        plugins_mod.PluginAmbiguousFlavorError,
         plugin_install_mod.PluginNotInstalledError,
         plugin_install_mod.PluginFlavorUnsupportedError,
         plugin_install_mod.PluginSourcePathChangedError,

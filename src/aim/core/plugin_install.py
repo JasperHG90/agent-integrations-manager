@@ -84,12 +84,25 @@ def _load_manifest(project_root: Path) -> Manifest:
     return manifest.load_or_create(project_root)
 
 
-def _find_installed(m: Manifest, qualified_name: str) -> InstalledPlugin | None:
-    """Return the manifest's installed entry for a plugin, or None if absent."""
-    for plugin in m.plugins:
-        if plugin.qualified_name == qualified_name:
-            return plugin
-    return None
+def _find_installed(
+    m: Manifest, qualified_name: str, flavor: str | None = None
+) -> InstalledPlugin | None:
+    """Return the manifest's installed entry for a plugin, or None if absent.
+
+    A name can be installed under more than one flavor; pass ``flavor`` to
+    disambiguate. Raises PluginAmbiguousFlavorError if several entries share the
+    name and no flavor was given.
+    """
+    matches = [
+        plugin
+        for plugin in m.plugins
+        if plugin.qualified_name == qualified_name and (flavor is None or plugin.flavor == flavor)
+    ]
+    if not matches:
+        return None
+    if flavor is None and len(matches) > 1:
+        raise plugins.PluginAmbiguousFlavorError(qualified_name, sorted(p.flavor for p in matches))
+    return matches[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -250,6 +263,7 @@ def install_plugin(
     project_root: Path,
     qualified_name: str,
     *,
+    flavor: str | None = None,
     track: str | None = None,
     pin: str | None = None,
     override_risk: bool = False,
@@ -258,7 +272,7 @@ def install_plugin(
     # Resolve so vendored target paths (via safe_project_path, which resolves)
     # stay relative to the same base — guards the macOS /var symlink.
     project_root = project_root.resolve()
-    row = plugins.index_row(qualified_name)
+    row = plugins.index_row(qualified_name, flavor)
     kind = _kind_for(row.flavor, project_root)
     try:
         version = install.resolve_install_version(
@@ -285,7 +299,7 @@ def install_plugin(
     marketplace_name = row.repo_alias if getattr(kind, "uses_marketplace", False) else None
 
     m = _load_manifest(project_root)
-    existing = _find_installed(m, qualified_name)
+    existing = _find_installed(m, qualified_name, row.flavor)
     target_rel = str(target.relative_to(project_root))
     if existing is None:
         result = InstalledPlugin(
@@ -328,16 +342,17 @@ def update(
     project_root: Path,
     qualified_name: str,
     *,
+    flavor: str | None = None,
     force: bool = False,
     override_risk: bool = False,
 ) -> InstalledPlugin:
     """Update an installed plugin to the latest resolved version."""
     project_root = project_root.resolve()
     m = _load_manifest(project_root)
-    existing = _find_installed(m, qualified_name)
+    existing = _find_installed(m, qualified_name, flavor)
     if existing is None:
         raise PluginNotInstalledError(qualified_name)
-    row = plugins.index_row(qualified_name)
+    row = plugins.index_row(qualified_name, existing.flavor)
     if row.source_path != existing.source_path:
         raise PluginSourcePathChangedError(
             f"{qualified_name}: source path moved from {existing.source_path!r} (installed) to "
@@ -393,7 +408,11 @@ def update_many(
             continue
         try:
             result = update(
-                project_root, plugin.qualified_name, force=force, override_risk=override_risk
+                project_root,
+                plugin.qualified_name,
+                flavor=plugin.flavor,
+                force=force,
+                override_risk=override_risk,
             )
             outcomes.append(
                 install.BulkUpdateOutcome(
@@ -423,28 +442,38 @@ def _remove_vendored(project_root: Path, existing: InstalledPlugin) -> None:
         target.unlink()
 
 
-def delete(project_root: Path, qualified_name: str) -> None:
+def delete(project_root: Path, qualified_name: str, flavor: str | None = None) -> None:
     """Remove an installed plugin's vendored files, registration, and manifest entry."""
     project_root = project_root.resolve()
     m = _load_manifest(project_root)
-    existing = _find_installed(m, qualified_name)
+    existing = _find_installed(m, qualified_name, flavor)
     if existing is None:
         raise PluginNotInstalledError(qualified_name)
     _remove_vendored(project_root, existing)
-    m.plugins = [p for p in m.plugins if p.qualified_name != qualified_name]
+    m.plugins = [
+        p
+        for p in m.plugins
+        if not (p.qualified_name == qualified_name and p.flavor == existing.flavor)
+    ]
     manifest.save(project_root, m)
     # Unregister via the kind (config cleanup), if its spec is still loaded.
     kind = plugin_kinds.get_kind(existing.flavor, project_root)
     if kind is not None:
         kind.unregister(project_root, existing, m)
-    declarations._remove_plugin(project_root, qualified_name)
+    declarations._remove_plugin(project_root, qualified_name, existing.flavor)
 
 
-def rollback(project_root: Path, qualified_name: str, *, force: bool = False) -> InstalledPlugin:
+def rollback(
+    project_root: Path,
+    qualified_name: str,
+    *,
+    flavor: str | None = None,
+    force: bool = False,
+) -> InstalledPlugin:
     """Restore ``history[0]`` as the new current version."""
     project_root = project_root.resolve()
     m = _load_manifest(project_root)
-    existing = _find_installed(m, qualified_name)
+    existing = _find_installed(m, qualified_name, flavor)
     if existing is None:
         raise PluginNotInstalledError(qualified_name)
     if not existing.history:

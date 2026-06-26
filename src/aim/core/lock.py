@@ -713,19 +713,19 @@ def _lock_plugin(
 async def _lock_plugins(
     plugins: list[DeclaredPlugin],
     callback: Callable[[str, str, str], object] | None,
-    cached_by_name: dict[str, InstalledPlugin] | None = None,
+    cached_by_key: dict[tuple[str, str], InstalledPlugin] | None = None,
 ) -> tuple[list[InstalledPlugin], list[str]]:
     """Lock all declared plugins concurrently, reporting progress per plugin."""
     if not plugins:
         return [], []
 
-    lookup = cached_by_name or {}
+    lookup = cached_by_key or {}
 
     async def _one(plugin: DeclaredPlugin) -> tuple[InstalledPlugin | None, str | None]:
         """Lock one plugin off-thread and emit progress notifications."""
         _notify(callback, "plugin", plugin.qualified_name, "locking")
         installed, error = await asyncio.to_thread(
-            _lock_plugin, plugin, lookup.get(plugin.qualified_name)
+            _lock_plugin, plugin, lookup.get((plugin.qualified_name, plugin.flavor))
         )
         if error:
             _notify(callback, "plugin", plugin.qualified_name, "error")
@@ -1107,10 +1107,10 @@ async def run(options: LockOptions) -> LockResult:
     cached_rules: dict[str, InstalledRule] = (
         {} if options.force else {r.qualified_name: r for r in (existing.rules if existing else [])}
     )
-    cached_plugins: dict[str, InstalledPlugin] = (
+    cached_plugins: dict[tuple[str, str], InstalledPlugin] = (
         {}
         if options.force
-        else {p.qualified_name: p for p in (existing.plugins if existing else [])}
+        else {(p.qualified_name, p.flavor): p for p in (existing.plugins if existing else [])}
     )
 
     _notify(options.progress_callback, "repos", "all", "locking")

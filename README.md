@@ -169,7 +169,7 @@ If the same name appears in multiple places, the shallower path wins. At the sam
 
 ### Plugins and custom plugin formats
 
-A registered repo can also expose **plugins**. aim ships one built-in *kind*, `claude`, which reads a `.claude-plugin/marketplace.json` catalog; `aim plugin add` vendors the plugin's files into the project (SHA-pinned, like a skill) and enables it in `.claude/settings.json`. `aim plugin list` aggregates plugins across every marketplace and repo, with `--repo`/`--marketplace`/`--flavor` filters and a `sha` column you can pass to `--pin` (the upstream `version` is a label, not a git ref).
+A registered repo can also expose **plugins**. aim ships one built-in *kind*, `claude`, which reads a `.claude-plugin/marketplace.json` catalog; `aim plugin add` vendors the plugin's files into the project (SHA-pinned, like a skill) and enables it in `.claude/settings.json`. `aim plugin list` aggregates plugins across every marketplace and repo, with `--repo`/`--marketplace`/`--target` filters and a `sha` column you can pass to `--pin` (the upstream `version` is a label, not a git ref).
 
 A plugin written for one client can't install as another's, so aim never converts formats. Instead, the discover-and-install rules for each client are a **pluggable kind** you can add yourself, with no aim change. Drop a TOML file in `<config>/kinds/` (global) or a project's `.aim/kinds/`:
 
