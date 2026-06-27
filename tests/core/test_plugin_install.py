@@ -33,8 +33,8 @@ vendor_as = "file"
 
 
 def _install_opencode_kind() -> None:
-    """Drop the external opencode kind into the global kinds dir (AIM_HOME-isolated)."""
-    d = paths.user_config_dir() / "kinds"
+    """Drop the external opencode kind into the global targets dir (AIM_HOME-isolated)."""
+    d = paths.user_config_dir() / "targets"
     d.mkdir(parents=True, exist_ok=True)
     (d / "opencode.toml").write_text(OPENCODE_KIND_TOML)
 
@@ -52,7 +52,7 @@ vendor_as = "file"
 
 
 def _install_escape_kind() -> None:
-    d = paths.user_config_dir() / "kinds"
+    d = paths.user_config_dir() / "targets"
     d.mkdir(parents=True, exist_ok=True)
     (d / "escaper.toml").write_text(ESCAPE_KIND_TOML)
 
@@ -161,6 +161,35 @@ def test_install_opencode_via_external_kind(home: Path, project_root: Path, tmp_
     assert installed.marketplace_name is None
     # opencode needs no settings.json registration (the file drop IS the install).
     assert not (project_root / ".claude" / "settings.json").exists()
+
+
+def test_discover_and_install_via_project_scoped_target(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A target spec in the PROJECT .aim/targets/ (not the global dir) must let a repo's
+    plugins be both discovered AND installed, even though machine-global indexing — which
+    only sees built-in + global targets — ignores it."""
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    # opencode is project-scoped here, so global indexing finds nothing in this repo.
+    repos.add("a", f"file://{bare}", allow_empty=True)
+    assert plugins.list_plugins() == []
+
+    targets = project_root / ".aim" / "targets"
+    targets.mkdir(parents=True, exist_ok=True)
+    (targets / "opencode.toml").write_text(OPENCODE_KIND_TOML)
+
+    # Discovered via the project target...
+    rows = plugins.list_plugins(project_root=project_root, flavor="opencode")
+    assert [r.plugin_name for r in rows] == ["logger"]
+    # ...and installable through it.
+    installed = plugin_install.install_plugin(project_root, "a/logger")
+    assert (project_root / ".opencode" / "plugins" / "logger.ts").read_text() == (
+        "export const plugin = 1\n"
+    )
+    assert installed.flavor == "opencode"
 
 
 def test_opencode_unknown_without_external_kind(

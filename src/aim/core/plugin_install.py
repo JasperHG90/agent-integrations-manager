@@ -11,7 +11,7 @@ the client-specific parts to the plugin **kind** (`plugin_kinds`):
   ``.claude/settings.json``), reconciled from the installed set.
 
 Built-in kinds (claude) ship with aim; external declarative kinds (opencode) are
-TOML specs in a kinds dir. The orchestrator never branches on a specific kind.
+TOML specs in a targets dir. The orchestrator never branches on a specific kind.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def _kind_for(name: str, project_root: Path) -> plugin_kinds.PluginKind:
     kind = plugin_kinds.get_kind(name, project_root)
     if kind is None:
         raise PluginFlavorUnsupportedError(
-            f"no plugin kind {name!r} is loaded; install its kind spec (.aim/kinds or the "
-            "global kinds dir) or upgrade aim"
+            f"no plugin kind {name!r} is loaded; install its kind spec (.aim/targets or the "
+            "global targets dir) or upgrade aim"
         )
     return kind
 
@@ -279,7 +279,7 @@ def install_plugin(
     # Resolve so vendored target paths (via safe_project_path, which resolves)
     # stay relative to the same base — guards the macOS /var symlink.
     project_root = project_root.resolve()
-    row = plugins.index_row(qualified_name, flavor)
+    row = plugins.index_row(qualified_name, flavor, project_root)
     kind = _kind_for(row.flavor, project_root)
     try:
         version = install.resolve_install_version(
@@ -363,7 +363,7 @@ def update(
     existing = _find_installed(m, qualified_name, flavor)
     if existing is None:
         raise PluginNotInstalledError(qualified_name)
-    row = plugins.index_row(qualified_name, existing.flavor)
+    row = plugins.index_row(qualified_name, existing.flavor, project_root)
     if row.source_path != existing.source_path:
         raise PluginSourcePathChangedError(
             f"{qualified_name}: source path moved from {existing.source_path!r} (installed) to "

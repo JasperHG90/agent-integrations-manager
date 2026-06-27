@@ -9,7 +9,7 @@ from aim.core import paths, plugins, repos
 from tests.fixtures import git_fixtures
 
 # An external (pluggable) opencode kind — deliberately NOT a built-in. Tests drop
-# it into the global kinds dir to prove a new client can be added without an aim
+# it into the global targets dir to prove a new client can be added without an aim
 # source change.
 OPENCODE_KIND_TOML = """
 name = "opencode"
@@ -23,8 +23,8 @@ vendor_as = "file"
 
 
 def _install_opencode_kind() -> None:
-    """Drop the external opencode kind into the global kinds dir (AIM_HOME-isolated)."""
-    d = paths.user_config_dir() / "kinds"
+    """Drop the external opencode kind into the global targets dir (AIM_HOME-isolated)."""
+    d = paths.user_config_dir() / "targets"
     d.mkdir(parents=True, exist_ok=True)
     (d / "opencode.toml").write_text(OPENCODE_KIND_TOML)
 
@@ -222,3 +222,38 @@ def test_plugin_version_from_plugin_json(home: Path, tmp_path: Path) -> None:
     versions = {r.plugin_name: r.version for r in plugins.list_plugins()}
     assert versions["withpj"] == "1.2.3"  # plugin.json wins over the marketplace entry
     assert versions["nopjver"] == "0.1.0"  # falls back to the marketplace entry version
+
+
+# A PROJECT-scoped target (`.aim/targets/`), as opposed to the global one above.
+GEMINI_TARGET_TOML = """
+name = "gemini"
+[discover]
+manifest = ["gemini-extension.json"]
+name_from = "stem"
+[register]
+vendor_into = ".gemini/extensions/{name}.json"
+vendor_as = "dir"
+"""
+
+
+def test_project_scoped_target_discovered_by_list(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A target spec dropped in the PROJECT `.aim/targets/` (not the global dir) must let
+    `plugin list` discover that client's plugins in registered repos. Indexing is
+    machine-global, so the project target is honored via a live overlay at list time."""
+    bare = _build(tmp_path, {"gemini-extension.json": "{}\n"})
+    # The repo is registered with global kinds only — gemini is project-scoped, so the
+    # global index sees no plugin here (allow_empty keeps the registration).
+    repos.add("a", f"file://{bare}", allow_empty=True)
+    assert plugins.list_plugins(flavor="gemini") == []  # not in the global index
+
+    targets = project_root / ".aim" / "targets"
+    targets.mkdir(parents=True, exist_ok=True)
+    (targets / "gemini.toml").write_text(GEMINI_TARGET_TOML)
+
+    rows = plugins.list_plugins(flavor="gemini", project_root=project_root)
+    assert [r.plugin_name for r in rows] == ["gemini-extension"]
+    assert rows[0].source_path == "gemini-extension.json"
+    assert rows[0].flavor == "gemini"
+    assert rows[0].qualified_name == "a/gemini-extension"

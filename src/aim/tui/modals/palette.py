@@ -141,7 +141,11 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
             "Open MCP servers",
             lambda: app.push_screen(McpScreen(project_root=project_root)),
         ),
-        PaletteEntry("action", "Open Plugins", lambda: app.push_screen(PluginsScreen())),
+        PaletteEntry(
+            "action",
+            "Open Plugins",
+            lambda: app.push_screen(PluginsScreen(project_root=project_root)),
+        ),
         PaletteEntry("action", "Open Rules", lambda: app.push_screen(RulesScreen())),
         PaletteEntry(
             "action", "Open Project templates", lambda: app.push_screen(ProjectTemplatesScreen())

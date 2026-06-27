@@ -48,7 +48,9 @@ def _disambiguate_flavor(
     return flavors[0]
 
 
-def _resolve_qualified(name: str, repo: str | None, flavor: str | None = None) -> tuple[str, str]:
+def _resolve_qualified(
+    name: str, repo: str | None, flavor: str | None = None, project_root: Path | None = None
+) -> tuple[str, str]:
     """Resolve a plugin name (or ``<repo>/<name>``) to a ``(qualified_name, flavor)`` pair.
 
     Lets the user add a plugin without naming its marketplace: a bare name that
@@ -64,10 +66,14 @@ def _resolve_qualified(name: str, repo: str | None, flavor: str | None = None) -
     # A fully-qualified name is unambiguous on the name axis; resolve it ignoring
     # the --repo filter, then disambiguate the flavor axis.
     if "/" in name:
-        flavors = [row.flavor for row in plugins_mod.list_plugins() if row.qualified_name == name]
+        flavors = [
+            row.flavor
+            for row in plugins_mod.list_plugins(project_root=project_root)
+            if row.qualified_name == name
+        ]
         if flavors:
             return name, _disambiguate_flavor(name, flavors, flavor)  # type: ignore[return-value]
-    rows = plugins_mod.list_plugins(repo_alias=repo)
+    rows = plugins_mod.list_plugins(repo_alias=repo, project_root=project_root)
     matches = [r for r in rows if r.plugin_name == name or r.qualified_name == name]
     if not matches:
         raise plugins_mod.PluginNotIndexedError(
@@ -86,6 +92,7 @@ def _resolve_qualified(name: str, repo: str | None, flavor: str | None = None) -
 @_friendly
 def plugin_list(
     ctx: typer.Context,
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
     marketplace: str | None = typer.Option(
         None, "--marketplace", "-m", help="Filter by marketplace name."
@@ -94,8 +101,10 @@ def plugin_list(
         None, "--target", help="Filter by target client: 'claude' or 'opencode'."
     ),
 ) -> None:
-    """List indexed plugins across all marketplaces."""
-    rows = plugins_mod.list_plugins(repo_alias=repo, marketplace=marketplace, flavor=flavor)
+    """List indexed plugins across all marketplaces (plus the project's .aim/targets)."""
+    rows = plugins_mod.list_plugins(
+        repo_alias=repo, marketplace=marketplace, flavor=flavor, project_root=_here(project)
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
@@ -111,9 +120,10 @@ def plugin_list(
 def plugin_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
 ) -> None:
-    """Search indexed plugins by substring."""
-    rows = plugins_mod.search(query)
+    """Search indexed plugins by substring (plus the project's .aim/targets)."""
+    rows = plugins_mod.search(query, project_root=_here(project))
     format_mod.render(
         rows,
         _get_format(ctx),
@@ -145,14 +155,16 @@ def plugin_marketplaces(
 @_friendly
 def plugin_view(
     name: str = typer.Argument(..., help="Plugin name or <repo_alias>/<plugin_name> to display."),
+    project: Path | None = typer.Argument(None, help="Project root (defaults to cwd)."),
     repo: str | None = typer.Option(None, "--repo", "-r", help="Disambiguate by repo alias."),
     flavor: str | None = typer.Option(
         None, "--target", help="Disambiguate a name shared across targets (claude/opencode)."
     ),
 ) -> None:
     """Print an indexed plugin's manifest (plugin.json, or the file for opencode)."""
-    qualified_name, resolved_flavor = _resolve_qualified(name, repo, flavor)
-    typer.echo(plugins_mod.read_plugin_content(qualified_name, resolved_flavor))
+    root = _here(project)
+    qualified_name, resolved_flavor = _resolve_qualified(name, repo, flavor, root)
+    typer.echo(plugins_mod.read_plugin_content(qualified_name, resolved_flavor, root))
 
 
 @app.command("add")
@@ -181,7 +193,7 @@ def plugin_add(
     ),
 ) -> None:
     """Vendor a plugin into the project and register it with the client."""
-    qualified_name, resolved_flavor = _resolve_qualified(name, repo, flavor)
+    qualified_name, resolved_flavor = _resolve_qualified(name, repo, flavor, _here(project))
     risk_mod.prewarm(_here(project))
     with _scanning(f"Scanning {qualified_name}…"):
         installed = plugin_install_mod.install_plugin(

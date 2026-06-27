@@ -10,8 +10,8 @@ Two tiers:
 
 - **Built-in kinds** ship with aim and may be code (``ClaudeKind``). They are
   trusted because they are part of the package.
-- **External kinds** are declarative TOML specs dropped into a kinds dir
-  (``<config>/kinds/*.toml`` globally, or ``<project>/.aim/kinds/*.toml``).
+- **External kinds** are declarative TOML specs dropped into a targets dir
+  (``<config>/targets/*.toml`` globally, or ``<project>/.aim/targets/*.toml``).
   They are data, never executed code, so a repo/teammate can ship one safely.
   Adding a new client (the opencode showcase) is one such file — no aim source
   change.
@@ -503,9 +503,9 @@ _BUILTINS: list[PluginKind] = [ClaudeKind()]
 
 
 def _kinds_dirs(project_root: Path | None) -> list[Path]:
-    dirs = [paths.user_config_dir() / "kinds"]
+    dirs = [paths.user_config_dir() / "targets"]
     if project_root is not None:
-        dirs.append(paths.project_aim_dir(project_root) / "kinds")
+        dirs.append(paths.project_aim_dir(project_root) / "targets")
     return dirs
 
 

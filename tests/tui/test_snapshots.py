@@ -149,6 +149,42 @@ async def test_plugins_screen_structure_one_plugin(home: Path, tmp_path: Path) -
         assert table.row_count == 1
 
 
+_OPENCODE_TARGET_TOML = """
+name = "opencode"
+[discover]
+manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]
+name_from = "stem"
+[register]
+vendor_into = ".opencode/plugins/{name}.{ext}"
+vendor_as = "file"
+"""
+
+
+@pytest.mark.asyncio
+async def test_plugins_screen_shows_project_scoped_target(home: Path, tmp_path: Path) -> None:
+    """A target spec in the PROJECT .aim/targets/ must surface in the TUI plugins screen,
+    not just the CLI — the screen threads its project_root through to discovery."""
+    from textual.widgets import DataTable
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    # opencode is project-scoped here, so the machine-global index sees nothing.
+    repos.add("a", f"file://{bare}", allow_empty=True)
+    proj = tmp_path / "proj"
+    (proj / ".aim" / "targets").mkdir(parents=True)
+    (proj / ".aim" / "targets" / "opencode.toml").write_text(_OPENCODE_TARGET_TOML)
+
+    app = AimApp(project_root=proj)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 1  # the project-scoped target's plugin shows in the TUI
+
+
 @pytest.mark.asyncio
 async def test_rules_screen_structure_with_rule(home: Path, tmp_path: Path) -> None:
     from textual.widgets import DataTable

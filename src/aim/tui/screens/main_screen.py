@@ -195,7 +195,7 @@ class MainScreen(Screen[None]):
         """Push the plugins browse/search/install screen."""
         from aim.tui.screens.plugin_screen import PluginsScreen
 
-        self.app.push_screen(PluginsScreen())
+        self.app.push_screen(PluginsScreen(project_root=self._project_root))
 
     def action_open_rules(self) -> None:
         """Push the global rules library screen."""

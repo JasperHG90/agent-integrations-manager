@@ -171,7 +171,7 @@ If the same name appears in multiple places, the shallower path wins. At the sam
 
 A registered repo can also expose **plugins**. aim ships one built-in *kind*, `claude`, which reads a `.claude-plugin/marketplace.json` catalog; `aim plugin add` vendors the plugin's files into the project (SHA-pinned, like a skill) and enables it in `.claude/settings.json`. `aim plugin list` aggregates plugins across every marketplace and repo, with `--repo`/`--marketplace`/`--target` filters and a `sha` column you can pass to `--pin` (the upstream `version` is a label, not a git ref).
 
-A plugin written for one client can't install as another's, so aim never converts formats. Instead, the discover-and-install rules for each client are a **pluggable kind** you can add yourself, with no aim change. Drop a TOML file in `<config>/kinds/` (global) or a project's `.aim/kinds/`:
+A plugin written for one client can't install as another's, so aim never converts formats. Instead, the discover-and-install rules for each client are a **pluggable kind** you can add yourself, with no aim change. Drop a TOML file in `<config>/targets/` (global) or a project's `.aim/targets/`:
 
 ```toml
 name = "opencode"            # the flavor this kind discovers
@@ -189,7 +189,7 @@ vendor_as = "file"           # "file" or "dir"
 # set = { "plugins.{name}" = true }
 ```
 
-aim then discovers and installs that client's plugins like any other artifact, SHA-pinned in `aim.lock.toml`. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/kinds/opencode.toml` for the working showcase.
+aim then discovers and installs that client's plugins like any other artifact, SHA-pinned in `aim.lock.toml`. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/targets/opencode.toml` for the working showcase.
 
 ### Versioning
 

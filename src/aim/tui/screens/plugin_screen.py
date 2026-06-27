@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Input, Static
@@ -53,9 +55,15 @@ class PluginsScreen(Screen[None]):
         ("q", "app.quit", "Quit"),
     ]
 
-    def __init__(self) -> None:
-        """Initialize the screen with no active repo filter or pending install."""
+    def __init__(self, project_root: Path | None = None) -> None:
+        """Initialize the screen with no active repo filter or pending install.
+
+        Args:
+            project_root: Project the screen operates on; its ``.aim/targets`` specs are
+                honored in discovery, view, and install. Falls back to the cwd.
+        """
         super().__init__()
+        self._project_root = (project_root or Path.cwd()).resolve()
         self._repo_filter: str | None = None
         self._installing: tuple[str, str, PluginInstallConfig] | None = None
 
@@ -92,7 +100,11 @@ class PluginsScreen(Screen[None]):
         table = self.query_one(DataTable)
         selected = self._selected()
         table.clear()
-        rows = plugins.search(query) if query else plugins.list_plugins()
+        rows = (
+            plugins.search(query, project_root=self._project_root)
+            if query
+            else plugins.list_plugins(project_root=self._project_root)
+        )
         if self._repo_filter is not None:
             rows = [r for r in rows if r.repo_alias == self._repo_filter]
         filter_label = f" [repo={self._repo_filter}]" if self._repo_filter else ""
@@ -168,8 +180,8 @@ class PluginsScreen(Screen[None]):
             return
         qn, flavor = selected
         try:
-            row = plugins.index_row(qn, flavor)
-            content = plugins.read_plugin_content(qn, flavor)
+            row = plugins.index_row(qn, flavor, self._project_root)
+            content = plugins.read_plugin_content(qn, flavor, self._project_root)
         except plugins.PluginNotIndexedError as exc:
             self.app.notify(f"view failed: {exc}", severity="error")
             return
@@ -197,7 +209,7 @@ class PluginsScreen(Screen[None]):
             return
         qn, flavor = selected
         self.app.push_screen(
-            PluginInstallModal(qn),
+            PluginInstallModal(qn, initial_project=self._project_root),
             lambda cfg: self._install(qn, flavor, cfg),
         )
 
