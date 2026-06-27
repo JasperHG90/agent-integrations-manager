@@ -9,6 +9,21 @@ mcp_servers = []
 qualified_name = "default"
 risk_acknowledged = false
 
+[policy]
+scope = "org"
+repo = "https://github.com/jasperhg90/aim-policy"
+ref = "HEAD"
+
+[repos]
+1385a5f1be8c889c = "https://github.com/athola/claude-night-market"
+31661aae5fd34dec = "https://github.com/wshobson/agents"
+4290899e4697f267 = "https://github.com/jasperhg90/skills"
+6d0a32a7aaf3e19b = "https://github.com/balukosuri/andrej-karpathy-s-autoresearch-as-a-universal-skill"
+82a901da1b9bedec = "https://github.com/anthropics/skills"
+8b8de8ec329cb5d5 = "https://github.com/jasperhg90/memex"
+e96f16c2bd4b1042 = "https://github.com/0xfurai/claude-code-subagents"
+f2002c53d5747ac5 = "https://github.com/bencium/bencium-marketplace"
+
 [[rule]]
 qualified_name = "1385a5f1be8c889c/slop-scan-for-docs"
 repo_alias = "1385a5f1be8c889c"
@@ -32,21 +47,6 @@ qualified_name = "4290899e4697f267/uv-installer"
 repo_alias = "4290899e4697f267"
 source_path = "rules/uv-installer.md"
 risk_acknowledged = false
-
-[policy]
-scope = "org"
-repo = "https://github.com/jasperhg90/aim-policy"
-ref = "HEAD"
-
-[repos]
-1385a5f1be8c889c = "https://github.com/athola/claude-night-market"
-31661aae5fd34dec = "https://github.com/wshobson/agents"
-4290899e4697f267 = "https://github.com/jasperhg90/skills"
-6d0a32a7aaf3e19b = "https://github.com/balukosuri/andrej-karpathy-s-autoresearch-as-a-universal-skill"
-82a901da1b9bedec = "https://github.com/anthropics/skills"
-8b8de8ec329cb5d5 = "https://github.com/jasperhg90/memex"
-e96f16c2bd4b1042 = "https://github.com/0xfurai/claude-code-subagents"
-f2002c53d5747ac5 = "https://github.com/bencium/bencium-marketplace"
 
 [[skill]]
 qualified_name = "82a901da1b9bedec/theme-factory"
