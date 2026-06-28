@@ -5,17 +5,14 @@
 
 name = "opencode"
 
-[discover]
-# Loose .ts/.js plugin files opencode auto-loads from these locations.
-manifest = [
-    "plugins/*.ts", "plugins/*.js",
-    ".opencode/plugins/*.ts", ".opencode/plugins/*.js",
-    "opencode/plugin/*.ts", "opencode/plugin/*.js",
-]
-name_from = "stem"
+[manifest]
+# An opencode plugin is an npm package: a directory with a package.json. aim
+# discovers the directory by that file, reads the plugin name from it, and
+# vendors the whole directory. A directory without package metadata is not a
+# discoverable plugin.
+file = "package.json"
+name = "name"
 
 [register]
-# opencode auto-loads files dropped here — registration is just the file copy.
-# The path is the kind's own (literal); only {name}/{ext}/{repo} are interpolated.
-vendor_into = ".opencode/plugins/{name}.{ext}"
-vendor_as = "file"
+# The vendored directory's destination. Only {name}/{repo} are interpolated.
+vendor_into = ".opencode/plugins/{name}"

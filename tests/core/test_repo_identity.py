@@ -225,15 +225,18 @@ def _marketplace_files() -> dict[str, str]:
 def test_plugin_surface_is_id_based_and_portable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A installs a plugin; B (different alias) reproduces an identical, id-based
-    enablement key + vendor path in the committed `.claude/` files."""
+    """A installs a plugin; B (different alias) reproduces identical committed
+    `.claude/` files: the Claude-facing enablement key uses the upstream
+    marketplace name, the vendor path stays id-based. Both are alias-independent,
+    so the bytes match across machines."""
     import json
 
     working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "src.git")
     url = f"file://{bare}"
     repo_id = policy.repo_id_for_url(url)
-    expected_mkt = f"aim-{repo_id}"
+    expected_mkt = f"aim-{repo_id}"  # id-based vendor dir
+    expected_key = f"demo-market-{repo_id[:8]}"  # upstream name + short id: the settings key
 
     from aim.core import sync
 
@@ -248,8 +251,8 @@ def test_plugin_surface_is_id_based_and_portable(
     asyncio.run(lock.run(lock.LockOptions(project_root=proj_a)))
 
     settings_a = json.loads((proj_a / ".claude" / "settings.json").read_text())
-    assert f"design-audit@{expected_mkt}" in settings_a["enabledPlugins"]
-    assert expected_mkt in settings_a["extraKnownMarketplaces"]
+    assert f"design-audit@{expected_key}" in settings_a["enabledPlugins"]
+    assert expected_key in settings_a["extraKnownMarketplaces"]
     assert (proj_a / ".claude" / "plugins" / expected_mkt / "design-audit").exists()
 
     # Machine B with a different alias reproduces the SAME committed .claude bytes.

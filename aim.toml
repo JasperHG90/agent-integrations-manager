@@ -19,6 +19,7 @@ ref = "HEAD"
 31661aae5fd34dec = "https://github.com/wshobson/agents"
 4290899e4697f267 = "https://github.com/jasperhg90/skills"
 6d0a32a7aaf3e19b = "https://github.com/balukosuri/andrej-karpathy-s-autoresearch-as-a-universal-skill"
+71f157ee09e4fef6 = "https://github.com/jasperhg90/persona"
 82a901da1b9bedec = "https://github.com/anthropics/skills"
 8b8de8ec329cb5d5 = "https://github.com/jasperhg90/memex"
 e96f16c2bd4b1042 = "https://github.com/0xfurai/claude-code-subagents"
@@ -161,3 +162,10 @@ source_path = "packages/claude-code-plugin"
 marketplace_name = "memex"
 pin = "2a053a7"
 risk_acknowledged = true
+
+[[plugin]]
+qualified_name = "71f157ee09e4fef6/gemini-extension"
+repo_alias = "71f157ee09e4fef6"
+flavor = "gemini"
+source_path = "gemini-extension.json"
+risk_acknowledged = false

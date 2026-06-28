@@ -23,12 +23,11 @@ from tests.fixtures import git_fixtures
 
 OPENCODE_KIND_TOML = """
 name = "opencode"
-[discover]
-manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]
-name_from = "stem"
+[manifest]
+file = "package.json"
+name = "name"
 [register]
-vendor_into = ".opencode/plugins/{name}.{ext}"
-vendor_as = "file"
+vendor_into = ".opencode/plugins/{name}"
 """
 
 
@@ -42,12 +41,11 @@ def _install_opencode_kind() -> None:
 # A declarative kind whose vendor_into deliberately escapes the project root.
 ESCAPE_KIND_TOML = """
 name = "escaper"
-[discover]
-manifest = [".escaper/*.ts"]
-name_from = "stem"
+[manifest]
+file = "package.json"
+name = "name"
 [register]
-vendor_into = "../../escape/{name}.{ext}"
-vendor_as = "file"
+vendor_into = "../../escape/{name}"
 """
 
 
@@ -105,6 +103,22 @@ def _mkt(repo_alias: str = "a") -> str:
     return f"aim-{policy.repo_id_for_url(repos.get(repo_alias).url)}"
 
 
+# The source marketplace.json's declared name (`_marketplace_files`).
+UPSTREAM = "demo-market"
+
+
+def _key(repo_alias: str = "a") -> str:
+    """The Claude-facing settings.json marketplace key: ``<upstream>-<short id>``.
+
+    Readable (leads with the upstream name) but globally unique (short repo-id
+    suffix), so it can't collide with a same-named marketplace in another config
+    scope. The vendor dir + lock stay fully id-based (`_mkt()`).
+    """
+    from aim.core import policy
+
+    return f"{UPSTREAM}-{policy.repo_id_for_url(repos.get(repo_alias).url)[:8]}"
+
+
 def test_install_claude_vendors_and_registers(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
@@ -120,19 +134,24 @@ def test_install_claude_vendors_and_registers(
             project_root / ".claude" / "plugins" / mkt / ".claude-plugin" / "marketplace.json"
         ).read_text()
     )
-    assert mp["name"] == mkt
+    assert mp["name"] == _key()
     assert {p["name"] for p in mp["plugins"]} == {"design-audit"}
 
     settings = _settings(project_root)
-    assert settings["extraKnownMarketplaces"][mkt]["source"]["source"] == "directory"
-    assert settings["extraKnownMarketplaces"][mkt]["source"]["path"] == f".claude/plugins/{mkt}"
-    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True
+    # Claude-facing key uses the semantic upstream name; the vendor dir path
+    # (and the lock, below) stay id-based.
+    assert settings["extraKnownMarketplaces"][_key()]["source"]["source"] == "directory"
+    assert settings["extraKnownMarketplaces"][_key()]["source"]["path"] == f".claude/plugins/{mkt}"
+    assert settings["enabledPlugins"][f"design-audit@{_key()}"] is True
 
     m = manifest.load(project_root)
     assert [p.qualified_name for p in m.plugins] == ["a/design-audit"]
     assert installed.flavor == "claude"
-    assert installed.marketplace_name == mkt
+    assert installed.marketplace_name == mkt  # lock keeps the id-based name
     assert installed.content_hash
+    # aim.toml keeps the bare upstream name; the short-id suffix is applied only
+    # when composing the Claude-facing key at register time.
+    assert declarations.load(project_root).plugins[0].marketplace_name == UPSTREAM
 
 
 def test_settings_preserves_unmanaged_keys(home: Path, project_root: Path, tmp_path: Path) -> None:
@@ -146,21 +165,50 @@ def test_settings_preserves_unmanaged_keys(home: Path, project_root: Path, tmp_p
     assert "enabledPlugins" in settings
 
 
+def _opencode_pkg(name: str = "logger") -> dict[str, str]:
+    """An opencode plugin: an npm package directory keyed by its package.json name."""
+    return {
+        f"{name}/package.json": json.dumps({"name": name}),
+        f"{name}/index.ts": "export const plugin = 1\n",
+    }
+
+
 def test_install_opencode_via_external_kind(home: Path, project_root: Path, tmp_path: Path) -> None:
-    working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
-    )
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_opencode_pkg())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     _install_opencode_kind()  # the pluggable kind must be present to discover/install
     repos.add("a", f"file://{bare}")
     installed = plugin_install.install_plugin(project_root, "a/logger")
-    assert (project_root / ".opencode" / "plugins" / "logger.ts").read_text() == (
-        "export const plugin = 1\n"
-    )
+    vendored = project_root / ".opencode" / "plugins" / "logger"
+    assert json.loads((vendored / "package.json").read_text())["name"] == "logger"
+    assert (vendored / "index.ts").read_text() == "export const plugin = 1\n"
     assert installed.flavor == "opencode"
     assert installed.marketplace_name is None
-    # opencode needs no settings.json registration (the file drop IS the install).
+    # opencode needs no settings.json registration (the directory drop IS the install).
     assert not (project_root / ".claude" / "settings.json").exists()
+
+
+def test_install_root_level_manifest(home: Path, project_root: Path, tmp_path: Path) -> None:
+    # A repo whose manifest sits at the root (the whole repo is the plugin) must
+    # resolve and install — not crash looking for a SKILL.md that isn't there.
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            "package.json": json.dumps({"name": "agent-memory"}),
+            "index.ts": "export const plugin = 1\n",
+        },
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    _install_opencode_kind()
+    repos.add("a", f"file://{bare}")
+    rows = plugins.list_plugins(flavor="opencode")
+    assert [r.plugin_name for r in rows] == ["agent-memory"]
+    assert rows[0].source_path == ""  # root-level: the repo itself is the plugin
+
+    plugin_install.install_plugin(project_root, "a/agent-memory")
+    vendored = project_root / ".opencode" / "plugins" / "agent-memory"
+    assert json.loads((vendored / "package.json").read_text())["name"] == "agent-memory"
+    assert (vendored / "index.ts").read_text() == "export const plugin = 1\n"
 
 
 def test_discover_and_install_via_project_scoped_target(
@@ -169,9 +217,7 @@ def test_discover_and_install_via_project_scoped_target(
     """A target spec in the PROJECT .aim/targets/ (not the global dir) must let a repo's
     plugins be both discovered AND installed, even though machine-global indexing — which
     only sees built-in + global targets — ignores it."""
-    working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
-    )
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_opencode_pkg())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     # opencode is project-scoped here, so global indexing finds nothing in this repo.
     repos.add("a", f"file://{bare}", allow_empty=True)
@@ -186,18 +232,72 @@ def test_discover_and_install_via_project_scoped_target(
     assert [r.plugin_name for r in rows] == ["logger"]
     # ...and installable through it.
     installed = plugin_install.install_plugin(project_root, "a/logger")
-    assert (project_root / ".opencode" / "plugins" / "logger.ts").read_text() == (
+    assert (project_root / ".opencode" / "plugins" / "logger" / "index.ts").read_text() == (
         "export const plugin = 1\n"
     )
     assert installed.flavor == "opencode"
 
 
+# A manifest-driven kind: gemini-extension.json marks a plugin DIRECTORY; the whole
+# directory (context files, MCP config, and all) is vendored.
+GEMINI_KIND_TOML = """
+name = "gemini"
+[manifest]
+file = "gemini-extension.json"
+name = "name"
+[register]
+vendor_into = ".gemini/extensions/{name}"
+"""
+
+
+def _install_gemini_kind() -> None:
+    d = paths.user_config_dir() / "targets"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "gemini.toml").write_text(GEMINI_KIND_TOML)
+
+
+def test_install_gemini_extension_vendors_whole_folder(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # Manifest-driven: the plugin is named by its gemini-extension.json and the
+    # entire extension directory is vendored, so context files and MCP config come too.
+    manifest = {
+        "name": "weather",
+        "version": "1.0.0",
+        "contextFileName": "GEMINI.md",
+        "mcpServers": {"wx": {"command": "npx", "args": ["-y", "gem-wx"]}},
+    }
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            "weather/gemini-extension.json": json.dumps(manifest),
+            "weather/GEMINI.md": "# Weather context\n",
+            "weather/commands/forecast.toml": "prompt = 'forecast'\n",
+        },
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    _install_gemini_kind()
+    repos.add("a", f"file://{bare}")
+
+    rows = plugins.list_plugins(flavor="gemini")
+    assert [r.plugin_name for r in rows] == ["weather"]  # name read from the manifest
+    assert rows[0].source_path == "weather"  # the plugin directory, not the marker file
+
+    installed = plugin_install.install_plugin(project_root, "a/weather")
+    assert installed.flavor == "gemini"
+    ext = project_root / ".gemini" / "extensions" / "weather"
+    assert json.loads((ext / "gemini-extension.json").read_text())["name"] == "weather"
+    assert (ext / "GEMINI.md").read_text() == "# Weather context\n"  # context file copied
+    assert (ext / "commands" / "forecast.toml").exists()  # nested files copied too
+
+    warnings = "\n".join(plugin_install.take_install_warnings())
+    assert "npx -y gem-wx" in warnings  # MCP launcher surfaced for review
+
+
 def test_opencode_unknown_without_external_kind(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
-    working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
-    )
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_opencode_pkg())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     # allow_empty so the repo still registers despite aim recognizing no artifacts.
     repos.add("a", f"file://{bare}", allow_empty=True)  # no opencode kind installed
@@ -215,16 +315,40 @@ def test_remove_refcounts_marketplace(home: Path, project_root: Path, tmp_path: 
     # Removing one leaves the shared marketplace entry in place.
     plugin_install.delete(project_root, "a/design-audit")
     settings = _settings(project_root)
-    assert mkt in settings["extraKnownMarketplaces"]
-    assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
-    assert settings["enabledPlugins"][f"typography@{mkt}"] is True
+    assert _key() in settings["extraKnownMarketplaces"]
+    assert f"design-audit@{_key()}" not in settings["enabledPlugins"]
+    assert settings["enabledPlugins"][f"typography@{_key()}"] is True
     assert not (project_root / ".claude" / "plugins" / mkt / "design-audit").exists()
 
     # Removing the last one drops the marketplace entry entirely.
     plugin_install.delete(project_root, "a/typography")
     settings = _settings(project_root)
-    assert mkt not in settings.get("extraKnownMarketplaces", {})
-    assert f"typography@{mkt}" not in settings.get("enabledPlugins", {})
+    assert _key() not in settings.get("extraKnownMarketplaces", {})
+    assert f"typography@{_key()}" not in settings.get("enabledPlugins", {})
+
+
+def test_delete_warns_about_claude_machine_local_residue(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # aim cleans the committed project surface, but Claude keeps machine-local
+    # registry copies it does not GC. delete() must warn the user to purge them.
+    _add_marketplace(tmp_path)
+    plugin_install.install_plugin(project_root, "a/design-audit")
+    plugin_install.install_plugin(project_root, "a/typography")
+    plugin_install.take_install_warnings()  # drain install-time warnings
+
+    # Removing a non-last plugin: warn about the plugin uninstall + its data dir,
+    # but NOT the marketplace (still referenced by the survivor).
+    plugin_install.delete(project_root, "a/design-audit")
+    warns = "\n".join(plugin_install.take_install_warnings())
+    assert f"claude plugin uninstall design-audit@{_key()}" in warns
+    assert f"rm -rf ~/.claude/plugins/data/design-audit-{_key()}" in warns
+    assert "marketplace remove" not in warns  # survivor keeps the marketplace
+
+    # Removing the last plugin: also warn to remove the now-orphaned marketplace.
+    plugin_install.delete(project_root, "a/typography")
+    warns = "\n".join(plugin_install.take_install_warnings())
+    assert f"claude plugin marketplace remove {_key()}" in warns
 
 
 def test_security_extractor_surfaces_executable_surface(
@@ -277,8 +401,8 @@ def test_lock_sync_roundtrip(home: Path, project_root: Path, tmp_path: Path) -> 
         / "SKILL.md"
     ).exists()
     settings = _settings(project_root)
-    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True
-    assert mkt in settings["extraKnownMarketplaces"]
+    assert settings["enabledPlugins"][f"design-audit@{_key()}"] is True
+    assert _key() in settings["extraKnownMarketplaces"]
 
 
 def test_update_and_rollback(home: Path, project_root: Path, tmp_path: Path) -> None:
@@ -316,9 +440,9 @@ def test_prune_removes_undeclared_plugin(home: Path, project_root: Path, tmp_pat
     assert [p.qualified_name for p in m.plugins] == ["a/typography"]
     assert not (project_root / ".claude" / "plugins" / mkt / "design-audit").exists()
     settings = _settings(project_root)
-    assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
-    assert settings["enabledPlugins"][f"typography@{mkt}"] is True  # survivor kept
-    assert mkt in settings["extraKnownMarketplaces"]  # marketplace refcount survives
+    assert f"design-audit@{_key()}" not in settings["enabledPlugins"]
+    assert settings["enabledPlugins"][f"typography@{_key()}"] is True  # survivor kept
+    assert _key() in settings["extraKnownMarketplaces"]  # marketplace refcount survives
 
 
 def test_install_unknown_plugin_errors(home: Path, project_root: Path) -> None:
@@ -331,9 +455,7 @@ def test_declarative_vendor_into_escape_blocked(
 ) -> None:
     # A declarative kind is author-controlled data; a vendor_into that escapes the
     # project root must be refused, not written outside the tree.
-    working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={".escaper/logger.ts": "export const plugin = 1\n"}
-    )
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_opencode_pkg())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     _install_escape_kind()
     repos.add("a", f"file://{bare}")
@@ -361,8 +483,8 @@ def test_register_skips_unvendored_plugin(home: Path, project_root: Path, tmp_pa
     manifest.save(project_root, m)
     plugin_install.reconcile_registration(project_root, manifest.load(project_root))
     settings = _settings(project_root)
-    assert settings["enabledPlugins"][f"design-audit@{mkt}"] is True  # present -> registered
-    assert f"typography@{mkt}" not in settings["enabledPlugins"]  # missing files -> skipped
+    assert settings["enabledPlugins"][f"design-audit@{_key()}"] is True  # present -> registered
+    assert f"typography@{_key()}" not in settings["enabledPlugins"]  # missing files -> skipped
     mp = json.loads(
         (
             project_root / ".claude" / "plugins" / mkt / ".claude-plugin" / "marketplace.json"
@@ -443,9 +565,9 @@ def _add_same_name_two_flavors(tmp_path: Path) -> None:
     """Register one repo exposing a `logger` plugin under BOTH the claude and opencode kinds.
 
     The claude `logger` is listed in marketplace.json (dir plugin); the opencode
-    `logger` is the `.opencode/plugins/logger.ts` file the opencode kind discovers
-    by convention. The kind must be installed BEFORE `repos.add` so discovery
-    indexes both at registration time.
+    `logger` is the same directory carrying a package.json the opencode kind
+    discovers by its manifest. The kind must be installed BEFORE `repos.add` so
+    discovery indexes both at registration time.
     """
     marketplace = {
         "name": "demo-market",
@@ -455,7 +577,7 @@ def _add_same_name_two_flavors(tmp_path: Path) -> None:
         ".claude-plugin/marketplace.json": json.dumps(marketplace),
         "logger/.claude-plugin/plugin.json": json.dumps({"name": "logger"}),
         "logger/skills/log/SKILL.md": "# log\n",
-        ".opencode/plugins/logger.ts": "export const plugin = 1\n",
+        "logger/package.json": json.dumps({"name": "logger"}),
     }
     working = git_fixtures.make_source_repo(tmp_path / "src", files=files)
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
@@ -479,11 +601,14 @@ def test_same_name_coexists_across_flavors(home: Path, project_root: Path, tmp_p
     opencode = plugin_install.install_plugin(project_root, "a/logger", flavor="opencode")
     assert claude.flavor == "claude"
     assert opencode.flavor == "opencode"
-    # Distinct vendored paths — the claude dir plugin and the opencode file drop.
+    # Distinct vendored paths — both vendor the directory, to different destinations.
     assert claude.target_dir != opencode.target_dir
     assert (project_root / claude.target_dir / "skills" / "log" / "SKILL.md").exists()
-    assert (project_root / ".opencode" / "plugins" / "logger.ts").read_text() == (
-        "export const plugin = 1\n"
+    assert (
+        json.loads(
+            (project_root / ".opencode" / "plugins" / "logger" / "package.json").read_text()
+        )["name"]
+        == "logger"
     )
 
     m = manifest.load(project_root)
@@ -495,3 +620,71 @@ def test_same_name_coexists_across_flavors(home: Path, project_root: Path, tmp_p
     # A bare lookup spanning two kinds is ambiguous without a flavor.
     with pytest.raises(plugins.PluginAmbiguousFlavorError):
         plugins.index_row("a/logger")
+
+
+def test_same_upstream_name_distinct_repos_get_distinct_keys(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # Two DIFFERENT repos that both declare a marketplace named "demo-market" must
+    # NOT collide on one settings.json key. The short-id suffix makes each key
+    # unique (`demo-market-<id_a>` vs `demo-market-<id_b>`), and the bare name is
+    # never written, so neither can clash with a same-named marketplace in another
+    # config scope either.
+    _add_marketplace(tmp_path)  # repo "a": marketplace "demo-market" / design-audit
+    other = {
+        ".claude-plugin/marketplace.json": json.dumps(
+            {
+                "name": "demo-market",  # same upstream name, different repo
+                "plugins": [{"name": "other-plug", "source": "./other-plug", "version": "1.0.0"}],
+            }
+        ),
+        "other-plug/.claude-plugin/plugin.json": json.dumps({"name": "other-plug"}),
+        "other-plug/skills/x/SKILL.md": "# x\n",
+    }
+    working = git_fixtures.make_source_repo(tmp_path / "srcb", files=other)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bareb.git")
+    repos.add("b", f"file://{bare}")
+
+    plugin_install.install_plugin(project_root, "a/design-audit")
+    plugin_install.install_plugin(project_root, "b/other-plug")
+
+    settings = _settings(project_root)
+    key_a, key_b = _key("a"), _key("b")
+    assert key_a != key_b
+    assert UPSTREAM not in settings["extraKnownMarketplaces"]  # bare name never written
+    assert settings["enabledPlugins"][f"design-audit@{key_a}"] is True
+    assert settings["enabledPlugins"][f"other-plug@{key_b}"] is True
+    # Distinct keys point at distinct (id-based) vendor dirs.
+    assert (
+        settings["extraKnownMarketplaces"][key_a]["source"]["path"]
+        == f".claude/plugins/{_mkt('a')}"
+    )
+    assert (
+        settings["extraKnownMarketplaces"][key_b]["source"]["path"]
+        == f".claude/plugins/{_mkt('b')}"
+    )
+
+
+def test_upgrade_replaces_id_key_with_semantic(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A pre-semantic install left an id-form key in settings.json; a later register
+    # must self-heal to a single semantic entry (no duplicate registration).
+    _add_marketplace(tmp_path)
+    plugin_install.install_plugin(project_root, "a/design-audit")
+    mkt = _mkt()
+    settings_path = project_root / ".claude" / "settings.json"
+    data = json.loads(settings_path.read_text())
+    data["extraKnownMarketplaces"][mkt] = {
+        "source": {"source": "directory", "path": f".claude/plugins/{mkt}"}
+    }
+    data["enabledPlugins"][f"design-audit@{mkt}"] = True
+    settings_path.write_text(json.dumps(data))
+
+    plugin_install.reconcile_registration(project_root, manifest.load(project_root))
+
+    settings = _settings(project_root)
+    assert mkt not in settings["extraKnownMarketplaces"]  # stale id-form retired
+    assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
+    assert _key() in settings["extraKnownMarketplaces"]
+    assert settings["enabledPlugins"][f"design-audit@{_key()}"] is True

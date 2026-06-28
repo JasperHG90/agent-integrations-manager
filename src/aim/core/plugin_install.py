@@ -16,7 +16,6 @@ TOML specs in a targets dir. The orchestrator never branches on a specific kind.
 
 from __future__ import annotations
 
-import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,58 +107,20 @@ def _find_installed(
 # --------------------------------------------------------------------------- #
 # Security gate: bundled executable-surface extractor (dir plugins)
 # --------------------------------------------------------------------------- #
-def _collect_commands(value: object, label: str, out: list[str]) -> None:
-    """Recursively collect ``command`` strings from a hooks/MCP config fragment."""
-    if isinstance(value, dict):
-        cmd = value.get("command")
-        if isinstance(cmd, str) and cmd.strip():
-            args = value.get("args")
-            suffix = (
-                " " + " ".join(a for a in args if isinstance(a, str))
-                if isinstance(args, list)
-                else ""
-            )
-            out.append(f"{label}: {cmd}{suffix}")
-        for v in value.values():
-            _collect_commands(v, label, out)
-    elif isinstance(value, list):
-        for v in value:
-            _collect_commands(v, label, out)
-
-
-def _surface_executable_surface(snap: Path, qualified_name: str) -> None:
-    """Surface a plugin dir's executable surface (hooks, MCP/LSP launchers) for review.
+def _surface_executable_surface(
+    kind: plugin_kinds.PluginKind, snap: Path, qualified_name: str
+) -> None:
+    """Surface a plugin's bundled executable surface (hooks, MCP/LSP launchers) for review.
 
     Text injection scanning alone is theater for an artifact bundling executable
-    surface. Parses the bundled ``plugin.json`` / ``hooks/hooks.json`` /
-    ``.mcp.json`` and records every shell hook command and MCP/LSP launcher to the
-    warning buffer. Best-effort: malformed JSON is ignored (the file still vendors).
+    surface. The kind knows its own manifest layout and reports every shell hook
+    command and MCP/LSP launcher; we buffer them for the CLI/TUI to display.
     """
-    findings: list[str] = []
-    candidates: list[tuple[Path, tuple[str, ...] | None]] = [
-        (snap / ".claude-plugin" / "plugin.json", ("hooks", "mcpServers", "lspServers")),
-        (snap / "hooks" / "hooks.json", None),
-        (snap / ".mcp.json", ("mcpServers",)),
-    ]
-    for path, keys in candidates:
-        if not path.is_file():
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if keys is None:
-            _collect_commands(data, "hook", findings)
-        elif isinstance(data, dict):
-            for key in keys:
-                if key in data:
-                    label = "hook" if key == "hooks" else "server"
-                    _collect_commands(data[key], label, findings)
+    findings = kind.executable_surface(snap)
     if findings:
-        unique = sorted(set(findings))
         _install_warnings.append(
             f"{qualified_name}: review bundled executable surface before enabling:\n  "
-            + "\n  ".join(unique)
+            + "\n  ".join(sorted(set(findings)))
         )
 
 
@@ -197,7 +158,7 @@ def _deploy(
             raise content_guard.HiddenUnicodeError(
                 f"{qualified_name}: hidden Unicode found in plugin files:\n" + "\n".join(hidden)
             )
-        _surface_executable_surface(snap, qualified_name)
+        _surface_executable_surface(kind, snap, qualified_name)
         if pol.risk.active_for("plugin"):
             risk.gate(
                 install._gather_skill_text(snap),
@@ -283,7 +244,11 @@ def install_plugin(
     kind = _kind_for(row.flavor, project_root)
     try:
         version = install.resolve_install_version(
-            row.repo_alias, row.source_path, track=track, pin=pin, artifact_name="plugin.json"
+            row.repo_alias,
+            row.source_path,
+            track=track,
+            pin=pin,
+            artifact_name=kind.manifest_filename,
         )
     except git.GitError as exc:
         if pin is not None:
@@ -344,8 +309,10 @@ def install_plugin(
             existing.track = track
         result = existing
     manifest.save(project_root, m)
+    # Write the declaration before register(): register reads the declared
+    # (upstream) marketplace name to label the Claude-facing settings.json key.
+    declarations._update_plugin(project_root, result, marketplace_name=row.marketplace_name)
     kind.register(project_root, m)
-    declarations._update_plugin(project_root, result)
     return result
 
 
@@ -375,7 +342,7 @@ def update(
         existing.source_path,
         track=existing.track,
         pin=existing.pin,
-        artifact_name="plugin.json",
+        artifact_name=kind.manifest_filename,
     )
     _check_local_edits(project_root, existing, force=force)
     if new_version.sha == existing.current.sha:
@@ -471,6 +438,9 @@ def delete(project_root: Path, qualified_name: str, flavor: str | None = None) -
     kind = plugin_kinds.get_kind(existing.flavor, project_root)
     if kind is not None:
         kind.unregister(project_root, existing, m)
+    # Surface any kind-specific cleanup hints (e.g. Claude's machine-local
+    # registry residue that aim does not own and cannot purge).
+    _install_warnings.extend(plugin_kinds.take_removal_warnings())
     declarations._remove_plugin(project_root, qualified_name, existing.flavor)
 
 

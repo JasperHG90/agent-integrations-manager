@@ -191,17 +191,21 @@ def resolve_install_version(
             installed_at=datetime.now(UTC),
         )
 
+    # For a whole-repo artifact (source_path == "") there is no subtree to track,
+    # so follow the manifest file at the repo root instead of the SKILL.md default.
+    track_path = source_path or artifact_name
+
     if track == "latest-tag":
         latest = backend.latest_tag(repo_dir, repo.default_ref)
         if latest is not None:
             tag_sha = backend.resolve_ref(repo_dir, latest)
-            sha = backend.last_touching_sha(repo_dir, tag_sha, source_path)
+            sha = backend.last_touching_sha(repo_dir, tag_sha, track_path)
             return SkillVersion(tag=latest, sha=sha, installed_at=datetime.now(UTC))
         # Fall through to default behaviour if no tags.
 
     ref = track or repo.default_ref
     head_sha = backend.resolve_ref(repo_dir, ref)
-    sha = backend.last_touching_sha(repo_dir, head_sha, source_path)
+    sha = backend.last_touching_sha(repo_dir, head_sha, track_path)
 
     # Flat file: source_path may already point at the artifact itself
     # (e.g. agents/foo.md). Otherwise it's the directory containing it.
@@ -227,7 +231,7 @@ def resolve_install_version(
                 # reachable from tag_sha. If it equals our install sha, tag is
                 # at-or-after the edit; otherwise the edit happened after the tag.
                 try:
-                    tag_last_touching = backend.last_touching_sha(repo_dir, tag_sha, source_path)
+                    tag_last_touching = backend.last_touching_sha(repo_dir, tag_sha, track_path)
                     if tag_last_touching != sha:
                         tag = None
                 except git.GitError:

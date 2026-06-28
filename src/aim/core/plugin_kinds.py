@@ -22,8 +22,8 @@ global overrides built-in by ``name``).
 
 from __future__ import annotations
 
-import fnmatch
 import json
+import threading
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,6 +80,7 @@ class PluginKind(Protocol):
     name: str
     source_unit: str  # "dir" | "file"
     uses_marketplace: bool  # whether installs record an aim-local marketplace name
+    manifest_filename: str  # the metadata file used for version tracking / tag honesty
 
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         """Find this kind's plugins in a repo tree (paths from ``git ls-tree``)."""
@@ -87,6 +88,12 @@ class PluginKind(Protocol):
 
     def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
         """Repo-root-relative path where core vendors this plugin's bytes."""
+        ...
+
+    def executable_surface(self, snap: Path) -> list[str]:
+        """Human-readable lines describing the executable surface bundled in a vendored
+        plugin (hook commands, MCP/LSP launchers) for the installer to surface for review.
+        Empty when the kind bundles none."""
         ...
 
     def register(self, project_root: Path, m: Manifest) -> None:
@@ -180,11 +187,94 @@ def _aim_marketplace_name(repo_id: str) -> str:
     return f"aim-{repo_id}"
 
 
+def _semantic_marketplace_label(upstream_name: str, repo_id: str) -> str:
+    """Readable, globally-unique Claude-facing marketplace key: ``<name>-<short id>``.
+
+    Leads with the upstream marketplace name (what Claude displays) but appends a
+    short repo-id so it cannot collide with another marketplace of the same name
+    in a different config scope — Claude's marketplace namespace is FLAT across
+    global `~/.claude/settings.json` and project `.claude/settings.json`, and aim
+    cannot dedupe against machine-local global config without breaking the
+    determinism of the committed project file. Deterministic and alias-agnostic
+    (depends only on the source-agnostic repo id), so committed files stay
+    portable across machines and clone-URL forms.
+    """
+    return f"{upstream_name}-{repo_id[:8]}"
+
+
+def _declared_marketplace_labels(project_root: Path) -> dict[str, str]:
+    """Map repo_id -> the Claude-facing marketplace label (``<name>-<short id>``).
+
+    Only the `.claude/settings.json` key and the synthetic `marketplace.json`
+    ``name`` use this readable label; the vendor dir and the lock stay id-based
+    (``aim-<repo_id>``) so they remain alias-independent. A repo is labelled only
+    when its claude plugins share exactly one upstream name; otherwise the caller
+    falls back to the id form.
+    """
+    from aim.core import declarations
+
+    try:
+        decl = declarations.load(project_root)
+    except declarations.DeclarationsNotFoundError:
+        return {}
+    by_id: dict[str, set[str]] = {}
+    for p in decl.plugins:
+        if p.flavor != "claude" or not p.marketplace_name:
+            continue
+        url = decl.repos.get(p.repo_alias)
+        if not url:
+            continue
+        rid = policy.repo_id_for_url(url)
+        if p.marketplace_name != _aim_marketplace_name(rid):  # ignore stale id-form values
+            by_id.setdefault(rid, set()).add(p.marketplace_name)
+    # A repo earns a label only when its claude plugins share exactly one name.
+    candidates = {
+        rid: _semantic_marketplace_label(next(iter(names)), rid)
+        for rid, names in by_id.items()
+        if len(names) == 1
+    }
+    # Defensive: the short-id suffix makes intra-project collisions near-impossible,
+    # but if two repos still produce the same label, drop both to the id form.
+    used: dict[str, int] = {}
+    for label in candidates.values():
+        used[label] = used.get(label, 0) + 1
+    return {rid: label for rid, label in candidates.items() if used[label] == 1}
+
+
 def _repo_id_for_alias(repo_alias: str) -> str:
     """Resolve a registered repo alias to its source-agnostic identity token."""
     from aim.core import repos
 
     return policy.repo_id_for_url(repos.get(repo_alias).url)
+
+
+def _get_keypath(doc: dict, dotted: str) -> object:
+    """Walk a dotted keypath into a parsed JSON object; None if any segment is missing."""
+    cur: object = doc
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _collect_commands(value: object, label: str, out: list[str]) -> None:
+    """Recursively collect ``command`` strings from a hooks/MCP config fragment."""
+    if isinstance(value, dict):
+        cmd = value.get("command")
+        if isinstance(cmd, str) and cmd.strip():
+            args = value.get("args")
+            suffix = (
+                " " + " ".join(a for a in args if isinstance(a, str))
+                if isinstance(args, list)
+                else ""
+            )
+            out.append(f"{label}: {cmd}{suffix}")
+        for v in value.values():
+            _collect_commands(v, label, out)
+    elif isinstance(value, list):
+        for v in value:
+            _collect_commands(v, label, out)
 
 
 class ClaudeKind:
@@ -193,6 +283,33 @@ class ClaudeKind:
     name = "claude"
     source_unit = "dir"
     uses_marketplace = True
+    manifest_filename = "plugin.json"
+
+    def executable_surface(self, snap: Path) -> list[str]:
+        """Parse a claude plugin dir's bundled plugin.json / hooks.json / .mcp.json and
+        return every shell hook command and MCP/LSP launcher. Best-effort: malformed JSON
+        is ignored (the file still vendors)."""
+        candidates: list[tuple[Path, tuple[str, ...] | None]] = [
+            (snap / ".claude-plugin" / "plugin.json", ("hooks", "mcpServers", "lspServers")),
+            (snap / "hooks" / "hooks.json", None),
+            (snap / ".mcp.json", ("mcpServers",)),
+        ]
+        findings: list[str] = []
+        for path, keys in candidates:
+            if not path.is_file():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if keys is None:
+                _collect_commands(data, "hook", findings)
+            elif isinstance(data, dict):
+                for key in keys:
+                    if key in data:
+                        label = "hook" if key == "hooks" else "server"
+                        _collect_commands(data[key], label, findings)
+        return findings
 
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         out = KindDiscovery()
@@ -299,10 +416,12 @@ class ClaudeKind:
             and _is_vendored(project_root, p)
         ]
 
-    def _write_marketplace(self, project_root: Path, repo_id: str, names: list[str]) -> None:
+    def _write_marketplace(
+        self, project_root: Path, repo_id: str, names: list[str], display_name: str | None = None
+    ) -> None:
         mkt_dir = self._marketplace_dir(project_root, repo_id)
         doc = {
-            "name": _aim_marketplace_name(repo_id),
+            "name": display_name or _aim_marketplace_name(repo_id),
             "owner": {"name": "aim"},
             "plugins": [{"name": n, "source": f"./{n}"} for n in names],
         }
@@ -320,44 +439,79 @@ class ClaudeKind:
             if p.flavor == "claude" and _is_vendored(project_root, p):
                 repo_id = policy.repo_id_for_url(p.repo_url)
                 by_repo.setdefault(repo_id, []).append(p.qualified_name.split("/", 1)[1])
+        labels = _declared_marketplace_labels(project_root)
+        desired: set[str] = set()
         for repo_id, names in by_repo.items():
-            mkt_name = _aim_marketplace_name(repo_id)
-            self._write_marketplace(project_root, repo_id, names)
+            vendor_name = _aim_marketplace_name(repo_id)  # id-based vendor dir (alias-independent)
+            mkt_name = labels.get(repo_id, vendor_name)  # Claude-facing key: readable when known
+            desired.add(mkt_name)
+            self._write_marketplace(project_root, repo_id, names, display_name=mkt_name)
             settings_json.register(
                 project_root,
                 settings_file=self._SETTINGS_FILE,
                 marketplace_name=mkt_name,
-                marketplace_path=f"{self._PLUGINS_DIR}/{mkt_name}",
+                marketplace_path=f"{self._PLUGINS_DIR}/{vendor_name}",
                 plugin_names=names,
             )
+        # Retire stale aim-managed keys: an id-form key superseded by the semantic
+        # name (upgrade), or a semantic name demoted to id-form on a new collision.
+        settings_json.prune_marketplaces(
+            project_root,
+            settings_file=self._SETTINGS_FILE,
+            keep=desired,
+            path_prefix=f"{self._PLUGINS_DIR}/aim-",
+        )
 
     def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
         name = installed.qualified_name.split("/", 1)[1]
         repo_id = policy.repo_id_for_url(installed.repo_url)
+        mkt_name = _declared_marketplace_labels(project_root).get(
+            repo_id, _aim_marketplace_name(repo_id)
+        )
         settings_json.unregister(
             project_root,
             settings_file=self._SETTINGS_FILE,
-            marketplace_name=_aim_marketplace_name(repo_id),
+            marketplace_name=mkt_name,
             plugin_name=name,
         )
         remaining = self._claude_plugins_for_id(project_root, m, repo_id)
         if remaining:
-            self._write_marketplace(project_root, repo_id, remaining)
+            self._write_marketplace(project_root, repo_id, remaining, display_name=mkt_name)
         else:
             import shutil
 
             mkt_dir = self._marketplace_dir(project_root, repo_id)
             if mkt_dir.exists():
                 shutil.rmtree(mkt_dir)
+        # aim cleans the committed project surface, but Claude keeps machine-local
+        # copies (registry + data dir) it does not garbage-collect. aim does not
+        # own that state, so warn the user to purge it themselves.
+        steps = [f"claude plugin uninstall {name}@{mkt_name}"]
+        if not remaining:
+            steps.append(f"claude plugin marketplace remove {mkt_name}")
+        steps.append(f"rm -rf ~/.claude/plugins/data/{name}-{mkt_name}")
+        _removal_warnings.append(
+            f"{installed.qualified_name}: removed from the project. Claude keeps "
+            "machine-local copies it will not auto-remove — purge them with:\n  "
+            + "\n  ".join(steps)
+        )
 
 
 # --------------------------------------------------------------------------- #
 # External: declarative kinds loaded from TOML
 # --------------------------------------------------------------------------- #
-class DiscoverSpec(BaseModel):
+class ManifestSpec(BaseModel):
+    """How to find and read a plugin's self-describing metadata file.
+
+    Discovery is anchored on this file: any directory in a repo that contains
+    ``file`` is a plugin, and that whole directory is vendored. The plugin's name
+    comes from the manifest's ``name`` keypath, so loose files without metadata are
+    not discoverable.
+    """
+
     model_config = ConfigDict(extra="forbid")
-    manifest: list[str]  # globs, repo-relative
-    name_from: str = "stem"  # "stem" (file mode) — only mode supported today
+    file: str  # the manifest filename, e.g. "gemini-extension.json" or "package.json" (JSON)
+    name: str = "name"  # dotted keypath in the manifest to the plugin name
 
 
 class ConfigSpec(BaseModel):
@@ -369,8 +523,7 @@ class ConfigSpec(BaseModel):
 
 class RegisterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    vendor_into: str  # literal path template, e.g. ".opencode/plugins/{name}.{ext}"
-    vendor_as: str = "file"  # "file" | "dir"
+    vendor_into: str  # literal path template, e.g. ".gemini/extensions/{name}"
     config: list[ConfigSpec] = Field(default_factory=list)
 
 
@@ -379,18 +532,17 @@ class KindSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     name: str
-    discover: DiscoverSpec
+    manifest: ManifestSpec
     registration: RegisterSpec = Field(alias="register")
 
 
-def _ctx(*, repo_alias: str, plugin_name: str, source_path: str) -> dict:
+def _ctx(*, repo_alias: str, plugin_name: str) -> dict:
     """Placeholder context for a kind's path/config templates: per-plugin tokens only.
 
-    Deliberately closed to ``{repo}``/``{name}``/``{ext}`` — a kind owns its own
-    paths (literal), so no layout-profile fields leak into the template engine.
+    Deliberately closed to ``{repo}``/``{name}`` — a kind owns its own paths
+    (literal), so no layout-profile fields leak into the template engine.
     """
-    ext = source_path.rsplit(".", 1)[-1] if "." in source_path else ""
-    return {"repo": repo_alias, "name": plugin_name, "ext": ext}
+    return {"repo": repo_alias, "name": plugin_name}
 
 
 def _render(template: str, ctx: dict) -> str:
@@ -434,34 +586,81 @@ def _del_key(doc: dict, dotted: str) -> None:
 
 
 class DeclarativeKind:
-    """A kind defined entirely by a TOML spec (no code). The opencode showcase."""
+    """A kind defined entirely by a TOML spec (no code).
+
+    A plugin is a directory containing the kind's manifest file; discovery reads
+    the plugin's name from that manifest and vendors the whole directory.
+    """
 
     uses_marketplace = False
+    source_unit = "dir"  # the plugin's bytes are always its enclosing directory
 
     def __init__(self, spec: KindSpec) -> None:
         self.spec = spec
         self.name = spec.name
-        self.source_unit = spec.registration.vendor_as
+        self.manifest_filename = spec.manifest.file
 
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         out = KindDiscovery()
+        fname = self.spec.manifest.file
+        suffix = "/" + fname
+        seen: set[str] = set()
         for p in tree:
             if not validation.is_safe_repo_path(p):
                 continue
-            if not any(fnmatch.fnmatch(p, g) for g in self.spec.discover.manifest):
+            if p == fname:
+                source_path = ""  # manifest at repo root → the repo itself is the plugin
+            elif p.endswith(suffix):
+                source_path = p[: -len(suffix)]
+            else:
                 continue
-            stem = p.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            if not validation.is_valid_plugin_name(stem):
+            if source_path in seen:
                 continue
+            name = self._read_name(repo_dir, sha, p, repo_alias, out)
+            if name is None:
+                continue
+            if not validation.is_valid_plugin_name(name):
+                out.warnings.append(f"{repo_alias}: {p}: invalid plugin name {name!r}")
+                continue
+            seen.add(source_path)
             out.plugins.append(
                 DiscoveredPlugin(
-                    name=stem, kind=self.name, source_path=p, source_unit=self.source_unit
+                    name=name, kind=self.name, source_path=source_path, source_unit=self.source_unit
                 )
             )
         return out
 
+    def _read_name(
+        self, repo_dir: Path, sha: str, manifest_path: str, repo_alias: str, out: KindDiscovery
+    ) -> str | None:
+        """Read the plugin name from the manifest's ``name`` keypath, or None if unreadable."""
+        try:
+            data = json.loads(git.get_backend().cat_file(repo_dir, sha, manifest_path))
+        except (git.GitError, json.JSONDecodeError) as exc:
+            out.warnings.append(f"{repo_alias}: skipped manifest {manifest_path}: {exc}")
+            return None
+        if not isinstance(data, dict):
+            return None
+        name = _get_keypath(data, self.spec.manifest.name)
+        return name if isinstance(name, str) else None
+
+    def executable_surface(self, snap: Path) -> list[str]:
+        """Surface every shell launcher (``{command, args}``) declared anywhere in the
+        vendored manifest, for the installer to flag for review. Best-effort: malformed
+        JSON is ignored (the file still vendors)."""
+        path = snap / self.spec.manifest.file
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        findings: list[str] = []
+        _collect_commands(data, "command", findings)
+        return findings
+
     def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
-        ctx = _ctx(repo_alias=repo_alias, plugin_name=plugin_name, source_path=source_path)
+        ctx = _ctx(repo_alias=repo_alias, plugin_name=plugin_name)
         return _render(self.spec.registration.vendor_into, ctx)
 
     def register(self, project_root: Path, m: Manifest) -> None:
@@ -474,7 +673,7 @@ class DeclarativeKind:
 
     def _apply(self, project_root: Path, plugin: InstalledPlugin, *, remove: bool) -> None:
         name = plugin.qualified_name.split("/", 1)[1]
-        ctx = _ctx(repo_alias=plugin.repo_alias, plugin_name=name, source_path=plugin.source_path)
+        ctx = _ctx(repo_alias=plugin.repo_alias, plugin_name=name)
         for cfg in self.spec.registration.config:
             if cfg.format != "json":
                 continue  # json first; yaml/toml are easy follow-ons
@@ -501,6 +700,33 @@ class DeclarativeKind:
 # --------------------------------------------------------------------------- #
 _BUILTINS: list[PluginKind] = [ClaudeKind()]
 
+# Malformed/stale external kind specs are skipped (never fatal), but recorded here
+# so callers can tell the user WHICH `.toml` was ignored and why — silently dropping
+# a kind looks like "my plugin disappeared". Thread-safe for concurrent discovery.
+_load_warnings: list[str] = []
+_load_lock = threading.Lock()
+
+
+def take_load_warnings() -> list[str]:
+    """Return and clear warnings about external kind specs ignored during loading."""
+    with _load_lock:
+        out = list(_load_warnings)
+        _load_warnings.clear()
+    return out
+
+
+# Hints a kind emits when a plugin is uninstalled, for residue aim cannot reach
+# (e.g. Claude's machine-local registry, which aim does not own and Claude does
+# not garbage-collect). Drained by `plugin_install.delete` into its warning channel.
+_removal_warnings: list[str] = []
+
+
+def take_removal_warnings() -> list[str]:
+    """Return and clear post-uninstall cleanup hints emitted by kinds."""
+    out = list(_removal_warnings)
+    _removal_warnings.clear()
+    return out
+
 
 def _kinds_dirs(project_root: Path | None) -> list[Path]:
     dirs = [paths.user_config_dir() / "targets"]
@@ -522,8 +748,11 @@ def load_kinds(project_root: Path | None = None) -> dict[str, PluginKind]:
         for toml_path in sorted(d.glob("*.toml")):
             try:
                 spec = KindSpec.model_validate(tomllib.loads(toml_path.read_text(encoding="utf-8")))
-            except Exception:
-                continue  # a malformed external kind is ignored, never fatal
+            except Exception as exc:
+                # Ignored, never fatal — but recorded so the user can find the bad spec.
+                with _load_lock:
+                    _load_warnings.append(f"{toml_path}: ignored invalid target spec: {exc}")
+                continue
             kinds[spec.name] = DeclarativeKind(spec)
     return kinds
 

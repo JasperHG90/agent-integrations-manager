@@ -173,23 +173,24 @@ A registered repo can also expose **plugins**. aim ships one built-in *kind*, `c
 
 A plugin written for one client can't install as another's, so aim never converts formats. Instead, the discover-and-install rules for each client are a **pluggable kind** you can add yourself, with no aim change. Drop a TOML file in `<config>/targets/` (global) or a project's `.aim/targets/`:
 
+A plugin is a directory that carries a JSON metadata file (opencode's `package.json`, a Gemini extension's `gemini-extension.json`). You supply that file's name, the keypaths to read from it, and where the directory should land:
+
 ```toml
 name = "opencode"            # the flavor this kind discovers
 
-[discover]
-manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]  # repo-relative globs
-name_from = "stem"           # plugin name is the matched file's stem
+[manifest]
+file = "package.json"        # the metadata file (JSON) that marks a plugin directory
+name = "name"                # keypath to the plugin name
 
 [register]
-vendor_into = ".opencode/plugins/{name}.{ext}"  # only {repo}/{name}/{ext} are interpolated
-vendor_as = "file"           # "file" or "dir"
+vendor_into = ".opencode/plugins/{name}"  # destination; only {name}/{repo} are interpolated
 # Optional: merge keys into a client config file on install (claude does this in code):
 # [[register.config]]
 # file = ".some-client/config.json"
 # set = { "plugins.{name}" = true }
 ```
 
-aim then discovers and installs that client's plugins like any other artifact, SHA-pinned in `aim.lock.toml`. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/targets/opencode.toml` for the working showcase.
+aim discovers any directory containing that metadata file, reads the plugin name from it, and vendors the whole directory (context files, hooks, and MCP config included), SHA-pinned in `aim.lock.toml`. A directory without metadata is not a discoverable plugin. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/targets/opencode.toml` for the working showcase.
 
 ### Versioning
 

@@ -13,12 +13,11 @@ from tests.fixtures import git_fixtures
 # source change.
 OPENCODE_KIND_TOML = """
 name = "opencode"
-[discover]
-manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js", "plugins/*.ts"]
-name_from = "stem"
+[manifest]
+file = "package.json"
+name = "name"
 [register]
-vendor_into = ".opencode/plugins/{name}.{ext}"
-vendor_as = "file"
+vendor_into = ".opencode/plugins/{name}"
 """
 
 
@@ -106,19 +105,23 @@ def test_list_filters(home: Path, tmp_path: Path) -> None:
 def test_opencode_is_a_pluggable_kind(home: Path, tmp_path: Path) -> None:
     bare = _build(
         tmp_path,
-        {".opencode/plugins/logger.ts": "export const plugin = async () => ({})\n"},
+        {
+            "logger/package.json": json.dumps({"name": "logger"}),
+            "logger/index.ts": "export const plugin = async () => ({})\n",
+        },
     )
     # opencode is NOT a built-in kind — an opencode-only repo has nothing aim
     # recognizes, so registration is rejected.
     with pytest.raises(repos.RepoHasNoArtifactsError):
         repos.add("a", f"file://{bare}")
 
-    # Drop the external opencode kind spec → the same repo now exposes the plugin.
+    # Drop the external opencode kind spec → the same repo now exposes the plugin,
+    # named by its package.json and rooted at the package directory.
     _install_opencode_kind()
     repos.add("a", f"file://{bare}")
     rows = plugins.list_plugins(flavor="opencode")
     assert [r.plugin_name for r in rows] == ["logger"]
-    assert rows[0].source_path == ".opencode/plugins/logger.ts"
+    assert rows[0].source_path == "logger"
     assert rows[0].marketplace_name is None
 
 
@@ -227,13 +230,27 @@ def test_plugin_version_from_plugin_json(home: Path, tmp_path: Path) -> None:
 # A PROJECT-scoped target (`.aim/targets/`), as opposed to the global one above.
 GEMINI_TARGET_TOML = """
 name = "gemini"
-[discover]
-manifest = ["gemini-extension.json"]
-name_from = "stem"
+[manifest]
+file = "gemini-extension.json"
+name = "name"
 [register]
-vendor_into = ".gemini/extensions/{name}.json"
-vendor_as = "dir"
+vendor_into = ".gemini/extensions/{name}"
 """
+
+
+def test_invalid_target_spec_surfaces_warning(home: Path, tmp_path: Path) -> None:
+    # A stale spec written for the old schema (`[discover]`/`name_from`) no longer
+    # validates. It must be skipped WITH a warning naming the file, not vanish.
+    bare = _build(tmp_path, _claude_marketplace_files())
+    d = paths.user_config_dir() / "targets"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "stale.toml").write_text(
+        'name = "stale"\n[discover]\nmanifest = ["x"]\nname_from = "stem"\n'
+        '[register]\nvendor_into = ".x/{name}"\nvendor_as = "file"\n'
+    )
+    repos.add("a", f"file://{bare}")  # triggers discovery → loads kinds
+    warnings = plugins.take_skipped_warnings()
+    assert any("stale.toml" in w for w in warnings)
 
 
 def test_project_scoped_target_discovered_by_list(
@@ -242,7 +259,7 @@ def test_project_scoped_target_discovered_by_list(
     """A target spec dropped in the PROJECT `.aim/targets/` (not the global dir) must let
     `plugin list` discover that client's plugins in registered repos. Indexing is
     machine-global, so the project target is honored via a live overlay at list time."""
-    bare = _build(tmp_path, {"gemini-extension.json": "{}\n"})
+    bare = _build(tmp_path, {"weather/gemini-extension.json": json.dumps({"name": "weather"})})
     # The repo is registered with global kinds only — gemini is project-scoped, so the
     # global index sees no plugin here (allow_empty keeps the registration).
     repos.add("a", f"file://{bare}", allow_empty=True)
@@ -253,7 +270,7 @@ def test_project_scoped_target_discovered_by_list(
     (targets / "gemini.toml").write_text(GEMINI_TARGET_TOML)
 
     rows = plugins.list_plugins(flavor="gemini", project_root=project_root)
-    assert [r.plugin_name for r in rows] == ["gemini-extension"]
-    assert rows[0].source_path == "gemini-extension.json"
+    assert [r.plugin_name for r in rows] == ["weather"]  # name from the manifest
+    assert rows[0].source_path == "weather"  # the plugin directory
     assert rows[0].flavor == "gemini"
-    assert rows[0].qualified_name == "a/gemini-extension"
+    assert rows[0].qualified_name == "a/weather"

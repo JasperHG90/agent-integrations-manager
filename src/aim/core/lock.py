@@ -619,12 +619,14 @@ def _resolve_plugin_version(plugin: DeclaredPlugin) -> SkillVersion:
     Uses the same resolver as ``plugin add`` (install.resolve_install_version) so
     the SHA `add` records and the SHA `lock` records agree.
     """
+    kind = plugin_kinds.get_kind(plugin.flavor)
+    artifact_name = kind.manifest_filename if kind is not None else "plugin.json"
     return install.resolve_install_version(
         plugin.repo_alias,
         plugin.source_path,
         track=plugin.track,
         pin=plugin.pin,
-        artifact_name="plugin.json",
+        artifact_name=artifact_name,
     )
 
 

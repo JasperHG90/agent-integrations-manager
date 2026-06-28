@@ -163,7 +163,10 @@ def discover(repo_alias: str, project_root: Path | None = None) -> IndexResult:
     Returns:
         An IndexResult with marketplaces, the winning plugins, and shadowed dupes.
     """
-    return _discover_in_repo(repo_alias, plugin_kinds.load_kinds(project_root))
+    kinds = plugin_kinds.load_kinds(project_root)
+    for warning in plugin_kinds.take_load_warnings():
+        _warn_skip(warning)
+    return _discover_in_repo(repo_alias, kinds)
 
 
 def index_repo(repo_alias: str) -> IndexResult:
@@ -243,8 +246,8 @@ def read_plugin_content(
 ) -> str:
     """Return a human-readable manifest for a discoverable plugin.
 
-    Claude plugins show their ``plugin.json`` when present; other (file-based)
-    kinds show the plugin file itself. ``project_root`` includes the project's
+    Claude plugins show their ``plugin.json`` when present; declarative kinds show
+    their declared manifest file. ``project_root`` includes the project's
     ``.aim/targets`` plugins in the lookup.
     """
     row = index_row(qualified_name, flavor, project_root)
@@ -256,10 +259,15 @@ def read_plugin_content(
             return backend.cat_file(repo_dir, row.indexed_at_sha, manifest_path)
         except git.GitError:
             return f"(no plugin.json found under {row.source_path})"
-    try:
-        return backend.cat_file(repo_dir, row.indexed_at_sha, row.source_path)
-    except git.GitError:
-        return f"({row.flavor} plugin at {row.source_path})"
+    kind = plugin_kinds.get_kind(row.flavor, project_root)
+    if isinstance(kind, plugin_kinds.DeclarativeKind):
+        fname = kind.spec.manifest.file
+        manifest_path = f"{row.source_path}/{fname}" if row.source_path else fname
+        try:
+            return backend.cat_file(repo_dir, row.indexed_at_sha, manifest_path)
+        except git.GitError:
+            return f"(no {fname} found under {row.source_path or '.'})"
+    return f"({row.flavor} plugin at {row.source_path})"
 
 
 def _project_target_rows(

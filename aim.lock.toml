@@ -204,8 +204,8 @@ content_hash = "4312d303fbdb1621c1e43d2e085df7b0f5242f8761c65c10147e179c4f677481
 risk_acknowledged = false
 
 [subagent.current]
-sha = "5ff872624d18f224aef87f4655e0ae5f78a4d034"
-installed_at = "2026-06-27T05:23:44.248411Z"
+sha = "7f71a9a9d5093a3c62b259f3d7896db1ff8b57bf"
+installed_at = "2026-06-27T21:33:13.347309Z"
 
 [[rule]]
 qualified_name = "1385a5f1be8c889c/slop-scan-for-docs"
@@ -240,8 +240,8 @@ content_hash = "85cf17902b6d323f69208d06a4a0a9d370db4412d5e603f98092c92b9da2f16a
 risk_acknowledged = false
 
 [rule.current]
-sha = "801250ade7cf35f7d39764e3d4528ada7f6db6db"
-installed_at = "2026-06-27T05:23:42.954298Z"
+sha = "7f71a9a9d5093a3c62b259f3d7896db1ff8b57bf"
+installed_at = "2026-06-27T21:33:13.357927Z"
 
 [[rule]]
 qualified_name = "4290899e4697f267/uv-installer"
@@ -252,8 +252,8 @@ content_hash = "939459455231671d1206da8875d143ff418893f51bef73e3add42668d220972c
 risk_acknowledged = false
 
 [rule.current]
-sha = "801250ade7cf35f7d39764e3d4528ada7f6db6db"
-installed_at = "2026-06-27T05:23:43.599326Z"
+sha = "7f71a9a9d5093a3c62b259f3d7896db1ff8b57bf"
+installed_at = "2026-06-27T21:33:13.360697Z"
 
 [[plugin]]
 qualified_name = "8b8de8ec329cb5d5/memex"
@@ -276,6 +276,39 @@ tag = "latest"
 sha = "a2ad052ac04f8729c50295fe0dad9b42df39de7e"
 installed_at = "2026-06-26T12:43:34.831804Z"
 
+[[plugin]]
+qualified_name = "71f157ee09e4fef6/gemini-extension"
+repo_alias = "71f157ee09e4fef6"
+flavor = "gemini"
+source_path = "gemini-extension.json"
+target_dir = ".gemini/extensions/gemini-extension.json"
+content_hash = "fdd2836177cb3b94033bcc6d94540366d3b5650bae0b36438ab2b1ddc2dfa0b7"
+risk_acknowledged = false
+
+[plugin.current]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:07:49.967263Z"
+
+[[plugin.history]]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:07:31.057856Z"
+
+[[plugin.history]]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:05:51.642751Z"
+
+[[plugin.history]]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:05:15.287757Z"
+
+[[plugin.history]]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:04:29.606493Z"
+
+[[plugin.history]]
+sha = "9f2cf88d545fd87ab9fe591de3d32d4187a27905"
+installed_at = "2026-06-27T22:03:36.304805Z"
+
 [managed_region_hashes]
 header = "8209ab5f5a7c8f642c374946c62b4af4bc0abcf6b44bc22fc745ebc94105a7bc"
 guidelines = "9f2811d5c944f66b8dd93552c313b774b0bb2ecc1796783b476131e17e808f69"
@@ -285,6 +318,7 @@ guidelines = "9f2811d5c944f66b8dd93552c313b774b0bb2ecc1796783b476131e17e808f69"
 31661aae5fd34dec = "https://github.com/wshobson/agents"
 4290899e4697f267 = "https://github.com/jasperhg90/skills"
 6d0a32a7aaf3e19b = "https://github.com/balukosuri/andrej-karpathy-s-autoresearch-as-a-universal-skill"
+71f157ee09e4fef6 = "https://github.com/jasperhg90/persona"
 82a901da1b9bedec = "https://github.com/anthropics/skills"
 8b8de8ec329cb5d5 = "https://github.com/jasperhg90/memex"
 e96f16c2bd4b1042 = "https://github.com/0xfurai/claude-code-subagents"

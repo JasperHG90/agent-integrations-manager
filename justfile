@@ -1,4 +1,4 @@
-# Justfile for atm — Agent Tooling Manager.
+# Justfile for aim — Agent Tooling Manager.
 # Install `just`: https://github.com/casey/just
 
 set positional-arguments
@@ -50,13 +50,13 @@ typecheck:
 # Run lint + typecheck + tests. Handy for pre-push.
 check: lint typecheck test-core
 
-# Run the atm TUI locally.
+# Run the aim TUI locally.
 tui *args='':
-    uv run atm tui {{args}}
+    uv run aim tui {{args}}
 
-# Run atm in the current project.
+# Run aim in the current project.
 run *args='':
-    uv run atm {{args}}
+    uv run aim {{args}}
 
 # Build distribution packages.
 build:

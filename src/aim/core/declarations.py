@@ -657,23 +657,47 @@ def _remove_mcp(project_root: Path, alias: str) -> None:
     save(project_root, decl)
 
 
-def _update_plugin(project_root: Path, installed: object) -> None:
+def _update_plugin(
+    project_root: Path, installed: object, *, marketplace_name: str | None = None
+) -> None:
     """Mirror an installed plugin into the declarations file.
+
+    The declaration keeps the *upstream* (semantic) marketplace name so the
+    Claude-facing `.claude/settings.json` key reads naturally (e.g. ``memex``),
+    while the lock keeps the id-based ``aim-<repo_id>`` form. Resolution order for
+    the declared name: an explicit ``marketplace_name`` (the upstream name from the
+    index at install time), else a previously declared value, else the installed
+    (id-based) value. Consequence: on update/rollback (no explicit name) the
+    first-seen declared name wins — a later upstream marketplace rename is not
+    picked up automatically. This is intentional: the committed key stays stable.
 
     Args:
         project_root: Directory whose `aim.toml` should be updated.
         installed: An `InstalledPlugin` describing the plugin to record.
+        marketplace_name: Upstream marketplace name to record, when known.
     """
     from aim.core.models import DeclaredPlugin, InstalledPlugin
 
     assert isinstance(installed, InstalledPlugin)
     decl = load_or_default(project_root)
+    prior = next(
+        (
+            p
+            for p in decl.plugins
+            if p.qualified_name == installed.qualified_name and p.flavor == installed.flavor
+        ),
+        None,
+    )
     declared = DeclaredPlugin(
         qualified_name=installed.qualified_name,
         repo_alias=installed.repo_alias,
         flavor=installed.flavor,
         source_path=installed.source_path,
-        marketplace_name=installed.marketplace_name,
+        marketplace_name=(
+            marketplace_name
+            or (prior.marketplace_name if prior else None)
+            or installed.marketplace_name
+        ),
         pin=installed.pin,
         track=installed.track,
         risk_acknowledged=installed.risk_acknowledged,

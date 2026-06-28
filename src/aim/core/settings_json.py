@@ -120,3 +120,34 @@ def unregister(
             if isinstance(mkts, dict):
                 mkts.pop(marketplace_name, None)
     return write_settings(project_root, settings_file, data)
+
+
+def prune_marketplaces(
+    project_root: Path, *, settings_file: str, keep: set[str], path_prefix: str
+) -> Path:
+    """Drop managed marketplace entries no longer in ``keep``, plus their plugin
+    enablements. Only entries whose ``source.path`` starts with ``path_prefix``
+    (aim-vendored marketplaces) are considered; user-added marketplaces are left
+    untouched. Lets an upgrade (id-form key replaced by the semantic name) or a
+    name collision (semantic key demoted to id-form) self-heal to one clean set.
+    """
+    data = read_settings(project_root, settings_file)
+    mkts = data.get("extraKnownMarketplaces")
+    if not isinstance(mkts, dict):
+        return write_settings(project_root, settings_file, data)
+
+    def _managed(entry: object) -> bool:
+        src = entry.get("source") if isinstance(entry, dict) else None
+        path = src.get("path") if isinstance(src, dict) else None
+        return isinstance(path, str) and path.startswith(path_prefix)
+
+    stale = [name for name, entry in mkts.items() if name not in keep and _managed(entry)]
+    for name in stale:
+        mkts.pop(name, None)
+    enabled = data.get("enabledPlugins")
+    if isinstance(enabled, dict):
+        for name in stale:
+            suffix = f"@{name}"
+            for key in [k for k in enabled if isinstance(k, str) and k.endswith(suffix)]:
+                del enabled[key]
+    return write_settings(project_root, settings_file, data)

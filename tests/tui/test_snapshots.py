@@ -11,6 +11,7 @@ backstop.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -151,12 +152,11 @@ async def test_plugins_screen_structure_one_plugin(home: Path, tmp_path: Path) -
 
 _OPENCODE_TARGET_TOML = """
 name = "opencode"
-[discover]
-manifest = [".opencode/plugins/*.ts", ".opencode/plugins/*.js"]
-name_from = "stem"
+[manifest]
+file = "package.json"
+name = "name"
 [register]
-vendor_into = ".opencode/plugins/{name}.{ext}"
-vendor_as = "file"
+vendor_into = ".opencode/plugins/{name}"
 """
 
 
@@ -167,7 +167,11 @@ async def test_plugins_screen_shows_project_scoped_target(home: Path, tmp_path: 
     from textual.widgets import DataTable
 
     working = git_fixtures.make_source_repo(
-        tmp_path / "src", files={".opencode/plugins/logger.ts": "export const plugin = 1\n"}
+        tmp_path / "src",
+        files={
+            "logger/package.json": json.dumps({"name": "logger"}),
+            "logger/index.ts": "export const plugin = 1\n",
+        },
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     # opencode is project-scoped here, so the machine-global index sees nothing.
