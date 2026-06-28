@@ -350,6 +350,23 @@ def _v15_to_v16(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v16_to_v17(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v16 manifest forward to v17.
+
+    v17 adds the optional installed plugin-target surface. Purely additive: an
+    empty ``targets`` list, since no prior version could record one.
+
+    Args:
+        raw: The decoded manifest mapping at version 16.
+
+    Returns:
+        The same mapping, stamped at version 17.
+    """
+    raw.setdefault("targets", [])
+    raw["manifest_version"] = 17
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
@@ -367,6 +384,7 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     13: _v13_to_v14,
     14: _v14_to_v15,
     15: _v15_to_v16,
+    16: _v16_to_v17,
 }
 
 

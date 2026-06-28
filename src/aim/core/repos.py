@@ -30,6 +30,7 @@ from aim.core.models import (
     RegisteredRepo,
     RuleIndex,
     SkillIndex,
+    TargetIndex,
     TemplateIndex,
 )
 
@@ -235,6 +236,7 @@ def add(
     _archetypes = importlib.import_module("aim.core.archetypes")
     _repo_templates = importlib.import_module("aim.core.repo_templates")
     _plugins = importlib.import_module("aim.core.plugins")
+    _targets = importlib.import_module("aim.core.targets")
 
     try:
         skill_result = _skills.index_repo(alias)
@@ -243,6 +245,7 @@ def add(
         archetype_result = _archetypes.index_repo(alias)
         template_result = _repo_templates.index_repo(alias)
         plugin_result = _plugins.index_repo(alias)
+        target_result = _targets.index_repo(alias)
     except Exception:
         # Roll back the registration so the next attempt isn't blocked.
         remove(alias)
@@ -255,12 +258,14 @@ def add(
         and not template_result.indexed
         and not plugin_result.plugins
         and not plugin_result.marketplaces
+        and not target_result.indexed
         and not allow_empty
     ):
         remove(alias)
         raise RepoHasNoArtifactsError(
             f"{alias}: no SKILL.md, AGENT.md, rule .md, instruction archetype, "
-            f"project template, or plugin marketplace found anywhere in the repository"
+            f"project template, plugin marketplace, or plugin target found anywhere "
+            f"in the repository"
         )
     return repo
 
@@ -295,6 +300,10 @@ def artifact_kinds(alias: str) -> set[str]:
             select(PluginIndex).where(PluginIndex.repo_alias == alias).limit(1)
         ).first():  # type: ignore[arg-type]
             kinds.add("plugin")
+        if session.exec(
+            select(TargetIndex).where(TargetIndex.repo_alias == alias).limit(1)
+        ).first():  # type: ignore[arg-type]
+            kinds.add("target")
     return kinds
 
 
@@ -389,6 +398,7 @@ def remove(alias: str) -> None:
         session.exec(_delete_template_index(alias))
         session.exec(_delete_plugin_index(alias))
         session.exec(_delete_marketplace_index(alias))
+        session.exec(_delete_target_index(alias))
         session.delete(row)
         session.commit()
     git.remove_clone(clone_dir(alias))
@@ -421,6 +431,7 @@ def project_artifacts_for_repo(project_root: Path, alias: str) -> list[str]:
         + [a.qualified_name for a in decl.agents if a.repo_alias == alias]
         + [r.qualified_name for r in decl.rules if r.repo_alias == alias]
         + [p.qualified_name for p in decl.plugins if p.repo_alias == alias]
+        + [t.qualified_name for t in decl.targets if t.repo_alias == alias]
     )
 
 
@@ -483,6 +494,13 @@ def _delete_marketplace_index(alias: str):  # type: ignore[no-untyped-def]
     from aim.core.models import MarketplaceIndex as _MarketplaceIndex
 
     return _delete(_MarketplaceIndex).where(_MarketplaceIndex.repo_alias == alias)  # type: ignore[arg-type]
+
+
+def _delete_target_index(alias: str):  # type: ignore[no-untyped-def]
+    """Build a delete statement for a repo's target index rows."""
+    from sqlmodel import delete as _delete
+
+    return _delete(TargetIndex).where(TargetIndex.repo_alias == alias)  # type: ignore[arg-type]
 
 
 def rename(old: str, new: str) -> RegisteredRepo:
@@ -719,17 +737,19 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     session.commit()
             raise
 
-    # Plugin/marketplace index rows are keyed by alias; rebuild them under the
-    # new alias from the (now-moved) clone rather than hand-migrating each row.
+    # Plugin/marketplace/target index rows are keyed by alias; rebuild them under
+    # the new alias from the (now-moved) clone rather than hand-migrating each row.
     with db.session() as session:
         session.exec(_delete_plugin_index(old))
         session.exec(_delete_marketplace_index(old))
+        session.exec(_delete_target_index(old))
         session.commit()
     try:
         importlib.import_module("aim.core.plugins").index_repo(new)
+        importlib.import_module("aim.core.targets").index_repo(new)
     except Exception:
-        # Best-effort: a failed reindex leaves the plugin index empty until the
-        # next `aim repo refresh`; the rename itself already succeeded.
+        # Best-effort: a failed reindex leaves the index empty until the next
+        # `aim repo refresh`; the rename itself already succeeded.
         pass
     return get(new)
 
@@ -804,6 +824,7 @@ def _resolve_and_reindex(
         _repo_templates = importlib.import_module("aim.core.repo_templates")
 
         _plugins = importlib.import_module("aim.core.plugins")
+        _targets = importlib.import_module("aim.core.targets")
 
         _skills.index_repo(alias)
         _agents.index_repo(alias)
@@ -811,6 +832,7 @@ def _resolve_and_reindex(
         _archetypes.index_repo(alias)
         _repo_templates.index_repo(alias)
         _plugins.index_repo(alias)
+        _targets.index_repo(alias)
     return fresh
 
 

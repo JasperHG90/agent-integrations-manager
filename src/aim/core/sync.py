@@ -35,6 +35,8 @@ from aim.core import (
     repos,
     rule_install,
     skills,
+    target_install,
+    targets,
 )
 from aim.core import (
     install as install_mod,
@@ -48,6 +50,7 @@ from aim.core.models import (
     InstalledPlugin,
     InstalledRule,
     InstalledSkill,
+    InstalledTarget,
     Manifest,
 )
 
@@ -99,6 +102,7 @@ class SyncResult:
     synced_agents: list[str] = field(default_factory=list)
     synced_mcp: list[str] = field(default_factory=list)
     synced_plugins: list[str] = field(default_factory=list)
+    synced_targets: list[str] = field(default_factory=list)
     drift_warnings: list[str] = field(default_factory=list)
     repo_errors: list[str] = field(default_factory=list)
     rules_applied: list[str] = field(default_factory=list)
@@ -180,6 +184,8 @@ def _locked_repo_pairs(m: Manifest) -> dict[str, str]:
         pairs[r.repo_alias] = r.repo_url
     for p in m.plugins:
         pairs[p.repo_alias] = p.repo_url
+    for t in m.targets:
+        pairs[t.repo_alias] = t.repo_url
     if m.archetype is not None:
         pairs[m.archetype.repo_alias] = m.archetype.repo_url
     return pairs
@@ -215,6 +221,7 @@ def _register_repo(alias: str, url: str, allow_insecure: bool) -> str | None:
             repo_rules_mod.index_repo(alias)
             archetypes.index_repo(alias)
             plugins.index_repo(alias)
+            targets.index_repo(alias)
         return None
     except repos.RepoNotFoundError:
         pass
@@ -633,6 +640,93 @@ async def _sync_rules(
     return synced, errors
 
 
+def _sync_target(
+    project_root: Path,
+    installed: InstalledTarget,
+    *,
+    force: bool,
+) -> tuple[str | None, str | None]:
+    """Reconcile a single target against its locked TOML, vendoring it to disk.
+
+    Writes the locked content to ``.aim/targets/<name>.toml`` with a drift guard.
+
+    Returns:
+        A tuple of (synced qualified name or None, error string or None).
+
+    Raises:
+        SyncDriftError: The target was edited since install and `force` is False.
+    """
+    name = installed.qualified_name.split("/", 1)[-1]
+    rel = f".aim/targets/{name}.toml"
+    target = paths.safe_project_path(project_root, rel)
+    if target is None:
+        return None, f"{installed.qualified_name}: target path escapes project: {rel}"
+
+    try:
+        expected_content = git.get_backend().cat_file(
+            repos.clone_dir(installed.repo_alias), installed.current.sha, installed.source_path
+        )
+    except Exception as exc:
+        return (
+            None,
+            f"{installed.qualified_name}: could not read source at "
+            f"{installed.current.sha[:12]}: {exc}",
+        )
+
+    expected_hash = hashing.hash_text(expected_content)
+
+    if target.exists() and installed.content_hash is not None:
+        current_hash = hashing.hash_text(target.read_text(encoding="utf-8"))
+        if current_hash == installed.content_hash:
+            return installed.qualified_name, None
+        if not force:
+            raise SyncDriftError(
+                f"{installed.qualified_name}: {rel} edited since install; pass --force to overwrite"
+            )
+
+    try:
+        target_install._gate_target(project_root, installed.qualified_name, expected_content)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(expected_content, encoding="utf-8")
+    except Exception as exc:
+        return None, f"{installed.qualified_name}: failed to write {target}: {exc}"
+
+    installed.content_hash = expected_hash
+    return installed.qualified_name, None
+
+
+async def _sync_targets(
+    project_root: Path,
+    target_list: list[InstalledTarget],
+    *,
+    force: bool,
+    callback: Callable[[str, str, str], object] | None,
+) -> tuple[list[str], list[str]]:
+    """Reconcile all locked targets concurrently."""
+    if not target_list:
+        return [], []
+
+    async def _one(
+        target: InstalledTarget, cb: Callable[[str, str, str], object] | None
+    ) -> tuple[str | None, str | None]:
+        """Reconcile one target off-thread and emit its progress notifications."""
+        _notify(cb, "target", target.qualified_name, "syncing")
+        try:
+            synced, error = await asyncio.to_thread(_sync_target, project_root, target, force=force)
+        except SyncDriftError as exc:
+            return None, str(exc)
+        if error:
+            _notify(cb, "target", target.qualified_name, "error")
+        else:
+            _notify(cb, "target", target.qualified_name, "ok")
+        return synced, error
+
+    results = await asyncio.gather(*(_one(t, callback) for t in target_list))
+    synced = [r[0] for r in results if r[0] is not None]
+    errors = [r[1] for r in results if r[1] is not None]
+    return synced, errors
+
+
 def _sync_mcp(
     project_root: Path,
     installed: InstalledMcpServer,
@@ -867,6 +961,14 @@ async def run(options: SyncOptions) -> SyncResult:
     )
     result.synced_mcp = mcps_synced
 
+    # Targets must be vendored BEFORE plugins: plugin reconciliation resolves each
+    # plugin's kind spec from `.aim/targets` on disk, so the target files have to
+    # exist first.
+    targets_synced, target_errors = await _sync_targets(
+        project_root, m.targets, force=options.force, callback=options.progress_callback
+    )
+    result.synced_targets = targets_synced
+
     plugins_synced, plugin_errors = await _sync_plugins(
         project_root, m.plugins, force=options.force, callback=options.progress_callback
     )
@@ -886,7 +988,13 @@ async def run(options: SyncOptions) -> SyncResult:
     manifest.save(project_root, m)
 
     all_errors = (
-        result.repo_errors + rule_errors + skill_errors + agent_errors + mcp_errors + plugin_errors
+        result.repo_errors
+        + rule_errors
+        + skill_errors
+        + agent_errors
+        + mcp_errors
+        + target_errors
+        + plugin_errors
     )
     if all_errors:
         # Partial state was already saved above, so a re-run resumes progress.

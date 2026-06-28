@@ -240,6 +240,35 @@ def test_plugin_bundled_artifacts_not_indexed(home: Path, tmp_path: Path) -> Non
     assert "inner" not in names  # bundled in the 'bundler' plugin
 
 
+def test_repo_root_plugin_discovered(home: Path, tmp_path: Path) -> None:
+    # A single-plugin repo (the superpowers shape): a root marketplace whose only
+    # plugin has source "./", i.e. the whole repo IS the plugin. It must index, and
+    # its bundled skills must NOT surface standalone.
+    from aim.core import skills
+
+    marketplace = {
+        "name": "superpowers-dev",
+        "plugins": [{"name": "superpowers", "source": "./", "version": "6.0.3"}],
+    }
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            ".claude-plugin/plugin.json": json.dumps({"name": "superpowers", "version": "6.0.3"}),
+            "skills/tdd/SKILL.md": "# tdd\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+
+    rows = plugins.list_plugins()
+    assert [r.plugin_name for r in rows] == ["superpowers"]
+    assert rows[0].source_path == ""  # repo root
+    assert rows[0].version == "6.0.3"
+    assert rows[0].marketplace_name == "superpowers-dev"
+    # The repo's own skill is bundled in the whole-repo plugin, not standalone.
+    assert "tdd" not in {r.skill_name for r in skills.list_skills()}
+
+
 def test_plugin_version_from_plugin_json(home: Path, tmp_path: Path) -> None:
     # The plugin's own plugin.json version is the source of truth; the marketplace
     # entry's version is only a fallback.

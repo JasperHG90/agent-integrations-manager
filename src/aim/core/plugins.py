@@ -92,8 +92,12 @@ def owned_dir_prefixes(repo_alias: str, repo_dir: Path, sha: str, tree: list[str
 
 
 def is_plugin_owned(path: str, prefixes: set[str]) -> bool:
-    """True if a repo-relative path lives inside one of the plugin source dirs."""
-    return any(path == d or path.startswith(f"{d}/") for d in prefixes)
+    """True if a repo-relative path lives inside one of the plugin source dirs.
+
+    An empty prefix is a whole-repo plugin (``source: "./"``): it owns every path,
+    so the repo's skills/agents/rules don't also surface as standalone artifacts.
+    """
+    return any(d == "" or path == d or path.startswith(f"{d}/") for d in prefixes)
 
 
 def _discover_in_repo(repo_alias: str, kinds: dict[str, plugin_kinds.PluginKind]) -> IndexResult:
@@ -254,7 +258,11 @@ def read_plugin_content(
     repo_dir = repos.clone_dir(row.repo_alias)
     backend = git.get_backend()
     if row.flavor == "claude":
-        manifest_path = f"{row.source_path}/.claude-plugin/plugin.json"
+        manifest_path = (
+            f"{row.source_path}/.claude-plugin/plugin.json"
+            if row.source_path
+            else ".claude-plugin/plugin.json"
+        )
         try:
             return backend.cat_file(repo_dir, row.indexed_at_sha, manifest_path)
         except git.GitError:

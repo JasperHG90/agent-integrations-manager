@@ -47,12 +47,14 @@ from aim.core.models import (
     DeclaredPlugin,
     DeclaredRule,
     DeclaredSkill,
+    DeclaredTarget,
     InstalledAgent,
     InstalledArchetype,
     InstalledMcpServer,
     InstalledPlugin,
     InstalledRule,
     InstalledSkill,
+    InstalledTarget,
     Manifest,
     ProjectDeclarations,
     RenderRule,
@@ -85,6 +87,7 @@ class LockResult:
     locked_mcp: list[str] = field(default_factory=list)
     locked_rules: list[str] = field(default_factory=list)
     locked_plugins: list[str] = field(default_factory=list)
+    locked_targets: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     unchanged: bool = False
@@ -613,6 +616,94 @@ async def _lock_rules(
     return locked, errors
 
 
+def _read_target_at_sha(target: DeclaredTarget, sha: str) -> str:
+    """Read a target's TOML text at a given SHA."""
+    repo_dir = repos.clone_dir(target.repo_alias)
+    return git.get_backend().cat_file(repo_dir, sha, target.source_path)
+
+
+def _lock_target(
+    target: DeclaredTarget, cached: InstalledTarget | None = None
+) -> tuple[InstalledTarget | None, str | None]:
+    """Lock a single declared target to a concrete InstalledTarget.
+
+    Uses the same resolver as `target add`/`install` (last commit touching the
+    file + ancestor tag) so the lock SHA matches the install SHA. Reuses the
+    cached content hash when the resolved SHA and source path are unchanged.
+
+    Args:
+        target: Declared target to resolve and hash.
+        cached: Prior installed target from an existing lockfile, if any.
+
+    Returns:
+        An `(InstalledTarget, None)` pair on success, or `(None, error message)`.
+    """
+    try:
+        version = install.resolve_install_version(
+            target.repo_alias,
+            target.source_path,
+            track=target.track,
+            pin=target.pin,
+            artifact_name=Path(target.source_path).name,
+        )
+        if (
+            cached is not None
+            and cached.current.sha == version.sha
+            and cached.source_path == target.source_path
+        ):
+            content_hash = cached.content_hash
+        else:
+            content = _read_target_at_sha(target, version.sha)
+            content_hash = hashing.hash_text(content)
+    except Exception as exc:
+        return None, f"{target.qualified_name}: {exc}"
+    installed = InstalledTarget(
+        qualified_name=target.qualified_name,
+        repo_alias=target.repo_alias,
+        repo_url=repos.get(target.repo_alias).url,
+        source_path=target.source_path,
+        current=version,
+        content_hash=content_hash,
+        pin=target.pin,
+        track=target.track,
+        risk_acknowledged=target.risk_acknowledged,
+    )
+    return installed, None
+
+
+async def _lock_targets(
+    targets: list[DeclaredTarget],
+    callback: Callable[[str, str, str], object] | None,
+    cached_by_name: dict[str, InstalledTarget] | None = None,
+) -> tuple[list[InstalledTarget], list[str]]:
+    """Lock all declared targets concurrently, reporting progress per target.
+
+    Returns:
+        A `(locked targets, error messages)` pair.
+    """
+    if not targets:
+        return [], []
+
+    lookup = cached_by_name or {}
+
+    async def _one(target: DeclaredTarget) -> tuple[InstalledTarget | None, str | None]:
+        """Lock one target off-thread and emit progress notifications."""
+        _notify(callback, "target", target.qualified_name, "locking")
+        installed, error = await asyncio.to_thread(
+            _lock_target, target, lookup.get(target.qualified_name)
+        )
+        if error:
+            _notify(callback, "target", target.qualified_name, "error")
+        else:
+            _notify(callback, "target", target.qualified_name, "ok")
+        return installed, error
+
+    results = await asyncio.gather(*(_one(t) for t in targets))
+    locked = [r[0] for r in results if r[0] is not None]
+    errors = [r[1] for r in results if r[1] is not None]
+    return locked, errors
+
+
 def _resolve_plugin_version(plugin: DeclaredPlugin) -> SkillVersion:
     """Resolve a declared plugin's pin/track to a concrete SkillVersion.
 
@@ -896,6 +987,21 @@ def _rule_key(r: InstalledRule) -> tuple:
     )
 
 
+def _target_key(t: InstalledTarget) -> tuple:
+    """Build the identity tuple used to detect whether a locked target changed."""
+    return (
+        t.qualified_name,
+        t.repo_alias,
+        t.repo_url,
+        t.source_path,
+        t.content_hash,
+        t.current.sha,
+        t.current.tag,
+        t.pin,
+        t.track,
+    )
+
+
 def _mcp_key(m: InstalledMcpServer) -> tuple:
     """Build the identity tuple used to detect whether a locked MCP server changed."""
     return (
@@ -978,6 +1084,8 @@ def _lockfile_unchanged(existing: Manifest, new: Manifest) -> bool:
         return False
     if [_plugin_key(p) for p in existing.plugins] != [_plugin_key(p) for p in new.plugins]:
         return False
+    if [_target_key(t) for t in existing.targets] != [_target_key(t) for t in new.targets]:
+        return False
     return True
 
 
@@ -1029,6 +1137,13 @@ def _preserve_unchanged_metadata(existing: Manifest | None, new: Manifest) -> No
         if prev_plugin is not None:
             p.current = prev_plugin.current
             p.history = list(prev_plugin.history)
+
+    target_by_key = {_target_key(t): t for t in existing.targets}
+    for t in new.targets:
+        prev_target = target_by_key.get(_target_key(t))
+        if prev_target is not None:
+            t.current = prev_target.current
+            t.history = list(prev_target.history)
 
     if (
         existing.archetype is not None
@@ -1120,6 +1235,11 @@ async def run(options: LockOptions) -> LockResult:
         if options.force
         else {(p.qualified_name, p.flavor): p for p in (existing.plugins if existing else [])}
     )
+    cached_targets: dict[str, InstalledTarget] = (
+        {}
+        if options.force
+        else {t.qualified_name: t for t in (existing.targets if existing else [])}
+    )
 
     _notify(options.progress_callback, "repos", "all", "locking")
     result.errors = await _ensure_repos(decl, options.allow_insecure, options.no_index)
@@ -1132,6 +1252,7 @@ async def run(options: LockOptions) -> LockResult:
     mcps_task = _lock_mcps(decl.mcp_servers, options.progress_callback)
     rules_task = _lock_rules(decl.rules, options.progress_callback, cached_rules)
     plugins_task = _lock_plugins(decl.plugins, options.progress_callback, cached_plugins)
+    targets_task = _lock_targets(decl.targets, options.progress_callback, cached_targets)
 
     (
         (skills_locked, skill_errors),
@@ -1139,13 +1260,17 @@ async def run(options: LockOptions) -> LockResult:
         (mcps_locked, mcp_errors),
         (rules_locked, rule_errors),
         (plugins_locked, plugin_errors),
-    ) = await asyncio.gather(skills_task, agents_task, mcps_task, rules_task, plugins_task)
+        (targets_locked, target_errors),
+    ) = await asyncio.gather(
+        skills_task, agents_task, mcps_task, rules_task, plugins_task, targets_task
+    )
 
     result.locked_skills = [s.qualified_name for s in skills_locked]
     result.locked_agents = [a.qualified_name for a in agents_locked]
     result.locked_mcp = [m.alias for m in mcps_locked]
     result.locked_rules = [r.qualified_name for r in rules_locked]
     result.locked_plugins = [p.qualified_name for p in plugins_locked]
+    result.locked_targets = [t.qualified_name for t in targets_locked]
 
     archetype_locked: InstalledArchetype | None = None
     archetype_errors: list[str] = []
@@ -1176,6 +1301,7 @@ async def run(options: LockOptions) -> LockResult:
         agents=agents_locked,
         mcp_servers=mcps_locked,
         plugins=plugins_locked,
+        targets=targets_locked,
         policy_repo=resolved_policy.repo,
         policy_ref=(
             policy.org_snapshot_sha(resolved_policy.repo)
@@ -1199,6 +1325,7 @@ async def run(options: LockOptions) -> LockResult:
         + mcp_errors
         + rule_errors
         + plugin_errors
+        + target_errors
         + archetype_errors
     )
     if (

@@ -164,6 +164,7 @@ A registered repo can expose skills, agents, and rules in **any** location. `aim
 - Any `AGENT.md` file anywhere in the repo, plus flat `<name>.md` files inside any `agents/` directory. The agent name follows the same rules as skills.
 - Any `.md` file whose stem is a valid rule name anywhere in the repo. Common documentation names like `README.md` or `license.md` are ignored.
 - Any `instructions/<name>/` (or `.aim/instructions/<name>/`) directory holding a standard instruction file, surfaced as a selectable project-instruction archetype. Unlike the others, archetypes are never discovered at the repo root.
+- Any `targets/<name>.toml` that validates as a plugin-target spec, surfaced as an installable target named by the spec's `name` field (see [Sharing plugin targets](#sharing-plugin-targets-across-teams-and-projects)).
 
 If the same name appears in multiple places, the shallower path wins. At the same depth, canonical `skills/`, `agents/`, and `rules/` prefixes win over `.claude/` and arbitrary paths, so existing convention-based repos keep working. Ties otherwise break by lexicographic path. Artifacts are referenced everywhere as `<repo_alias>/<name>`. Repos with no discoverable artifacts are rejected on `repo add` unless you pass `--allow-empty`.
 
@@ -193,7 +194,20 @@ vendor_into = ".opencode/plugins/{name}"  # destination; only {name}/{repo} are 
 # set = { "plugins.{name}" = true }
 ```
 
-aim discovers any directory containing that metadata file, reads the plugin name from it, and vendors the whole directory (context files, hooks, and MCP config included), SHA-pinned in `aim.lock.toml`. A directory without metadata is not a discoverable plugin. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/targets/opencode.toml` for the working showcase.
+aim discovers any directory containing that metadata file, reads the plugin name from it, and vendors the whole directory (context files, hooks, and MCP config included), SHA-pinned in `aim.lock.toml`. A directory without metadata is not a discoverable plugin. A declarative kind is pure data, never executed, so a repo or teammate can ship one safely. Only the built-in kinds are code. See `examples/targets/opencode.toml` for the working showcase. As an added safeguard, `vendor_into` and `register.config.file` are validated when the spec is parsed: an absolute path or one containing `..` is rejected, on top of the install-time clamp to the project root.
+
+### Sharing plugin targets across teams and projects
+
+Dropping a TOML in `.aim/targets/` works for one project, but a target is also a **first-class, repo-sourced artifact** so a team can share one. Publish targets as `targets/<name>.toml` in any registered repo, then install one into a project:
+
+```sh
+aim repo add myorg https://github.com/myorg/aim-targets
+aim target list                    # browse discoverable targets
+aim target view myorg/opencode     # print the TOML before installing
+aim target add myorg/opencode      # vendor into .aim/targets/ + pin in aim.lock.toml
+```
+
+`aim target add` writes the spec to `.aim/targets/<name>.toml` (the directory aim already loads kinds from, so the target is active immediately) and records it in `aim.lock.toml`, so `aim sync` reproduces it on a fresh clone and `aim target update`/`rollback` manage versions like any other artifact. The TUI exposes the same browser under **Targets** (`E`) on the main menu. Targets are configuration, not agent-facing instructions, so they are not risk-scanned. Hand-dropped `.aim/targets/*.toml` keep working alongside vendored ones.
 
 ### Versioning
 

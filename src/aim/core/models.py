@@ -96,6 +96,18 @@ class RuleIndex(SQLModel, table=True):  # type: ignore[call-arg]
     indexed_at_sha: str
 
 
+class TargetIndex(SQLModel, table=True):  # type: ignore[call-arg]
+    """Discovered plugin target (a declarative kind TOML) within a registered repo."""
+
+    qualified_name: str = SQLField(primary_key=True)  # "<alias>/<target_name>"
+    repo_alias: str = SQLField(index=True)
+    target_name: str = SQLField(index=True)  # the KindSpec.name declared in the TOML
+    target_toml_path: str  # path of the .toml file relative to repo root
+    title: str | None = None
+    description: str | None = None
+    indexed_at_sha: str
+
+
 class TemplateIndex(SQLModel, table=True):  # type: ignore[call-arg]
     """A discovered shareable project template (profile TOML) within a repo.
 
@@ -185,7 +197,7 @@ class PluginIndex(SQLModel, table=True):  # type: ignore[call-arg]
         return self.indexed_at_sha[:7]
 
 
-CURRENT_DECLARATIONS_VERSION = 10  # v10 makes on-disk repo identity source-agnostic
+CURRENT_DECLARATIONS_VERSION = 11  # v11 adds the optional [[target]] surface
 
 
 class DeclaredRepo(BaseModel):
@@ -242,6 +254,21 @@ class DeclaredRule(BaseModel):
     pin: str | None = None
     # --override-risk; lets sync re-vendor without re-blocking. Sticky across
     # updates like pin/track, so a SHA bump does not re-require acknowledgment.
+    risk_acknowledged: bool = False
+
+
+class DeclaredTarget(BaseModel):
+    """Declare a plugin target (a kind TOML) to install in `aim.toml`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str
+    repo_alias: str
+    source_path: str  # path of the target .toml file relative to repo root
+    track: str | None = None
+    pin: str | None = None
+    # Carried for parity with other artifacts; targets are not risk-scanned, so it
+    # is effectively always False.
     risk_acknowledged: bool = False
 
 
@@ -350,9 +377,10 @@ class ProjectDeclarations(BaseModel):
     agents: list[DeclaredAgent] = Field(default_factory=list)
     mcp_servers: list[DeclaredMcpServer] = Field(default_factory=list)
     plugins: list[DeclaredPlugin] = Field(default_factory=list)
+    targets: list[DeclaredTarget] = Field(default_factory=list)
 
 
-CURRENT_MANIFEST_VERSION = 16  # v16 makes on-disk repo identity source-agnostic
+CURRENT_MANIFEST_VERSION = 17  # v17 adds installed plugin targets
 HISTORY_CAP = 10
 
 
@@ -504,6 +532,35 @@ class InstalledRule(BaseModel):
             del self.history[HISTORY_CAP:]
 
 
+class InstalledTarget(BaseModel):
+    """An installed plugin target (a kind TOML), mirroring InstalledRule.
+
+    A target is a single .toml file vendored into the project's ``.aim/targets/``
+    directory, so like a rule it has no per-target render path. It is config (not
+    agent-facing instructions), so it is not risk-scanned.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    qualified_name: str  # "<repo_alias>/<target_name>" at install time
+    repo_alias: str  # the local alias at install time
+    repo_url: str
+    source_path: str  # path of the target .toml file inside the source repo
+    current: SkillVersion
+    history: list[SkillVersion] = Field(default_factory=list)
+    content_hash: str | None = None  # sha256 of installed file text (drift detection)
+    pin: str | None = None
+    track: str | None = None
+    risk_acknowledged: bool = False
+
+    def push_history(self, new_current: SkillVersion) -> None:
+        """Promote new_current to current, pushing the old one onto capped history."""
+        self.history.insert(0, self.current)
+        self.current = new_current
+        if len(self.history) > HISTORY_CAP:
+            del self.history[HISTORY_CAP:]
+
+
 class InstalledPlugin(BaseModel):
     """An installed plugin recorded in `aim.lock.toml`.
 
@@ -593,6 +650,7 @@ class Manifest(BaseModel):
     mcp_servers: list[InstalledMcpServer] = Field(default_factory=list)
     rules: list[InstalledRule] = Field(default_factory=list)
     plugins: list[InstalledPlugin] = Field(default_factory=list)
+    targets: list[InstalledTarget] = Field(default_factory=list)
     managed_files: list[str] = Field(default_factory=list)
     # Hash of the last-written body of each managed region inside AGENTS.md (and
     # symlinks). Drift means the user edited inside markers — warn before rewrite.

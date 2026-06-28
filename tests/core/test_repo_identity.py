@@ -433,7 +433,7 @@ def test_manifest_migrate_v15_to_id_form(home: Path, project_root: Path) -> None
     from aim.core.manifest_migrate import migrate
 
     migrated = migrate(raw)
-    assert migrated["manifest_version"] == 16
+    assert migrated["manifest_version"] == 17
     assert migrated["repos"] == {repo_id: policy.normalize_repo_url(ssh)}
     skill = migrated["skills"][0]
     assert skill["repo_alias"] == repo_id

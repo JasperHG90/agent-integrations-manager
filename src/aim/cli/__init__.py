@@ -48,6 +48,7 @@ LAZY_SUBCOMMANDS.update(
         "policy": "aim.cli.commands.policy:app",
         "mcp": "aim.cli.commands.mcp:app",
         "plugin": "aim.cli.commands.plugin:app",
+        "target": "aim.cli.commands.target:app",
         # Back-compat aliases; dispatch but hidden from --help.
         "profile": "aim.cli.commands.profile:app",
         "instructions": "aim.cli.commands.instructions:app",
@@ -465,6 +466,8 @@ def lock_cmd(
         typer.echo(f"locked mcp {alias}")
     for qn in result.locked_plugins:
         typer.echo(f"locked plugin {qn}")
+    for qn in result.locked_targets:
+        typer.echo(f"locked target {qn}")
     for warn in result.warnings:
         typer.echo(f"warning: {warn}", err=True)
 
@@ -514,6 +517,8 @@ def sync_cmd(
         typer.echo(f"synced mcp {alias}")
     for qn in result.synced_plugins:
         typer.echo(f"synced plugin {qn}")
+    for qn in result.synced_targets:
+        typer.echo(f"synced target {qn}")
     for warn in result.drift_warnings:
         typer.echo(f"warning: {warn}", err=True)
 

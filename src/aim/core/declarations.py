@@ -105,6 +105,12 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
         # teammates' independent first-run rewrites converge byte-for-byte.
         _rekey_v9_to_v10_id_form(raw)
         raw["manifest_version"] = 10
+        version = 10
+    if version < 11:
+        # v11 adds the optional [[target]] surface. Additive.
+        raw.setdefault("targets", [])
+        raw["manifest_version"] = 11
+        version = 11
     return raw
 
 
@@ -123,7 +129,7 @@ def _rekey_v9_to_v10_id_form(raw: dict[str, Any]) -> None:
         for alias, url in repos_map.items()
         if alias in alias_to_id
     }
-    for key in ("skills", "agents", "rules", "plugins"):
+    for key in ("skills", "agents", "rules", "plugins", "targets"):
         for entry in raw.get(key, []) or []:
             _rekey_artifact_to_id(entry, alias_to_id)
     archetype = raw.get("archetype")
@@ -155,6 +161,7 @@ _TOML_READ_MAP = {
     "mcp_server": "mcp_servers",
     "rule": "rules",
     "plugin": "plugins",
+    "target": "targets",
 }
 _TOML_WRITE_MAP = {v: k for k, v in _TOML_READ_MAP.items()}
 
@@ -232,7 +239,7 @@ def _from_disk(raw: dict[str, Any]) -> dict[str, Any]:
     disk_repos = raw.get("repos", {}) or {}
     id_to_alias, alias_to_url = _resolve_disk_repos(disk_repos)
     raw["repos"] = dict(sorted(alias_to_url.items()))
-    for key in ("skills", "agents", "rules", "plugins"):
+    for key in ("skills", "agents", "rules", "plugins", "targets"):
         for entry in raw.get(key, []) or []:
             _rekey_artifact_from_id(entry, id_to_alias)
     archetype = raw.get("archetype")
@@ -342,7 +349,7 @@ def _to_disk(decl: ProjectDeclarations) -> dict[str, Any]:
             for alias, url in alias_repos.items()
         )
     }
-    for key in ("skills", "agents", "rules", "plugins"):
+    for key in ("skills", "agents", "rules", "plugins", "targets"):
         for entry in data.get(key, []) or []:
             _rekey_artifact_to_id(entry, alias_to_id)
     archetype = data.get("archetype")
@@ -492,6 +499,7 @@ def _prune_repo_if_unused(decl: ProjectDeclarations, alias: str) -> None:
         or any(a.repo_alias == alias for a in decl.agents)
         or any(r.repo_alias == alias for r in decl.rules)
         or any(p.repo_alias == alias for p in decl.plugins)
+        or any(t.repo_alias == alias for t in decl.targets)
         or decl.archetype.repo_alias == alias
     )
     if not used:
@@ -619,6 +627,44 @@ def _remove_rule(project_root: Path, qualified_name: str) -> None:
     """
     decl = load_or_default(project_root)
     decl.rules = [r for r in decl.rules if r.qualified_name != qualified_name]
+    _prune_repo_if_unused(decl, qualified_name.split("/", 1)[0])
+    save(project_root, decl)
+
+
+def _update_target(project_root: Path, installed: object) -> None:
+    """Mirror an installed plugin target into the declarations file.
+
+    Args:
+        project_root: Directory whose `aim.toml` should be updated.
+        installed: An `InstalledTarget` describing the target to record.
+    """
+    from aim.core.models import DeclaredTarget, InstalledTarget
+
+    assert isinstance(installed, InstalledTarget)
+    decl = load_or_default(project_root)
+    declared = DeclaredTarget(
+        qualified_name=installed.qualified_name,
+        repo_alias=installed.repo_alias,
+        source_path=installed.source_path,
+        pin=installed.pin,
+        track=installed.track,
+        risk_acknowledged=installed.risk_acknowledged,
+    )
+    decl.targets = [t for t in decl.targets if t.qualified_name != installed.qualified_name]
+    decl.targets.append(declared)
+    decl.repos[installed.repo_alias] = installed.repo_url
+    save(project_root, decl)
+
+
+def _remove_target(project_root: Path, qualified_name: str) -> None:
+    """Drop a declared target and prune its repo binding if now unused.
+
+    Args:
+        project_root: Directory whose `aim.toml` should be updated.
+        qualified_name: The `repo_alias/name` of the target to remove.
+    """
+    decl = load_or_default(project_root)
+    decl.targets = [t for t in decl.targets if t.qualified_name != qualified_name]
     _prune_repo_if_unused(decl, qualified_name.split("/", 1)[0])
     save(project_root, decl)
 

@@ -1,0 +1,206 @@
+"""Targets browser: list/search across all indexed plugin targets, install them."""
+
+from __future__ import annotations
+
+from textual.app import ComposeResult
+from textual.screen import Screen
+from textual.widgets import DataTable, Input, Static
+
+from aim.core import git, manifest, repos, target_install, targets
+from aim.tui import errors as tui_errors
+from aim.tui.modals.busy import BusyModal
+from aim.tui.modals.repo_filter import RepoFilterModal, RepoFilterPick
+from aim.tui.modals.skill_view import SkillViewModal
+from aim.tui.modals.target_install import TargetInstallConfig, TargetInstallModal
+
+_TARGET_DEPLOY_ERRORS: tuple[type[BaseException], ...] = (  # noqa: RUF005
+    target_install.TargetNotIndexedError,
+    target_install.TargetManifestPathEscapeError,
+    manifest.ManifestNotFoundError,
+    git.GitError,
+) + tui_errors.GOVERNANCE_ERRORS
+
+
+class TargetsScreen(Screen[None]):
+    """Browse, search, view, and install indexed plugin targets into a project."""
+
+    BINDINGS = [
+        ("escape", "app.pop_screen", "Back"),
+        ("b", "app.pop_screen", "Back"),
+        ("slash", "focus_search", "Search"),
+        ("f", "pick_repo_filter", "Filter by repo"),
+        ("enter", "view_current", "View"),
+        ("v", "view_current", "View"),
+        ("i", "install_current", "Install"),
+        ("q", "app.quit", "Quit"),
+    ]
+
+    def __init__(self) -> None:
+        """Initialize the screen with no active repo filter or pending install."""
+        super().__init__()
+        self._repo_filter: str | None = None
+        self._installing: tuple[str, TargetInstallConfig] | None = None
+        self._busy: BusyModal | None = None
+
+    def compose(self) -> ComposeResult:
+        """Yield the title, search bar, targets table, status line, and hint."""
+        yield Static("Plugin Targets", id="title", markup=False)
+        yield Input(placeholder="search…", id="search-bar")
+        yield DataTable(id="targets-table", cursor_type="row")
+        yield Static("", id="status", markup=False)
+        yield Static(
+            "[/] Search  [f] Repo filter  [enter/v] View  [i] Install  [b] Back  [q] Quit",
+            id="hint",
+            markup=False,
+        )
+
+    def on_mount(self) -> None:
+        """Set up table columns, populate all targets, and focus the table."""
+        table = self.query_one(DataTable)
+        table.add_columns("qualified name", "repo", "description")
+        self._populate("")
+        table.focus()
+
+    def on_screen_resume(self) -> None:
+        """Repopulate the table using the current search query when resumed."""
+        query = self.query_one("#search-bar", Input).value
+        self._populate(query)
+
+    def _populate(self, query: str) -> None:
+        """Refresh the table with targets matching the query and repo filter."""
+        table = self.query_one(DataTable)
+        selected = self._selected()
+        table.clear()
+        rows = targets.search(query) if query else targets.list_targets()
+        if self._repo_filter is not None:
+            rows = [r for r in rows if r.repo_alias == self._repo_filter]
+        filter_label = f" [repo={self._repo_filter}]" if self._repo_filter else ""
+        if not rows:
+            if not query and self._repo_filter is None:
+                self._status("no targets indexed — add a repo that ships targets/*.toml")
+            else:
+                bits = []
+                if query:
+                    bits.append(f"{query!r}")
+                if self._repo_filter:
+                    bits.append(f"repo={self._repo_filter}")
+                self._status("no matches for " + " ".join(bits))
+            return
+        for r in rows:
+            table.add_row(
+                r.qualified_name,
+                r.repo_alias,
+                (r.description or "")[:60],
+                key=r.qualified_name,
+            )
+        if selected is not None:
+            try:
+                table.move_cursor(row=table.get_row_index(selected), animate=False)
+            except Exception:
+                pass
+        self._status(f"{len(rows)} target(s){filter_label}")
+
+    def action_pick_repo_filter(self) -> None:
+        """Open a picker to filter by a single repo (or clear the filter)."""
+        aliases = [r.alias for r in repos.list_repos()]
+        if not aliases:
+            self.app.notify("no repos to filter by", severity="warning")
+            return
+        self.app.push_screen(RepoFilterModal(aliases, self._repo_filter), self._on_repo_filter)
+
+    def _on_repo_filter(self, pick: RepoFilterPick | None) -> None:
+        """Apply the chosen repo filter, or do nothing when cancelled."""
+        if pick is None:
+            return
+        self._repo_filter = pick.alias
+        self._populate(self.query_one("#search-bar", Input).value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Repopulate the table as the user types in the search bar."""
+        if event.input.id == "search-bar":
+            self._populate(event.value)
+
+    def action_focus_search(self) -> None:
+        """Move keyboard focus to the search bar."""
+        self.query_one("#search-bar", Input).focus()
+
+    def _selected(self) -> str | None:
+        """Return the qualified name of the highlighted row, or None if empty."""
+        table = self.query_one(DataTable)
+        if table.row_count == 0:
+            return None
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        return str(row_key.value) if row_key and row_key.value is not None else None
+
+    def action_view_current(self) -> None:
+        """Open the selected target's TOML in a read-only view modal."""
+        qn = self._selected()
+        if qn is None:
+            if self.query_one(DataTable).row_count == 0:
+                self.app.notify("no targets indexed — add a repo first", severity="warning")
+            else:
+                self._status("no row selected")
+            return
+        try:
+            content = targets.read_target_content(qn)
+        except targets.TargetNotIndexedError as exc:
+            self.app.notify(f"view failed: {exc}", severity="error")
+            return
+        self.app.push_screen(SkillViewModal(qn, content))
+
+    def action_install_current(self) -> None:
+        """Prompt for install config for the selected target, then install it."""
+        qn = self._selected()
+        if qn is None:
+            if self.query_one(DataTable).row_count == 0:
+                self.app.notify("no targets indexed — add a repo first", severity="warning")
+            else:
+                self._status("no row selected")
+            return
+        self.app.push_screen(
+            TargetInstallModal(qn),
+            lambda cfg: self._install(qn, cfg),
+        )
+
+    def _install(self, qualified_name: str, cfg: TargetInstallConfig | None) -> None:
+        """Kick off a threaded install for a target, or no-op if config is None."""
+        if cfg is None:
+            return
+        self._installing = (qualified_name, cfg)
+        self._status(f"installing {qualified_name}…")
+        busy = BusyModal(f"Installing {qualified_name}…")
+        self._busy = busy
+        self.app.push_screen(busy)
+        self.run_worker(self._do_install_thread, exclusive=True, thread=True)
+
+    def _do_install_thread(self) -> None:
+        """Run the pending install on a worker thread and report results to the UI."""
+        if self._installing is None:
+            return
+        qualified_name, cfg = self._installing
+        try:
+            result = target_install.install(
+                cfg.project_root, qualified_name, pin=cfg.pin, track=cfg.track
+            )
+        except _TARGET_DEPLOY_ERRORS as exc:
+            self.app.call_from_thread(self.app.notify, f"install failed: {exc}", severity="error")
+            self.app.call_from_thread(self._status, f"install failed: {exc}")
+            return
+        finally:
+            self.app.call_from_thread(self._dismiss_busy)
+        self.app.call_from_thread(
+            self.app.notify,
+            f"installed {qualified_name} {result.current.identifier()}",
+            title="Target installed",
+        )
+        self.app.call_from_thread(self._status, f"installed {qualified_name}")
+
+    def _dismiss_busy(self) -> None:
+        """Close the loading overlay if one is showing. Runs on the UI thread."""
+        if self._busy is not None:
+            self._busy.dismiss()
+            self._busy = None
+
+    def _status(self, msg: str) -> None:
+        """Update the status line with the given message."""
+        self.query_one("#status", Static).update(msg)

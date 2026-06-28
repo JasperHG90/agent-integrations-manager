@@ -652,8 +652,9 @@ def test_validate_remote_rejects_insecure_http(home: Path, project_root: Path) -
 
 def test_manifest_migration_adds_policy_fields() -> None:
     out = manifest_migrate.migrate({"manifest_version": 8, "skills": [], "rules": []})
-    assert out["manifest_version"] == 16
+    assert out["manifest_version"] == 17
     assert out["plugins"] == []
+    assert out["targets"] == []
     assert out["repos"] == {}
     assert "instruction_template" not in out
     assert "instruction_archetype" not in out
@@ -674,11 +675,12 @@ def test_declarations_migration_v3_to_v4_adds_policy(home: Path, project_root: P
         tomli_w.dumps({"manifest_version": 3, "instruction_template": "default"})
     )
     decl = declarations.load(project_root)
-    assert decl.manifest_version == 10
+    assert decl.manifest_version == 11
     assert decl.policy == {}
     assert decl.archetype.is_builtin
     assert decl.template is None
     assert decl.plugins == []
+    assert decl.targets == []
 
 
 def test_lockfile_preserves_policy_fields(home: Path, project_root: Path) -> None:

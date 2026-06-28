@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aim.core import git, paths, policy, settings_json, validation
 from aim.core.models import InstalledPlugin, Manifest
@@ -80,7 +80,7 @@ class PluginKind(Protocol):
     name: str
     source_unit: str  # "dir" | "file"
     uses_marketplace: bool  # whether installs record an aim-local marketplace name
-    manifest_filename: str  # the metadata file used for version tracking / tag honesty
+    manifest_filename: str  # manifest path (rel. to source dir) for version tracking / tag honesty
 
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         """Find this kind's plugins in a repo tree (paths from ``git ls-tree``)."""
@@ -119,7 +119,13 @@ def _marketplace_root(manifest_path: str) -> str:
 
 
 def _resolve_plugin_source(root: str, plugin_root: str, source: str) -> str | None:
-    """Resolve a claude plugin entry's local ``source`` to a repo-relative path."""
+    """Resolve a claude plugin entry's local ``source`` to a repo-relative path.
+
+    Returns ``""`` when the source points at the marketplace root itself — a
+    ``"./"`` / ``"."`` source for a marketplace at the repo root means the whole
+    repo is the plugin (the common single-plugin-repo shape). Returns None when
+    the source is absolute or escapes the repo.
+    """
     if source.startswith(("/", "\\")):
         return None  # absolute → reject
     pr = plugin_root.strip()
@@ -133,8 +139,10 @@ def _resolve_plugin_source(root: str, plugin_root: str, source: str) -> str | No
     else:
         rel = source
     rel = rel.strip("/")
-    full = f"{root}/{rel}" if root else rel
-    if not validation.is_safe_repo_path(full) or not full:
+    if rel == ".":
+        rel = ""
+    full = "/".join(p for p in (root, rel) if p)
+    if not validation.is_safe_repo_path(full):
         return None
     return full
 
@@ -156,10 +164,11 @@ def _plugin_json_version(repo_dir: Path, sha: str, source_path: str) -> str | No
     marketplace entry's ``version`` is only a fallback when the plugin.json lacks one.
     """
     backend = git.get_backend()
+    rel = (
+        f"{source_path}/.claude-plugin/plugin.json" if source_path else ".claude-plugin/plugin.json"
+    )
     try:
-        data = json.loads(
-            backend.cat_file(repo_dir, sha, f"{source_path}/.claude-plugin/plugin.json")
-        )
+        data = json.loads(backend.cat_file(repo_dir, sha, rel))
     except (git.GitError, json.JSONDecodeError):
         return None
     version = data.get("version") if isinstance(data, dict) else None
@@ -283,7 +292,10 @@ class ClaudeKind:
     name = "claude"
     source_unit = "dir"
     uses_marketplace = True
-    manifest_filename = "plugin.json"
+    # Path RELATIVE to the plugin's source dir. For a whole-repo plugin
+    # (source_path == "") this is what version-tracking follows, so it must be the
+    # manifest's real nested location, not a bare top-level "plugin.json".
+    manifest_filename = ".claude-plugin/plugin.json"
 
     def executable_surface(self, snap: Path) -> list[str]:
         """Parse a claude plugin dir's bundled plugin.json / hooks.json / .mcp.json and
@@ -500,6 +512,30 @@ class ClaudeKind:
 # --------------------------------------------------------------------------- #
 # External: declarative kinds loaded from TOML
 # --------------------------------------------------------------------------- #
+def _reject_unsafe_rel_path(value: str, *, field: str) -> str:
+    """Reject absolute or parent-escaping path templates in a kind spec.
+
+    A kind controls where bytes get vendored and which client-config files get
+    written. Shared kinds (vendored from a repo) have a wider blast radius than a
+    file a teammate drops in their own ``.aim/targets``, so we clamp the spec at
+    load time in addition to the install-time ``safe_project_path`` guard. The
+    only interpolations are ``{name}``/``{repo}``, both validated to the alias
+    charset (no ``/`` or ``..``), so checking the raw template is sufficient.
+
+    Args:
+        value: The path template (e.g. ``.opencode/plugins/{name}``).
+        field: Human-readable field name, for the error message.
+
+    Raises:
+        ValueError: The template is absolute or contains a ``..`` segment.
+    """
+    if value.startswith(("/", "\\")):
+        raise ValueError(f"{field} must be a relative path, got absolute: {value!r}")
+    if ".." in value.replace("\\", "/").split("/"):
+        raise ValueError(f"{field} must not contain '..' path segments: {value!r}")
+    return value
+
+
 class ManifestSpec(BaseModel):
     """How to find and read a plugin's self-describing metadata file.
 
@@ -521,11 +557,21 @@ class ConfigSpec(BaseModel):
     format: str = "json"
     set: dict[str, object] = Field(default_factory=dict)  # keypath-template -> value-template
 
+    @field_validator("file")
+    @classmethod
+    def _file_is_safe(cls, v: str) -> str:
+        return _reject_unsafe_rel_path(v, field="register.config.file")
+
 
 class RegisterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     vendor_into: str  # literal path template, e.g. ".gemini/extensions/{name}"
     config: list[ConfigSpec] = Field(default_factory=list)
+
+    @field_validator("vendor_into")
+    @classmethod
+    def _vendor_into_is_safe(cls, v: str) -> str:
+        return _reject_unsafe_rel_path(v, field="register.vendor_into")
 
 
 class KindSpec(BaseModel):

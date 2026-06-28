@@ -9,7 +9,6 @@ import pytest
 
 from aim.core import (
     declarations,
-    install,
     lock,
     manifest,
     paths,
@@ -209,6 +208,38 @@ def test_install_root_level_manifest(home: Path, project_root: Path, tmp_path: P
     vendored = project_root / ".opencode" / "plugins" / "agent-memory"
     assert json.loads((vendored / "package.json").read_text())["name"] == "agent-memory"
     assert (vendored / "index.ts").read_text() == "export const plugin = 1\n"
+
+
+def test_install_claude_whole_repo_plugin(home: Path, project_root: Path, tmp_path: Path) -> None:
+    # The superpowers shape: a root marketplace whose only plugin has source "./",
+    # i.e. the whole repo IS the plugin. It must resolve a version (from the nested
+    # .claude-plugin/plugin.json, not a non-existent root plugin.json) and vendor the
+    # whole repo — discovery alone is not enough; install must work end to end.
+    marketplace = {
+        "name": "superpowers-dev",
+        "plugins": [{"name": "superpowers", "source": "./", "version": "6.0.3"}],
+    }
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            ".claude-plugin/plugin.json": json.dumps({"name": "superpowers", "version": "6.0.3"}),
+            "skills/tdd/SKILL.md": "# tdd\n",
+        },
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+
+    installed = plugin_install.install_plugin(project_root, "a/superpowers")
+    assert installed.flavor == "claude"
+    assert installed.source_path == ""
+    assert installed.current.tag is not None or installed.current.sha  # version resolved
+    assert installed.content_hash
+
+    mkt = _mkt()
+    vendored = project_root / ".claude" / "plugins" / mkt / "superpowers"
+    assert (vendored / ".claude-plugin" / "plugin.json").exists()
+    assert (vendored / "skills" / "tdd" / "SKILL.md").exists()  # whole repo vendored
 
 
 def test_discover_and_install_via_project_scoped_target(
@@ -453,14 +484,15 @@ def test_install_unknown_plugin_errors(home: Path, project_root: Path) -> None:
 def test_declarative_vendor_into_escape_blocked(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
-    # A declarative kind is author-controlled data; a vendor_into that escapes the
-    # project root must be refused, not written outside the tree.
+    # A declarative kind whose vendor_into escapes the project root is rejected at
+    # spec-load time (in addition to the install-time safe_project_path clamp), so
+    # it can never be loaded or used to write outside the tree. With no usable kind,
+    # the opencode-only repo exposes nothing discoverable.
     working = git_fixtures.make_source_repo(tmp_path / "src", files=_opencode_pkg())
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     _install_escape_kind()
-    repos.add("a", f"file://{bare}")
-    with pytest.raises(install.ManifestPathEscapeError):
-        plugin_install.install_plugin(project_root, "a/logger")
+    with pytest.raises(repos.RepoHasNoArtifactsError):
+        repos.add("a", f"file://{bare}")
     assert not (project_root.parent / "escape").exists()  # nothing written outside root
 
 

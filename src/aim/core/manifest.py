@@ -26,6 +26,7 @@ _TOML_READ_MAP = {
     "mcp_server": "mcp_servers",
     "rule": "rules",
     "plugin": "plugins",
+    "target": "targets",
 }
 _TOML_WRITE_MAP = {v: k for k, v in _TOML_READ_MAP.items()}
 
@@ -62,7 +63,7 @@ class ManifestNotFoundError(FileNotFoundError):
 
 
 # Artifact lists that carry a (repo_alias, repo_url) pair translated at the boundary.
-_REPO_ARTIFACT_KEYS = ("skills", "agents", "rules", "plugins")
+_REPO_ARTIFACT_KEYS = ("skills", "agents", "rules", "plugins", "targets")
 
 
 def _from_disk(raw: dict[str, Any]) -> dict[str, Any]:
