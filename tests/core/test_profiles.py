@@ -258,6 +258,64 @@ def test_apply_skips_flavorless_ambiguous_plugin(
     assert result.installed_plugins == []
 
 
+def test_apply_refreshes_stale_registered_repo(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # The real-world failure: a repo is already registered but its cached clone is
+    # stale, and the template pins a commit newer than the clone. Apply must refresh
+    # the existing repo so the pinned commit is present — not crash on `git archive`.
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo v1\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    url = f"file://{bare}"
+    repos.add("r", url)  # clones at v1; the clone is now pinned to that commit
+
+    # Advance the remote past the cached clone — the clone is stale until refreshed.
+    new_sha = git_fixtures.add_commit(working, {"skills/foo/SKILL.md": "# foo v2\n"}, "v2")
+    git_fixtures.push_to_bare(working, bare)
+
+    profiles.save(
+        profiles.Profile(
+            name="stale",
+            repos=[profiles.ProfileRepo(alias="r", url=url)],
+            skills=[profiles.ProfileSkill(qualified_name="r/foo", sha=new_sha)],
+        )
+    )
+
+    target = tmp_path / "target"
+    result = profiles.apply("stale", target)
+    assert result.installed_skills == ["r/foo"]
+    # Installed at the post-refresh commit, proving the clone was refreshed.
+    assert (target / ".claude" / "skills" / "foo" / "SKILL.md").read_text() == "# foo v2\n"
+
+
+def test_apply_override_risk_acknowledges_artifacts(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # --override-risk must flow through apply into each install, so a template whose
+    # artifacts trip the risk gate still applies (the bundle is user-vetted).
+    from aim.core import manifest
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    url = f"file://{bare}"
+    repos.add("r", url)
+    profiles.save(
+        profiles.Profile(
+            name="t",
+            repos=[profiles.ProfileRepo(alias="r", url=url)],
+            skills=[profiles.ProfileSkill(qualified_name="r/foo")],
+        )
+    )
+
+    target = tmp_path / "target"
+    profiles.apply("t", target, override_risk=True)
+    assert manifest.load(target).skills[0].risk_acknowledged is True
+
+
 def test_list_and_delete(home: Path) -> None:
     profiles.save(profiles.Profile(name="a"))
     profiles.save(profiles.Profile(name="b"))

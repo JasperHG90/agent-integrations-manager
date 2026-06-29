@@ -714,6 +714,12 @@ def resolve_for_apply(
         project_root: Project whose effective policy gates any auto-registration.
         allow_insecure: Permit insecure (non-https) urls when registering.
 
+    A repo already registered (matched by source-agnostic id, so URL-case and
+    alias differences don't matter) is **refreshed** first: a template freezes
+    artifacts to exact commits, and a stale cached clone may predate them — without
+    a refresh, apply crashes with ``git archive failed: not a tree object``. A repo
+    not registered at all is cloned fresh (which already has the latest commits).
+
     Returns:
         The template with artifact aliases rewritten to local aliases.
 
@@ -722,25 +728,34 @@ def resolve_for_apply(
             block-list.
         git.GitError: A referenced repo url could not be cloned.
     """
+    from aim.core import git as git_mod
     from aim.core import policy as policy_mod
     from aim.core import repos as repos_mod
 
     if not profile.repos:
         return profile
 
-    local_by_url = {r.url: r.alias for r in repos_mod.list_repos()}
+    existing_by_id = {policy_mod.repo_id_for_url(r.url): r for r in repos_mod.list_repos()}
     alias_rewrite: dict[str, str] = {}
     pol = None
     for required in profile.repos:
-        local_alias = local_by_url.get(required.url)
-        if local_alias is None:
+        existing = existing_by_id.get(policy_mod.repo_id_for_url(required.url))
+        if existing is None:
             # The template carries the url, so just register it (policy-screened).
             if pol is None:
                 pol = policy_mod.effective_policy(project_root)
             policy_mod.assert_repo_allowed(pol, required.alias, required.url)
             repos_mod.add(required.alias, required.url, allow_insecure=allow_insecure)
-        elif local_alias != required.alias:
-            alias_rewrite[required.alias] = local_alias
+        else:
+            # Refresh the cached clone so the template's pinned commits are present.
+            # Best-effort: if the fetch fails (offline/transient) a genuinely missing
+            # commit still surfaces a clear error later, at install time.
+            try:
+                repos_mod.refresh(existing.alias, allow_insecure=allow_insecure)
+            except git_mod.GitError:
+                pass
+            if existing.alias != required.alias:
+                alias_rewrite[required.alias] = existing.alias
 
     if not alias_rewrite:
         return profile
@@ -785,6 +800,7 @@ def apply(
     project_root: Path,
     *,
     allow_insecure: bool = False,
+    override_risk: bool = False,
 ) -> ProfileApplyResult:
     """Apply a project template by name.
 
@@ -799,6 +815,8 @@ def apply(
         name: A saved template name, or a repo-qualified ``<alias>/<name>``.
         project_root: The project directory to apply the template to.
         allow_insecure: Permit insecure sources during lock and sync.
+        override_risk: Acknowledge the risk gate for every artifact the template
+            installs (the template author already vetted the bundle).
 
     Returns:
         A ProfileApplyResult recording installed and skipped artifacts.
@@ -823,8 +841,11 @@ def apply(
             strict_resolution=True,
             allow_insecure=allow_insecure,
             template_source=template_source,
+            override_risk=override_risk,
         )
-    return apply_profile(load(name), project_root, allow_insecure=allow_insecure)
+    return apply_profile(
+        load(name), project_root, allow_insecure=allow_insecure, override_risk=override_risk
+    )
 
 
 def apply_profile(
@@ -834,6 +855,7 @@ def apply_profile(
     strict_resolution: bool = False,
     allow_insecure: bool = False,
     template_source: object | None = None,
+    override_risk: bool = False,
 ) -> ProfileApplyResult:
     """Apply a profile to a project, then install its artifacts and sync.
 
@@ -851,6 +873,7 @@ def apply_profile(
         template_source: A `DeclaredTemplate` to record as this project's template
             provenance (for repo-sourced templates). Its `members` are filled in
             from the artifacts actually installed.
+        override_risk: Acknowledge the risk gate for every installed artifact.
 
     Returns:
         A ProfileApplyResult recording installed and skipped artifacts.
@@ -892,7 +915,9 @@ def apply_profile(
     skipped_skills: list[str] = []
     for ps in profile.skills:
         try:
-            install_mod.install(project_root, ps.qualified_name, pin=ps.sha)
+            install_mod.install(
+                project_root, ps.qualified_name, pin=ps.sha, override_risk=override_risk
+            )
             installed_skills.append(ps.qualified_name)
         except install_mod.SkillNotIndexedError:
             if strict_resolution:
@@ -903,7 +928,9 @@ def apply_profile(
     skipped_agents: list[str] = []
     for pa in profile.agents:
         try:
-            agent_install_mod.install(project_root, pa.qualified_name, pin=pa.sha)
+            agent_install_mod.install(
+                project_root, pa.qualified_name, pin=pa.sha, override_risk=override_risk
+            )
             installed_agents.append(pa.qualified_name)
         except agent_install_mod.AgentNotIndexedError:
             if strict_resolution:
@@ -935,7 +962,9 @@ def apply_profile(
     skipped_rules: list[str] = []
     for pr in profile.rules:
         try:
-            rule_install_mod.install(project_root, pr.qualified_name, pin=pr.sha)
+            rule_install_mod.install(
+                project_root, pr.qualified_name, pin=pr.sha, override_risk=override_risk
+            )
             installed_rules.append(pr.qualified_name)
         except rule_install_mod.RuleNotIndexedError:
             if strict_resolution:
@@ -948,7 +977,11 @@ def apply_profile(
     for pp in profile.plugins:
         try:
             plugin_install_mod.install_plugin(
-                project_root, pp.qualified_name, flavor=pp.flavor, pin=pp.sha
+                project_root,
+                pp.qualified_name,
+                flavor=pp.flavor,
+                pin=pp.sha,
+                override_risk=override_risk,
             )
             installed_plugins.append(pp.qualified_name)
             installed_plugin_members.append(_plugin_member_key(pp.qualified_name, pp.flavor))

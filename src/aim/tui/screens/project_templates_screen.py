@@ -14,6 +14,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from aim.core import profiles as profiles_mod
+from aim.tui.modals.busy import BusyModal
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.export_toml import ExportTomlModal
 from aim.tui.modals.project_picker import ProjectPick, ProjectPickerModal
@@ -41,6 +42,7 @@ class ProjectTemplatesScreen(Screen[None]):
 
     _pending_update: str | None = None
     _pending_apply: str | None = None
+    _busy: BusyModal | None = None
 
     def __init__(self, project_root: Path | None = None) -> None:
         """Initialize the screen for a target project root.
@@ -277,19 +279,32 @@ class ProjectTemplatesScreen(Screen[None]):
         self._pending_apply = None
         if result is None or name is None:
             return
+        busy = BusyModal(f"Applying {name}… (refresh repos, lock, install, sync)")
+        self._busy = busy
+        self.app.push_screen(busy)
         self.run_worker(
             lambda: self._do_apply_thread(name, result.project_root),
             exclusive=True,
             thread=True,
         )
 
+    def _dismiss_busy(self) -> None:
+        """Close the spinner overlay if one is showing. Runs on the UI thread."""
+        if self._busy is not None:
+            self._busy.dismiss()
+            self._busy = None
+
     def _do_apply_thread(self, name: str, project_root: Path) -> None:
         """Run the template apply off the event loop and report the outcome."""
         try:
-            apply_result = profiles_mod.apply(name, project_root)
+            # Templates are user-curated bundles applied intentionally, so acknowledge
+            # the risk gate (the CLI exposes this as the explicit --override-risk flag).
+            apply_result = profiles_mod.apply(name, project_root, override_risk=True)
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"apply failed: {exc}", severity="error")
             return
+        finally:
+            self.app.call_from_thread(self._dismiss_busy)
         parts: list[str] = []
         if apply_result.installed_skills:
             parts.append(f"{len(apply_result.installed_skills)} skill(s)")

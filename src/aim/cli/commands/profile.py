@@ -146,16 +146,23 @@ def profile_apply(
     ctx: typer.Context,
     name: str,
     project: Path | None = typer.Argument(None, help="Project root."),
+    override_risk: bool = typer.Option(
+        False,
+        "--override-risk",
+        help="Acknowledge the risk gate for every artifact the template installs.",
+    ),
 ) -> None:
     """Apply a saved or repo template to a project: init, lock, install artifacts, sync.
 
     Source repos the template needs are cloned automatically from the urls it
-    records (each screened against the project's policy).
+    records (each screened against the project's policy). Already-registered repos
+    are refreshed first so the template's pinned commits are present.
     """
     result = profiles_mod.apply(
         name,
         _here(project),
         allow_insecure=_get_allow_insecure(ctx),
+        override_risk=override_risk,
     )
     typer.echo(f"applied project template {name} to {result.project_root}")
     for qn in result.installed_skills:
