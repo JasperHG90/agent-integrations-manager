@@ -17,7 +17,6 @@ from aim.core import profiles as profiles_mod
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.export_toml import ExportTomlModal
 from aim.tui.modals.project_picker import ProjectPick, ProjectPickerModal
-from aim.tui.modals.template_edit import TemplateEditModal, TemplateEditResult
 from aim.tui.modals.template_save import TemplateSaveModal, TemplateSaveResult
 from aim.tui.screens.template_builder_screen import TemplateBuilderScreen
 
@@ -40,7 +39,6 @@ class ProjectTemplatesScreen(Screen[None]):
         ("q", "app.quit", "Quit"),
     ]
 
-    _pending_edit: str | None = None
     _pending_update: str | None = None
     _pending_apply: str | None = None
 
@@ -149,7 +147,12 @@ class ProjectTemplatesScreen(Screen[None]):
         self._populate()
 
     def action_edit_current(self) -> None:
-        """Open the edit modal for the selected template."""
+        """Open the builder, seeded with the selected template, to edit it.
+
+        Editing uses the same panel-based builder as `New` (add/remove skills,
+        agents, rules, plugins, MCP) so every artifact kind — including plugins — is
+        visible and editable, instead of a flat keep/drop list.
+        """
         name = self._selected_name()
         if name is None:
             self._notify_or_status("select a template to edit")
@@ -159,43 +162,7 @@ class ProjectTemplatesScreen(Screen[None]):
         except profiles_mod.ProfileNotFoundError:
             self._status(f"template {name!r} not found")
             return
-        self._pending_edit = profile.name
-        self.app.push_screen(TemplateEditModal(profile), self._on_edit)
-
-    def _on_edit(self, result: TemplateEditResult | None) -> None:
-        """Apply edits to the pending template, renaming if needed.
-
-        Args:
-            result: Edit dialog result, or None if the user cancelled.
-        """
-        old_name = getattr(self, "_pending_edit", None)
-        self._pending_edit = None
-        if result is None or old_name is None:
-            return
-        try:
-            profile = profiles_mod.load(old_name)
-        except profiles_mod.ProfileNotFoundError:
-            self.app.notify(f"template {old_name!r} not found", severity="error")
-            return
-        new_profile = profile.model_copy(
-            update={
-                "name": result.name,
-                "layout_profile": result.layout_profile,
-                "rules": [r for r in profile.rules if r.qualified_name in result.rules],
-                "skills": [s for s in profile.skills if s.qualified_name in result.skills],
-                "agents": [a for a in profile.agents if a.qualified_name in result.agents],
-                "mcp_servers": [m for m in profile.mcp_servers if m.alias in result.mcp_servers],
-            }
-        )
-        if result.name != profile.name:
-            profiles_mod.delete(profile.name)
-        try:
-            profiles_mod.save(new_profile)
-        except profiles_mod.ProfileNameError as exc:
-            self.app.notify(f"edit failed: {exc}", severity="error")
-            return
-        self.app.notify(f"updated template {result.name!r}")
-        self._populate()
+        self.app.push_screen(TemplateBuilderScreen(profile), self._on_new)
 
     def action_update_from_project(self) -> None:
         """Pick a project to refresh the selected template's contents from."""

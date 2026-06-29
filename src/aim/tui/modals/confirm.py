@@ -9,7 +9,7 @@ no-op.
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -38,7 +38,10 @@ class ConfirmModal(ModalScreen[bool | None]):
     def compose(self) -> ComposeResult:
         """Build the prompt body and confirm/cancel buttons."""
         yield Vertical(
-            Static(self._prompt, markup=False, classes="modal-body"),
+            VerticalScroll(
+                Static(self._prompt, markup=False, classes="modal-body"),
+                classes="modal-scroll",
+            ),
             Horizontal(
                 Button(self._confirm_label, id="confirm", variant="error"),
                 Button("Cancel", id="cancel"),

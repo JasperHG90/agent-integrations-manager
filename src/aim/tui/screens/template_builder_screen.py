@@ -1,7 +1,8 @@
-"""Template builder screen: create a project template from scratch.
+"""Template builder screen: create or edit a project template.
 
-Users name the template and add skills, agents, rules, and MCP servers via
-searchable picker modals. The result is saved as a reusable `Profile`.
+Users name the template and add skills, agents, rules, plugins, and MCP servers
+via searchable picker modals. The result is saved as a reusable `Profile`. The
+same screen edits an existing template when seeded with its profile.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from aim.tui.modals.agent_picker import AgentPick, AgentPickerModal
 from aim.tui.modals.export_toml import ExportTomlModal, ExportTomlResult
 from aim.tui.modals.import_toml import ImportTomlModal, ImportTomlResult
 from aim.tui.modals.mcp_picker import McpPick, McpPickerModal
+from aim.tui.modals.plugin_picker import PluginPick, PluginPickerModal
 from aim.tui.modals.rule_picker import RulePick, RulePickerModal
 from aim.tui.modals.skill_picker import SkillPick, SkillPickerModal
 
@@ -31,6 +33,7 @@ class TemplateBuilderScreen(Screen[None]):
         ("a", "add_agent", "Add agent"),
         ("r", "add_rule", "Add rule"),
         ("m", "add_mcp", "Add MCP"),
+        ("p", "add_plugin", "Add plugin"),
         ("x", "remove_selected", "Remove"),
         ("u", "import_toml", "Import TOML"),
         ("e", "export_toml", "Export TOML"),
@@ -155,10 +158,19 @@ class TemplateBuilderScreen(Screen[None]):
                 ),
                 classes="builder-row",
             ),
+            Horizontal(
+                Vertical(
+                    Static("Plugins", classes="modal-title", markup=False),
+                    DataTable(id="plugins-table", cursor_type="row"),
+                    Button("Add plugin (p)", id="add-plugin"),
+                    classes="builder-section",
+                ),
+                classes="builder-row",
+            ),
             Static("", id="status", markup=False),
             Static(
                 "[s] Add skill  [a] Add agent  [r] Add rule  [m] Add MCP  "
-                "[x] Remove  [u] Import TOML  [e] Export TOML  "
+                "[p] Add plugin  [x] Remove  [u] Import TOML  [e] Export TOML  "
                 "[ctrl+s] Save  [b] Back  [q] Quit",
                 id="hint",
                 markup=False,
@@ -180,6 +192,7 @@ class TemplateBuilderScreen(Screen[None]):
         self._populate_agents()
         self._populate_rules()
         self._populate_mcp()
+        self._populate_plugins()
         self._status("edit template contents")
 
     def _populate_skills(self) -> None:
@@ -213,6 +226,19 @@ class TemplateBuilderScreen(Screen[None]):
         table.add_columns("registry", "alias")
         for m in self._mcp_servers:
             table.add_row(m.registry_name, m.alias, key=m.alias)
+
+    def _populate_plugins(self) -> None:
+        """Rebuild the plugins table from the current plugin list."""
+        table = self.query_one("#plugins-table", DataTable)
+        table.clear()
+        table.add_columns("qualified name", "flavor")
+        for p in self._plugins:
+            table.add_row(p.qualified_name, p.flavor or "—", key=self._plugin_key(p))
+
+    @staticmethod
+    def _plugin_key(plugin: profiles_mod.ProfilePlugin) -> str:
+        """Row key for a plugin, unique across flavors of the same name."""
+        return f"{plugin.qualified_name}\x00{plugin.flavor or ''}"
 
     def action_add_skill(self) -> None:
         """Open the skill picker modal."""
@@ -299,6 +325,32 @@ class TemplateBuilderScreen(Screen[None]):
         )
         self._populate_mcp()
 
+    def action_add_plugin(self) -> None:
+        """Open the plugin picker modal."""
+        self.app.push_screen(PluginPickerModal(), self._on_plugin_picked)
+
+    def _on_plugin_picked(self, result: PluginPick | None) -> None:
+        """Add the picked plugin to the template, skipping duplicates.
+
+        Args:
+            result: Picker selection, or None when the modal was cancelled.
+        """
+        if result is None:
+            return
+        if any(
+            p.qualified_name == result.qualified_name and p.flavor == result.flavor
+            for p in self._plugins
+        ):
+            self.app.notify(
+                f"plugin {result.qualified_name!r} ({result.flavor}) already in template",
+                severity="warning",
+            )
+            return
+        self._plugins.append(
+            profiles_mod.ProfilePlugin(qualified_name=result.qualified_name, flavor=result.flavor)
+        )
+        self._populate_plugins()
+
     @staticmethod
     def _default_alias(name: str) -> str:
         """Derive a safe lowercase alias from a registry server name.
@@ -327,6 +379,20 @@ class TemplateBuilderScreen(Screen[None]):
             self._remove_from_table("#rules-table", self._rules, None)
         elif table_id == "mcp-table":
             self._remove_from_table("#mcp-table", self._mcp_servers, "alias")
+        elif table_id == "plugins-table":
+            self._remove_plugin_selected()
+
+    def _remove_plugin_selected(self) -> None:
+        """Remove the cursor's plugin (matched by name+flavor) and refresh tables."""
+        table = self.query_one("#plugins-table", DataTable)
+        if table.row_count == 0:
+            return
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        key = str(row_key.value) if row_key and row_key.value is not None else None
+        if key is None:
+            return
+        self._plugins[:] = [p for p in self._plugins if self._plugin_key(p) != key]
+        self._populate_all()
 
     def _remove_from_table(
         self,
@@ -447,3 +513,5 @@ class TemplateBuilderScreen(Screen[None]):
             self.action_add_rule()
         elif event.button.id == "add-mcp":
             self.action_add_mcp()
+        elif event.button.id == "add-plugin":
+            self.action_add_plugin()

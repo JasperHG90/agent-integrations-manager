@@ -5,22 +5,13 @@ from pathlib import Path
 import pytest
 from textual.widgets import DataTable, Input, Static
 
-from aim.core import init, manifest, profiles, repos
+from aim.core import init, install, manifest, plugin_install, profiles, repos
 from aim.tui.app import AimApp
 from aim.tui.modals.project_picker import ProjectPick
-from aim.tui.modals.template_edit import TemplateEditModal
 from aim.tui.modals.template_save import TemplateSaveModal
 from aim.tui.screens.project_templates_screen import ProjectTemplatesScreen
-from aim.tui.widgets import ToggleRow
+from aim.tui.screens.template_builder_screen import TemplateBuilderScreen
 from tests.fixtures import git_fixtures
-
-
-def _register_rule_repo(tmp_path: Path, names: list[str]) -> None:
-    files = {f"rules/{n}.md": f"{n} body\n" for n in names}
-    files["README.md"] = "x\n"
-    working = git_fixtures.make_source_repo(tmp_path / "rsrc", files=files)
-    bare = git_fixtures.make_bare_remote(working, tmp_path / "rbare.git")
-    repos.add("rr", f"file://{bare}")
 
 
 @pytest.mark.asyncio
@@ -86,145 +77,117 @@ async def test_templates_screen_apply_runs_off_thread(
     assert [s.qualified_name for s in manifest.load(target).skills] == ["anth/foo"]
 
 
+def _claude_plugin_repo(tmp_path: Path) -> str:
+    """Register a repo (alias `sp`) exposing one whole-repo claude plugin; return url."""
+    import json
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "psrc",
+        files={
+            ".claude-plugin/marketplace.json": json.dumps(
+                {"name": "m", "plugins": [{"name": "superpowers", "source": "./"}]}
+            ),
+            ".claude-plugin/plugin.json": json.dumps({"name": "superpowers"}),
+        },
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "pbare.git")
+    url = f"file://{bare}"
+    repos.add("sp", url)
+    return url
+
+
 @pytest.mark.asyncio
-async def test_templates_screen_edits_template(home: Path, project_root: Path) -> None:
+async def test_edit_opens_builder_seeded_with_template(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # Editing must open the panel-based builder (not a flat list), seeded with the
+    # template's contents — so every kind is add/removable, not just toggle-off.
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"skills/foo/SKILL.md": "# foo\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("anth", f"file://{bare}")
     init.run(init.InitOptions(project_root=project_root))
+    install.install(project_root, "anth/foo")
     profiles.save(profiles.from_project("old", project_root))
+
     app = AimApp(project_root=project_root)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.push_screen(ProjectTemplatesScreen(project_root))
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
-        assert isinstance(app.screen, TemplateEditModal)
-        app.screen.query_one("#name", Input).value = "new"
-        await pilot.click("#go")
+        assert isinstance(app.screen, TemplateBuilderScreen)
+        assert app.screen.query_one("#name", Input).value == "old"
+        assert app.screen.query_one("#skills-table", DataTable).row_count == 1
+        # A plugins panel is present in the builder (it was absent from the old modal).
+        app.screen.query_one("#plugins-table", DataTable)
+        app.screen.query_one("#name", Input).value = "renamed"
+        await pilot.press("ctrl+s")
         await pilot.pause()
-        assert [p.name for p in profiles.list_profiles()] == ["new"]
+
+    assert "renamed" in [p.name for p in profiles.list_profiles()]
 
 
 @pytest.mark.asyncio
-async def test_template_edit_checkbox_toggles_uncheck_all(
+async def test_view_shows_plugins_in_scrollable_modal(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
-    """Checkboxes in the edit modal must be clickable and uncheckable."""
-    _register_rule_repo(tmp_path, ["rule-one"])
+    # Viewing a template must show plugins AND MCP inside a scrollable body, so a
+    # long template doesn't hide the bottom rows behind an unscrollable wall of text.
+    from textual.containers import VerticalScroll
+
+    from aim.tui.modals.confirm import ConfirmModal
+
+    _claude_plugin_repo(tmp_path)
     init.run(init.InitOptions(project_root=project_root))
-    profile = profiles.Profile(
-        name="tpl",
-        rules=[profiles.ProfileRule(qualified_name="rr/rule-one")],
-        skills=[profiles.ProfileSkill(qualified_name="repo/skill")],
-        agents=[profiles.ProfileAgent(qualified_name="repo/agent")],
-        mcp_servers=[profiles.ProfileMcpServer(registry_name="srv", alias="srv")],
-    )
-    profiles.save(profile)
+    plugin_install.install_plugin(project_root, "sp/superpowers")
+    profiles.save(profiles.from_project("tpl", project_root))
 
     app = AimApp(project_root=project_root)
-    async with app.run_test(size=(80, 40)) as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.push_screen(ProjectTemplatesScreen(project_root))
         await pilot.pause()
-        await pilot.press("e")
+        await pilot.press("v")
         await pilot.pause()
-        assert isinstance(app.screen, TemplateEditModal)
-
-        rule_cb = app.screen.query_one("#rule-rr-rule-one", ToggleRow)
-        skill_cb = app.screen.query_one("#skill-repo-skill", ToggleRow)
-        agent_cb = app.screen.query_one("#agent-repo-agent", ToggleRow)
-        mcp_cb = app.screen.query_one("#mcp-srv", ToggleRow)
-
-        assert rule_cb.value is True
-        assert skill_cb.value is True
-        assert agent_cb.value is True
-        assert mcp_cb.value is True
-
-        # Uncheck every item by clicking it.
-        await pilot.click("#rule-rr-rule-one")
-        await pilot.click("#skill-repo-skill")
-        await pilot.click("#agent-repo-agent")
-        await pilot.click("#mcp-srv")
-        await pilot.pause()
-
-        assert rule_cb.value is False
-        assert skill_cb.value is False
-        assert agent_cb.value is False
-        assert mcp_cb.value is False
-
-        await pilot.click("#go")
-        await pilot.pause()
-
-    saved = profiles.load("tpl")
-    assert saved.rules == []
-    assert saved.skills == []
-    assert saved.agents == []
-    assert saved.mcp_servers == []
+        assert isinstance(app.screen, ConfirmModal)
+        body = app.screen.query_one(".modal-body", Static)
+        text = str(body.render())
+        assert "plugins:" in text
+        assert "sp/superpowers" in text
+        # The body lives inside a scroll container so long content is reachable.
+        assert app.screen.query_one(VerticalScroll)
 
 
 @pytest.mark.asyncio
-async def test_template_edit_togglerow_space_toggles(
+async def test_builder_adds_plugin_to_template(
     home: Path, project_root: Path, tmp_path: Path
 ) -> None:
-    """Focused ToggleRow must toggle on Space."""
-    _register_rule_repo(tmp_path, ["rule-one"])
-    init.run(init.InitOptions(project_root=project_root))
-    profile = profiles.Profile(
-        name="tpl",
-        rules=[profiles.ProfileRule(qualified_name="rr/rule-one")],
-    )
-    profiles.save(profile)
+    # The builder must let you add a plugin via the picker and persist it.
+    from aim.tui.modals.plugin_picker import PluginPickerModal
 
+    _claude_plugin_repo(tmp_path)
     app = AimApp(project_root=project_root)
-    async with app.run_test(size=(80, 40)) as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.push_screen(ProjectTemplatesScreen(project_root))
+        app.push_screen(TemplateBuilderScreen())
         await pilot.pause()
-        await pilot.press("e")
+        app.screen.query_one("#plugins-table", DataTable).focus()
+        await pilot.press("p")
         await pilot.pause()
-        assert isinstance(app.screen, TemplateEditModal)
+        assert isinstance(app.screen, PluginPickerModal)
+        app.screen.query_one("#plugins-table", DataTable).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TemplateBuilderScreen)
+        table = app.screen.query_one("#plugins-table", DataTable)
+        assert table.row_count == 1
+        assert table.get_row_at(0)[0] == "sp/superpowers"
+        app.screen.query_one("#name", Input).value = "withplugin"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
 
-        rule_cb = app.screen.query_one("#rule-rr-rule-one", ToggleRow)
-        assert rule_cb.value is True
-        rule_cb.focus()
-        await pilot.press("space")
-        await pilot.pause()
-        assert rule_cb.value is False
-        await pilot.press("space")
-        await pilot.pause()
-        assert rule_cb.value is True
-
-
-@pytest.mark.asyncio
-async def test_template_edit_togglerow_reaches_by_tab(
-    home: Path, project_root: Path, tmp_path: Path
-) -> None:
-    """Tab navigation must reach ToggleRow and Space must toggle it."""
-    _register_rule_repo(tmp_path, ["rule-tab"])
-    init.run(init.InitOptions(project_root=project_root))
-    profile = profiles.Profile(
-        name="tpl",
-        rules=[profiles.ProfileRule(qualified_name="rr/rule-tab")],
-    )
-    profiles.save(profile)
-
-    app = AimApp(project_root=project_root)
-    async with app.run_test(size=(80, 40)) as pilot:
-        await pilot.pause()
-        app.push_screen(ProjectTemplatesScreen(project_root))
-        await pilot.pause()
-        await pilot.press("e")
-        await pilot.pause()
-        assert isinstance(app.screen, TemplateEditModal)
-
-        rule_cb = app.screen.query_one("#rule-rr-rule-tab", ToggleRow)
-        assert rule_cb.value is True
-        # Tab from the focused name input down to the rule toggle.
-        for _ in range(6):
-            await pilot.press("tab")
-            await pilot.pause()
-            if app.focused is rule_cb:
-                break
-        assert app.focused is rule_cb
-        await pilot.press("space")
-        await pilot.pause()
-        assert rule_cb.value is False
+    saved = profiles.load("withplugin")
+    assert [(p.qualified_name, p.flavor) for p in saved.plugins] == [("sp/superpowers", "claude")]
