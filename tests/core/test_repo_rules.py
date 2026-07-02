@@ -133,3 +133,49 @@ def test_read_rule_content(home: Path, tmp_path: Path) -> None:
 def test_read_rule_content_missing_raises(home: Path, tmp_path: Path) -> None:
     with pytest.raises(repo_rules.RuleNotIndexedError):
         repo_rules.read_rule_content("a/missing")
+
+
+# ---------------------------------------------------------------------------
+# provenance (origin) filters
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_owned_rule_indexed_hidden_by_default(home: Path, tmp_path: Path) -> None:
+    import json
+
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "helper", "source": "./helper", "version": "1.0.0"}],
+    }
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "helper/.claude-plugin/plugin.json": json.dumps({"name": "helper"}),
+            "helper/rules/style.md": "Style rule.\n",
+            "rules/be-concise.md": "Be concise.\n",
+        },
+    )
+    repos.add("pm", f"file://{bare}")
+    from aim.core import origins
+
+    assert [r.qualified_name for r in repo_rules.list_rules()] == ["pm/be-concise"]
+    rows = repo_rules.list_rules(include_plugin_owned=True)
+    assert [r.qualified_name for r in rows] == ["pm/be-concise", "pm/style"]
+    by_name = {r.qualified_name: r for r in rows}
+    assert by_name["pm/style"].origin == origins.ORIGIN_PLUGIN
+    assert by_name["pm/style"].owning_plugin == "helper"
+
+
+def test_dot_claude_rule_excludable(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "rules/be-concise.md": "Be concise.\n",
+            ".claude/rules/dotted.md": "Dotted rule.\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    assert [r.qualified_name for r in repo_rules.list_rules()] == ["a/be-concise", "a/dotted"]
+    only_canon = repo_rules.list_rules(include_dot_claude=False)
+    assert [r.qualified_name for r in only_canon] == ["a/be-concise"]

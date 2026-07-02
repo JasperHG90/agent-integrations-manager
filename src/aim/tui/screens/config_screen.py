@@ -21,8 +21,9 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, Static, TextArea
 
-from aim.core import declarations, layout_profiles, manifest, paths, templates
+from aim.core import declarations, layout_profiles, manifest, paths, templates, user_config
 from aim.core import init as init_mod
+from aim.tui.widgets import ToggleRow
 
 _HELP_TEXT = (
     "Fields:\n"
@@ -80,6 +81,7 @@ class ConfigScreen(Screen[None]):
         template_body = (
             self._template_path.read_text(encoding="utf-8") if self._template_path.exists() else ""
         )
+        prefs = user_config.load().tui.filters
         yield VerticalScroll(
             Vertical(
                 Static(f"Project: {self._project_root}", classes="config-paths", markup=False),
@@ -124,6 +126,26 @@ class ConfigScreen(Screen[None]):
                 Button("Save global template", id="template-save", variant="primary"),
                 id="template-pane",
             ),
+            Vertical(
+                Static("User preferences (global)", classes="config-heading", markup=False),
+                Static(
+                    f"stored in {user_config.config_path()}",
+                    classes="config-paths",
+                    markup=False,
+                ),
+                ToggleRow(
+                    "Show plugin-owned artifacts in lists",
+                    value=prefs.show_plugin_owned,
+                    id="pref-plugin-owned",
+                ),
+                ToggleRow(
+                    "Show .claude/-found artifacts in lists",
+                    value=prefs.show_dot_claude,
+                    id="pref-dot-claude",
+                ),
+                Button("Save user preferences", id="prefs-save", variant="primary"),
+                id="prefs-pane",
+            ),
             id="config-scroll",
         )
 
@@ -158,6 +180,8 @@ class ConfigScreen(Screen[None]):
             self._save_project()
         elif event.button.id == "template-save":
             self._save_template()
+        elif event.button.id == "prefs-save":
+            self._save_prefs()
 
     def _save_project(self) -> None:
         """Re-run init against the edited project root."""
@@ -187,6 +211,18 @@ class ConfigScreen(Screen[None]):
         )
         # Re-run init for the current project so the new template is applied immediately.
         self._save_project()
+
+    def _save_prefs(self) -> None:
+        """Persist the user-preference toggles to the global config file."""
+        cfg = user_config.load()
+        cfg.tui.filters.show_plugin_owned = self.query_one("#pref-plugin-owned", ToggleRow).value
+        cfg.tui.filters.show_dot_claude = self.query_one("#pref-dot-claude", ToggleRow).value
+        try:
+            path = user_config.save(cfg)
+        except Exception as exc:
+            self.app.notify(f"preferences save failed: {exc}", severity="error")
+            return
+        self.app.notify(f"user preferences saved to {path}", title="Preferences saved")
 
     def _status(self, msg: str) -> None:
         """Update the status line with the given message."""

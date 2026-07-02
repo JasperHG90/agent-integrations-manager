@@ -557,6 +557,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     indexed_at_sha=row.indexed_at_sha,
                     prereqs=row.prereqs,
                     provides=row.provides,
+                    origin=row.origin,
+                    owning_plugin=row.owning_plugin,
                 )
             )
             session.delete(row)
@@ -574,6 +576,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     indexed_at_sha=row.indexed_at_sha,
                     tools=row.tools,
                     model=row.model,
+                    origin=row.origin,
+                    owning_plugin=row.owning_plugin,
                 )
             )
             session.delete(row)
@@ -588,6 +592,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     title=row.title,
                     description=row.description,
                     indexed_at_sha=row.indexed_at_sha,
+                    origin=row.origin,
+                    owning_plugin=row.owning_plugin,
                 )
             )
             session.delete(row)
@@ -662,6 +668,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                                 indexed_at_sha=row.indexed_at_sha,
                                 prereqs=row.prereqs,
                                 provides=row.provides,
+                                origin=row.origin,
+                                owning_plugin=row.owning_plugin,
                             )
                         )
                         session.delete(row)
@@ -680,6 +688,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                                 indexed_at_sha=row.indexed_at_sha,
                                 tools=row.tools,
                                 model=row.model,
+                                origin=row.origin,
+                                owning_plugin=row.owning_plugin,
                             )
                         )
                         session.delete(row)
@@ -695,6 +705,8 @@ def rename(old: str, new: str) -> RegisteredRepo:
                                 title=row.title,
                                 description=row.description,
                                 indexed_at_sha=row.indexed_at_sha,
+                                origin=row.origin,
+                                owning_plugin=row.owning_plugin,
                             )
                         )
                         session.delete(row)

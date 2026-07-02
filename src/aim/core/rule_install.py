@@ -59,6 +59,33 @@ class RuleManifestPathEscapeError(ValueError):
     """A derived rule target path resolves outside the project root."""
 
 
+_rule_install_warnings: list[str] = []
+
+
+def take_install_warnings() -> list[str]:
+    """Drain the rule install-warning buffer. CLI/TUI surfaces these."""
+    out = list(_rule_install_warnings)
+    _rule_install_warnings.clear()
+    return out
+
+
+def _warn_if_plugin_owned(row: RuleIndex) -> None:
+    """Note when a rule being installed standalone is bundled inside a plugin.
+
+    Installing is allowed (it's just files at a pinned SHA, and the risk gate
+    still applies); the notice points at the plugin for users who wanted the
+    whole thing. Drained via `take_install_warnings()`.
+    """
+    from aim.core import origins
+
+    if repo_rules._effective_origin(row) == origins.ORIGIN_PLUGIN:
+        owner = f"{row.repo_alias}/{row.owning_plugin}" if row.owning_plugin else "a plugin"
+        _rule_install_warnings.append(
+            f"note: {row.qualified_name} is bundled with plugin {owner}; installing "
+            "standalone. `aim plugin add` installs the whole plugin."
+        )
+
+
 def _rule_index_row(qualified_name: str) -> RuleIndex:
     """Look up the rule index row for a qualified name.
 
@@ -253,6 +280,7 @@ def install(
         The installed rule manifest entry (new or updated in place).
     """
     row = _rule_index_row(qualified_name)
+    _warn_if_plugin_owned(row)
     version = resolve_install_version(
         row.repo_alias,
         row.rule_md_path,
@@ -472,7 +500,15 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
     target_version = existing.history[0]
 
     content = _read_at_sha(existing.source_path, existing.repo_alias, target_version.sha)
-    _deploy(project_root, _rule_name(qualified_name), content, qualified_name=qualified_name)
+    # Honor a prior --override-risk acknowledgment (as sync does): a rollback of
+    # an acknowledged artifact must not re-block on the same risk verdict.
+    _deploy(
+        project_root,
+        _rule_name(qualified_name),
+        content,
+        qualified_name=qualified_name,
+        override_risk=existing.risk_acknowledged,
+    )
     existing.push_history(
         SkillVersion(
             tag=target_version.tag,

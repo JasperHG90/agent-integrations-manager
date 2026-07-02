@@ -22,7 +22,7 @@ from typing import NamedTuple
 
 from sqlmodel import delete, select
 
-from aim.core import db, git, repos, validation
+from aim.core import db, git, origins, repos, validation
 from aim.core.agents import _as_str, _as_str_list, _extract_frontmatter
 from aim.core.models import SkillIndex
 
@@ -66,6 +66,8 @@ class DiscoveredSkill(NamedTuple):
     name: str
     source_path: str  # path of the skill DIRECTORY relative to repo root
     skill_md_path: str  # path of the SKILL.md file relative to repo root
+    origin: str = origins.ORIGIN_CANONICAL  # provenance (origins.py constants)
+    owning_plugin: str | None = None  # bare plugin name when origin == "plugin"
 
 
 @dataclass(frozen=True)
@@ -95,12 +97,16 @@ def discover(repo_alias: str) -> IndexResult:
 
     from aim.core import plugins  # lazy import avoids a module-load cycle
 
-    plugin_dirs = plugins.owned_dir_prefixes(repo_alias, repo_dir, sha, paths)
+    owned = plugins.owned_dirs(repo_alias, repo_dir, sha, paths)
 
-    # Group candidates by skill name. Precedence: shallower path wins; at the
-    # same depth, canonical prefixes (`skills/`, `.claude/skills/`) win over
-    # arbitrary paths. Ties break by lexicographic path.
-    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredSkill]]] = {}
+    # Group candidates by skill name. Precedence: standalone beats plugin-owned;
+    # then shallower path wins; at the same depth, canonical prefixes (`skills/`,
+    # `.claude/skills/`) win over arbitrary paths. Ties break by lexicographic
+    # path. Plugin-owned copies are indexed (origin="plugin", hidden from lists
+    # by default) but never outrank a standalone skill of the same name; when
+    # both exist the plugin-owned copy lands in `shadowed` (the PK is the
+    # qualified name).
+    by_name: dict[str, list[tuple[tuple[int, int, int, str], DiscoveredSkill]]] = {}
     for p in paths:
         match = _SKILL_RE.match(p)
         if not match:
@@ -108,8 +114,13 @@ def discover(repo_alias: str) -> IndexResult:
 
         if not validation.is_safe_repo_path(p):
             continue
-        if plugins.is_plugin_owned(p, plugin_dirs):
-            continue  # bundled inside a plugin; not a standalone skill
+        entry = plugins.owning_plugin(p, owned)
+        owner = entry[1] if entry is not None else None
+        origin = (
+            origins.ORIGIN_PLUGIN
+            if owner is not None
+            else origins.origin_from_rank(_prefix_rank(p))
+        )
 
         path = match.group("path") or ""
         if path:
@@ -126,8 +137,14 @@ def discover(repo_alias: str) -> IndexResult:
         depth = p.count("/")
         by_name.setdefault(name, []).append(
             (
-                (depth, _prefix_rank(p), p),
-                DiscoveredSkill(name=name, source_path=source_dir, skill_md_path=p),
+                (1 if owner is not None else 0, depth, _prefix_rank(p), p),
+                DiscoveredSkill(
+                    name=name,
+                    source_path=source_dir,
+                    skill_md_path=p,
+                    origin=origin,
+                    owning_plugin=owner,
+                ),
             )
         )
 
@@ -142,14 +159,20 @@ def discover(repo_alias: str) -> IndexResult:
     return IndexResult(repo_alias=repo_alias, sha=sha, indexed=indexed, shadowed=shadowed)
 
 
-def _indexed_sha(repo_alias: str) -> str | None:
-    """Return the SHA the repo's skills were last indexed at, or None if absent."""
+def _index_current(repo_alias: str, sha: str) -> bool:
+    """Whether the repo's skill index rows are already current for `sha`.
+
+    Samples one row: current means it was written at `sha` AND by origin-aware
+    code (non-NULL origin). Legacy rows force a rebuild so provenance backfills.
+    One sample suffices because a repo's rows are written in one transaction.
+    """
     with db.session() as session:
-        return session.exec(
-            select(SkillIndex.indexed_at_sha)  # type: ignore[arg-type]
+        row = session.exec(
+            select(SkillIndex.indexed_at_sha, SkillIndex.origin)  # type: ignore[arg-type]
             .where(SkillIndex.repo_alias == repo_alias)
             .limit(1)
         ).first()
+    return row is not None and row[0] == sha and row[1] is not None
 
 
 def index_repo(repo_alias: str) -> IndexResult:
@@ -161,7 +184,7 @@ def index_repo(repo_alias: str) -> IndexResult:
     SKILL.md is read in one batched git process.
     """
     result = discover(repo_alias)
-    if _indexed_sha(repo_alias) == result.sha:
+    if _index_current(repo_alias, result.sha):
         return result
     repo_dir = repos.clone_dir(repo_alias)
     bodies = git.cat_files_text(
@@ -188,6 +211,8 @@ def index_repo(repo_alias: str) -> IndexResult:
                     indexed_at_sha=result.sha,
                     prereqs=",".join(prereqs),
                     provides=",".join(provides),
+                    origin=skill.origin,
+                    owning_plugin=skill.owning_plugin,
                 )
             )
         session.commit()
@@ -295,11 +320,25 @@ def read_skill_content(qualified_name: str) -> str:
     return git.get_backend().cat_file(repo_dir, row.indexed_at_sha, skill_md_path)
 
 
-def list_skills(repo_alias: str | None = None) -> list[SkillIndex]:
+def _effective_origin(row: SkillIndex) -> str:
+    """A row's origin, derived from the SKILL.md path for legacy (NULL) rows."""
+    return origins.derive_origin(row.origin, row.skill_md_path or "", _prefix_rank)
+
+
+def list_skills(
+    repo_alias: str | None = None,
+    *,
+    include_plugin_owned: bool = False,
+    include_dot_claude: bool = True,
+) -> list[SkillIndex]:
     """Return indexed skills sorted by qualified name, optionally repo-filtered.
 
     Args:
         repo_alias: If given, restrict results to this repo's skills.
+        include_plugin_owned: Also return skills bundled inside plugins
+            (hidden by default).
+        include_dot_claude: Return skills discovered under `.claude/` dirs
+            (shown by default).
 
     Returns:
         Skill index rows ordered by qualified_name.
@@ -309,11 +348,25 @@ def list_skills(repo_alias: str | None = None) -> list[SkillIndex]:
         if repo_alias is not None:
             stmt = stmt.where(SkillIndex.repo_alias == repo_alias)
         rows = list(session.exec(stmt).all())
+    rows = [
+        r
+        for r in rows
+        if origins.is_visible(
+            _effective_origin(r),
+            include_plugin_owned=include_plugin_owned,
+            include_dot_claude=include_dot_claude,
+        )
+    ]
     rows.sort(key=lambda r: r.qualified_name)
     return rows
 
 
-def search(query: str) -> list[SkillIndex]:
+def search(
+    query: str,
+    *,
+    include_plugin_owned: bool = False,
+    include_dot_claude: bool = True,
+) -> list[SkillIndex]:
     """Search indexed skills by case-insensitive substring across key fields.
 
     Matches against qualified_name, title, and description. An empty query
@@ -321,15 +374,20 @@ def search(query: str) -> list[SkillIndex]:
 
     Args:
         query: Substring to look for.
+        include_plugin_owned: Also match skills bundled inside plugins.
+        include_dot_claude: Match skills discovered under `.claude/` dirs.
 
     Returns:
         Matching skill index rows.
     """
+    rows = list_skills(
+        include_plugin_owned=include_plugin_owned, include_dot_claude=include_dot_claude
+    )
     q = query.strip().lower()
     if not q:
-        return list_skills()
+        return rows
     out: list[SkillIndex] = []
-    for row in list_skills():
+    for row in rows:
         haystack = " ".join(filter(None, [row.qualified_name, row.title, row.description])).lower()
         if q in haystack:
             out.append(row)

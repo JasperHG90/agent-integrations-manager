@@ -357,3 +357,104 @@ def test_read_skill_content_bare_root(home: Path, tmp_path: Path) -> None:
 def test_read_skill_content_missing_raises(home: Path, tmp_path: Path) -> None:
     with pytest.raises(skills.SkillNotIndexedError):
         skills.read_skill_content("a/missing")
+
+
+# ---------------------------------------------------------------------------
+# provenance (origin) filters
+# ---------------------------------------------------------------------------
+
+
+def _plugin_repo_files(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """A marketplace repo bundling one plugin that owns a skill dir."""
+    import json
+
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "design-audit", "source": "./design-audit", "version": "1.0.0"}],
+    }
+    files = {
+        ".claude-plugin/marketplace.json": json.dumps(marketplace),
+        "design-audit/.claude-plugin/plugin.json": json.dumps({"name": "design-audit"}),
+        "design-audit/skills/audit/SKILL.md": "# audit\n",
+    }
+    files.update(extra or {})
+    return files
+
+
+def test_plugin_owned_skill_indexed_with_origin(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(tmp_path, _plugin_repo_files())
+    repos.add("pm", f"file://{bare}")
+    from aim.core import origins
+
+    assert skills.list_skills() == []  # hidden by default
+    rows = skills.list_skills(include_plugin_owned=True)
+    assert [r.qualified_name for r in rows] == ["pm/audit"]
+    assert rows[0].origin == origins.ORIGIN_PLUGIN
+    assert rows[0].owning_plugin == "design-audit"
+
+
+def test_plugin_owned_skill_search_respects_flag(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(tmp_path, _plugin_repo_files())
+    repos.add("pm", f"file://{bare}")
+    assert skills.search("audit") == []
+    rows = skills.search("audit", include_plugin_owned=True)
+    assert [r.qualified_name for r in rows] == ["pm/audit"]
+
+
+def test_dot_claude_skill_origin_and_exclusion(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            "skills/canon/SKILL.md": "# canon\n",
+            ".claude/skills/dotted/SKILL.md": "# dotted\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    from aim.core import origins
+
+    rows = {r.qualified_name: r for r in skills.list_skills()}
+    assert set(rows) == {"a/canon", "a/dotted"}  # dot-claude shown by default
+    assert rows["a/canon"].origin == origins.ORIGIN_CANONICAL
+    assert rows["a/dotted"].origin == origins.ORIGIN_DOT_CLAUDE
+    only_canon = skills.list_skills(include_dot_claude=False)
+    assert [r.qualified_name for r in only_canon] == ["a/canon"]
+
+
+def test_arbitrary_path_skill_origin_other_always_visible(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(tmp_path, {"docs/examples/demo/SKILL.md": "# demo\n"})
+    repos.add("a", f"file://{bare}")
+    from aim.core import origins
+
+    rows = skills.list_skills(include_dot_claude=False)
+    assert [r.qualified_name for r in rows] == ["a/demo"]
+    assert rows[0].origin == origins.ORIGIN_OTHER
+
+
+def test_standalone_skill_wins_over_plugin_copy(home: Path, tmp_path: Path) -> None:
+    """A plugin-owned copy must never outrank a standalone skill of the same name."""
+    _, bare = _build_repo_with(
+        tmp_path,
+        _plugin_repo_files({".claude/skills/audit/SKILL.md": "# standalone audit\n"}),
+    )
+    repos.add("pm", f"file://{bare}")
+    rows = skills.list_skills(include_plugin_owned=True)
+    assert [r.qualified_name for r in rows] == ["pm/audit"]
+    assert rows[0].source_path == ".claude/skills/audit"  # standalone won
+    d = skills.discover("pm")
+    assert any(s.source_path == "design-audit/skills/audit" for s in d.shadowed)
+
+
+def test_legacy_null_origin_row_forces_reindex(home: Path, tmp_path: Path) -> None:
+    """A pre-origin index row (origin NULL) rebuilds even at an unchanged SHA."""
+    from sqlmodel import text
+
+    from aim.core import db
+
+    _, bare = _build_repo_with(tmp_path, {"skills/foo/SKILL.md": "# Foo\n"})
+    repos.add("a", f"file://{bare}")
+    with db.session() as session:
+        session.exec(text("UPDATE skillindex SET origin = NULL"))  # type: ignore[call-overload]
+        session.commit()
+    skills.index_repo("a")
+    rows = skills.list_skills("a")
+    assert rows[0].origin is not None

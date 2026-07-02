@@ -19,7 +19,7 @@ from typing import Any, NamedTuple
 
 from sqlmodel import delete, select
 
-from aim.core import db, git, repos, validation
+from aim.core import db, git, origins, repos, validation
 from aim.core.models import RenderRule, RuleIndex
 
 try:
@@ -73,6 +73,8 @@ class DiscoveredRule(NamedTuple):
 
     name: str
     rule_md_path: str  # path of the .md file relative to repo root
+    origin: str = origins.ORIGIN_CANONICAL  # provenance (origins.py constants)
+    owning_plugin: str | None = None  # bare plugin name when origin == "plugin"
 
 
 @dataclass(frozen=True)
@@ -101,14 +103,22 @@ def discover(repo_alias: str) -> IndexResult:
 
     from aim.core import plugins  # lazy import avoids a module-load cycle
 
-    plugin_dirs = plugins.owned_dir_prefixes(repo_alias, repo_dir, sha, paths)
+    owned = plugins.owned_dirs(repo_alias, repo_dir, sha, paths)
 
     # Group candidates by rule name. Only `rules/` and `.claude/rules/` are
-    # considered. Precedence: shallower path wins; at the same depth `rules/`
-    # wins over `.claude/rules/`. Ties break by lexicographic path.
-    by_name: dict[str, list[tuple[tuple[int, int, str], DiscoveredRule]]] = {}
+    # considered. Precedence: standalone beats plugin-owned; then shallower path
+    # wins; at the same depth `rules/` wins over `.claude/rules/`. Ties break by
+    # lexicographic path. Plugin-owned copies are indexed (origin="plugin",
+    # hidden from lists by default) but never outrank a standalone rule.
+    by_name: dict[str, list[tuple[tuple[int, int, int, str], DiscoveredRule]]] = {}
     for p in paths:
-        if not p.startswith(_RULE_PREFIXES):
+        entry = plugins.owning_plugin(p, owned)
+        owner = entry[1] if entry is not None else None
+        # The location convention applies relative to the plugin root for a
+        # plugin-owned path (a plugin's rules live at `<plugin>/rules/`), and to
+        # the repo root otherwise.
+        rel = p if entry is None or not entry[0] else p[len(entry[0]) + 1 :]
+        if not rel.startswith(_RULE_PREFIXES):
             continue
         match = _RULE_RE.match(p)
         if not match:
@@ -116,8 +126,11 @@ def discover(repo_alias: str) -> IndexResult:
 
         if not validation.is_safe_repo_path(p):
             continue
-        if plugins.is_plugin_owned(p, plugin_dirs):
-            continue  # bundled inside a plugin; not a standalone rule
+        origin = (
+            origins.ORIGIN_PLUGIN
+            if owner is not None
+            else origins.origin_from_rank(_prefix_rank(p))
+        )
 
         name = match.group("name")
         if not validation.is_valid_rule_name(name):
@@ -126,7 +139,10 @@ def discover(repo_alias: str) -> IndexResult:
             continue
         depth = p.count("/")
         by_name.setdefault(name, []).append(
-            ((depth, _prefix_rank(p), p), DiscoveredRule(name=name, rule_md_path=p))
+            (
+                (1 if owner is not None else 0, depth, _prefix_rank(p), p),
+                DiscoveredRule(name=name, rule_md_path=p, origin=origin, owning_plugin=owner),
+            )
         )
 
     indexed: list[DiscoveredRule] = []
@@ -163,6 +179,8 @@ def index_repo(repo_alias: str) -> IndexResult:
                     title=title,
                     description=description,
                     indexed_at_sha=result.sha,
+                    origin=rule.origin,
+                    owning_plugin=rule.owning_plugin,
                 )
             )
         session.commit()
@@ -289,11 +307,25 @@ def read_rule_content(qualified_name: str) -> str:
     return git.get_backend().cat_file(repo_dir, row.indexed_at_sha, row.rule_md_path)
 
 
-def list_rules(repo_alias: str | None = None) -> list[RuleIndex]:
+def _effective_origin(row: RuleIndex) -> str:
+    """A row's origin, derived from the rule path for legacy (NULL) rows."""
+    return origins.derive_origin(row.origin, row.rule_md_path, _prefix_rank)
+
+
+def list_rules(
+    repo_alias: str | None = None,
+    *,
+    include_plugin_owned: bool = False,
+    include_dot_claude: bool = True,
+) -> list[RuleIndex]:
     """Return indexed rules sorted by qualified name, optionally filtered by repo.
 
     Args:
         repo_alias: If given, restrict results to this repo's rules.
+        include_plugin_owned: Also return rules bundled inside plugins
+            (hidden by default).
+        include_dot_claude: Return rules discovered under `.claude/` dirs
+            (shown by default).
 
     Returns:
         The matching RuleIndex rows, sorted by qualified name.
@@ -303,17 +335,34 @@ def list_rules(repo_alias: str | None = None) -> list[RuleIndex]:
         if repo_alias is not None:
             stmt = stmt.where(RuleIndex.repo_alias == repo_alias)  # type: ignore[arg-type]
         rows = list(session.exec(stmt).all())
+    rows = [
+        r
+        for r in rows
+        if origins.is_visible(
+            _effective_origin(r),
+            include_plugin_owned=include_plugin_owned,
+            include_dot_claude=include_dot_claude,
+        )
+    ]
     rows.sort(key=lambda r: r.qualified_name)
     return rows
 
 
-def search(query: str) -> list[RuleIndex]:
+def search(
+    query: str,
+    *,
+    include_plugin_owned: bool = False,
+    include_dot_claude: bool = True,
+) -> list[RuleIndex]:
     """Case-insensitive substring search across qualified_name, title, description."""
+    rows = list_rules(
+        include_plugin_owned=include_plugin_owned, include_dot_claude=include_dot_claude
+    )
     q = query.strip().lower()
     if not q:
-        return list_rules()
+        return rows
     out: list[RuleIndex] = []
-    for row in list_rules():
+    for row in rows:
         haystack = " ".join(filter(None, [row.qualified_name, row.title, row.description])).lower()
         if q in haystack:
             out.append(row)

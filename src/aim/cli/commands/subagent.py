@@ -29,14 +29,26 @@ app = typer.Typer(
 def agent_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also list sub-agents bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide sub-agents discovered under .claude/ directories."
+    ),
 ) -> None:
     """List indexed sub-agents."""
-    rows = agents_mod.list_agents(repo)
+    rows = agents_mod.list_agents(
+        repo,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title="subagents indexed",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
@@ -46,14 +58,26 @@ def agent_list(
 def agent_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also match sub-agents bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide sub-agents discovered under .claude/ directories."
+    ),
 ) -> None:
     """Search indexed sub-agents by substring."""
-    rows = agents_mod.search(query)
+    rows = agents_mod.search(
+        query,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title=f"subagents matching {query!r}",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 

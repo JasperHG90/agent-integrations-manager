@@ -340,3 +340,48 @@ def test_project_scoped_target_discovered_by_list(
     assert rows[0].source_path == "weather"  # the plugin directory
     assert rows[0].flavor == "gemini"
     assert rows[0].qualified_name == "a/weather"
+
+
+def test_owned_dirs_maps_prefix_to_plugin_name(home: Path, tmp_path: Path) -> None:
+    marketplace = {"name": "demo", "plugins": [{"name": "bundler", "source": "./bundler"}]}
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "bundler/.claude-plugin/plugin.json": json.dumps({"name": "bundler"}),
+            "bundler/skills/inner/SKILL.md": "# inner\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    from aim.core import git
+
+    repo_dir = repos.clone_dir("a")
+    sha = git.get_backend().resolve_ref(repo_dir, "HEAD")
+    tree = git.get_backend().ls_tree(repo_dir, sha)
+    owned = plugins.owned_dirs("a", repo_dir, sha, tree)
+    assert owned == {"bundler": "bundler"}
+    assert plugins.owning_plugin("bundler/skills/inner/SKILL.md", owned) == ("bundler", "bundler")
+    assert plugins.owning_plugin("skills/other/SKILL.md", owned) is None
+    # A whole-repo plugin ("" prefix) owns every path.
+    assert plugins.owning_plugin("anything/at/all.md", {"": "root-plugin"}) == ("", "root-plugin")
+
+
+def test_plugin_bundled_skill_indexed_but_hidden(home: Path, tmp_path: Path) -> None:
+    """Bundled artifacts ARE indexed (origin='plugin') but hidden from default lists."""
+    from aim.core import origins, skills
+
+    marketplace = {"name": "demo", "plugins": [{"name": "bundler", "source": "./bundler"}]}
+    bare = _build(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "bundler/.claude-plugin/plugin.json": json.dumps({"name": "bundler"}),
+            "bundler/skills/inner/SKILL.md": "# inner\n",
+            "skills/standalone/SKILL.md": "# standalone\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    revealed = {r.skill_name: r for r in skills.list_skills(include_plugin_owned=True)}
+    assert set(revealed) == {"standalone", "inner"}
+    assert revealed["inner"].origin == origins.ORIGIN_PLUGIN
+    assert revealed["inner"].owning_plugin == "bundler"

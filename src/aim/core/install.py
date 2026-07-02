@@ -423,6 +423,7 @@ def install(
     # We don't auto-install prereqs across repos (per the plan); the user
     # gets a clear print-list to install themselves.
     _warn_about_prereqs_and_capabilities(project_root, qualified_name)
+    _warn_if_plugin_owned(qualified_name)
 
     content_hash = _deploy(plan, override_risk=override_risk)
 
@@ -469,6 +470,28 @@ def take_install_warnings() -> list[str]:
     out = list(_install_warnings)
     _install_warnings.clear()
     return out
+
+
+def _warn_if_plugin_owned(qualified_name: str) -> None:
+    """Note when a skill being installed standalone is bundled inside a plugin.
+
+    Installing is allowed (it's just files at a pinned SHA, and the risk gate
+    still applies); the notice points at the plugin for users who wanted the
+    whole thing. Drained via `take_install_warnings()`.
+    """
+    from aim.core import origins
+    from aim.core import skills as skills_mod
+
+    with db.session() as session:
+        row = session.get(SkillIndex, qualified_name)
+    if row is None:
+        return
+    if skills_mod._effective_origin(row) == origins.ORIGIN_PLUGIN:
+        owner = f"{row.repo_alias}/{row.owning_plugin}" if row.owning_plugin else "a plugin"
+        _install_warnings.append(
+            f"note: {qualified_name} is bundled with plugin {owner}; installing standalone. "
+            "`aim plugin add` installs the whole plugin."
+        )
 
 
 def _warn_about_prereqs_and_capabilities(project_root: Path, qualified_name: str) -> None:
@@ -768,7 +791,9 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
         version=target_version,
         project_root=project_root,
     )
-    content_hash = _deploy(plan)
+    # Honor a prior --override-risk acknowledgment (as sync does): a rollback of
+    # an acknowledged artifact must not re-block on the same risk verdict.
+    content_hash = _deploy(plan, override_risk=existing.risk_acknowledged)
 
     existing.push_history(
         SkillVersion(

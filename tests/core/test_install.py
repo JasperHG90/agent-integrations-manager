@@ -277,3 +277,26 @@ def test_install_rejects_hidden_unicode(home: Path, project_root: Path, tmp_path
     with pytest.raises(content_guard.HiddenUnicodeError):
         install.install(project_root, "a/foo")
     assert not (project_root / ".claude" / "skills" / "foo").exists()
+
+
+def test_install_plugin_owned_skill_emits_notice(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """Installing a plugin-bundled skill standalone works but notes the plugin."""
+    import json
+
+    marketplace = {"name": "demo", "plugins": [{"name": "bundler", "source": "./bundler"}]}
+    _, bare = _build_repo(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "bundler/.claude-plugin/plugin.json": json.dumps({"name": "bundler"}),
+            "bundler/skills/inner/SKILL.md": "# inner\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    install.take_install_warnings()  # drain any leftovers
+    install.install(project_root, "a/inner")
+    warnings = install.take_install_warnings()
+    assert any("bundled with plugin a/bundler" in w for w in warnings)
+    assert (project_root / ".claude" / "skills" / "inner" / "SKILL.md").exists()

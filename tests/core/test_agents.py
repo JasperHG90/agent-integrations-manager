@@ -172,3 +172,50 @@ def test_read_agent_content(home: Path, tmp_path: Path) -> None:
 def test_read_agent_content_missing_raises(home: Path) -> None:
     with pytest.raises(agents.AgentNotIndexedError):
         agents.read_agent_content("a/missing")
+
+
+# ---------------------------------------------------------------------------
+# provenance (origin) filters
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_owned_agent_indexed_hidden_by_default(home: Path, tmp_path: Path) -> None:
+    import json
+
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "helper", "source": "./helper", "version": "1.0.0"}],
+    }
+    bare = _build_repo_with(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "helper/.claude-plugin/plugin.json": json.dumps({"name": "helper"}),
+            "helper/agents/triage/AGENT.md": "# Triage\n",
+            "agents/review/AGENT.md": "# Review\n",
+        },
+    )
+    repos.add("pm", f"file://{bare}")
+    from aim.core import origins
+
+    assert [r.qualified_name for r in agents.list_agents()] == ["pm/review"]
+    rows = agents.list_agents(include_plugin_owned=True)
+    assert [r.qualified_name for r in rows] == ["pm/review", "pm/triage"]
+    by_name = {r.qualified_name: r for r in rows}
+    assert by_name["pm/triage"].origin == origins.ORIGIN_PLUGIN
+    assert by_name["pm/triage"].owning_plugin == "helper"
+    assert by_name["pm/review"].origin == origins.ORIGIN_CANONICAL
+
+
+def test_dot_claude_agent_excludable(home: Path, tmp_path: Path) -> None:
+    bare = _build_repo_with(
+        tmp_path,
+        {
+            "agents/review/AGENT.md": "# Review\n",
+            ".claude/agents/dotted/AGENT.md": "# Dotted\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    assert [r.qualified_name for r in agents.list_agents()] == ["a/dotted", "a/review"]
+    only_canon = agents.list_agents(include_dot_claude=False)
+    assert [r.qualified_name for r in only_canon] == ["a/review"]

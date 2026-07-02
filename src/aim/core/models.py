@@ -40,6 +40,9 @@ class SkillIndex(SQLModel, table=True):  # type: ignore[call-arg]
     # Comma-separated lists; SQLite has no array type. Use empty string for none.
     prereqs: str = ""  # qualified_names this skill requires (informational)
     provides: str = ""  # capability tags this skill claims to fulfill
+    # Provenance (origins.py constants). None = legacy row from a pre-origin index.
+    origin: str | None = None
+    owning_plugin: str | None = None  # bare plugin name when origin == "plugin"
 
 
 class Template(SQLModel, table=True):  # type: ignore[call-arg]
@@ -82,6 +85,9 @@ class AgentIndex(SQLModel, table=True):  # type: ignore[call-arg]
     indexed_at_sha: str
     tools: str = ""  # CSV for search only
     model: str | None = None
+    # Provenance (origins.py constants). None = legacy row from a pre-origin index.
+    origin: str | None = None
+    owning_plugin: str | None = None  # bare plugin name when origin == "plugin"
 
 
 class RuleIndex(SQLModel, table=True):  # type: ignore[call-arg]
@@ -94,6 +100,9 @@ class RuleIndex(SQLModel, table=True):  # type: ignore[call-arg]
     title: str | None = None
     description: str | None = None
     indexed_at_sha: str
+    # Provenance (origins.py constants). None = legacy row from a pre-origin index.
+    origin: str | None = None
+    owning_plugin: str | None = None  # bare plugin name when origin == "plugin"
 
 
 class TargetIndex(SQLModel, table=True):  # type: ignore[call-arg]

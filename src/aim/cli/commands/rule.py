@@ -29,14 +29,26 @@ app = typer.Typer(
 def rule_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also list rules bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide rules discovered under .claude/ directories."
+    ),
 ) -> None:
     """List indexed rules."""
-    rows = repo_rules_mod.list_rules(repo)
+    rows = repo_rules_mod.list_rules(
+        repo,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title="rules indexed",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
@@ -46,14 +58,26 @@ def rule_list(
 def rule_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also match rules bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide rules discovered under .claude/ directories."
+    ),
 ) -> None:
     """Search indexed rules by substring."""
-    rows = repo_rules_mod.search(query)
+    rows = repo_rules_mod.search(
+        query,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title=f"rules matching {query!r}",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
@@ -106,6 +130,8 @@ def rule_add(
         installed = rule_install_mod.install(
             _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
         )
+    for warn in rule_install_mod.take_install_warnings():
+        typer.echo(f"warning: {warn}")
     typer.echo(f"added rule {qualified_name} {installed.current.identifier()}")
 
 

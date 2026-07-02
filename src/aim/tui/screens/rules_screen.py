@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Input, Static
 
-from aim.core import git, manifest, repo_rules, repos, risk, rule_install
+from aim.core import git, manifest, repo_rules, repos, risk, rule_install, user_config
 from aim.tui import errors as tui_errors
 from aim.tui.modals.busy import BusyModal
 from aim.tui.modals.repo_filter import RepoFilterModal, RepoFilterPick
@@ -28,6 +28,8 @@ class RulesScreen(Screen[None]):
         ("b", "app.pop_screen", "Back"),
         ("slash", "focus_search", "Search"),
         ("f", "pick_repo_filter", "Filter by repo"),
+        ("p", "toggle_plugin_owned", "Plugin-owned"),
+        ("d", "toggle_dot_claude", ".claude"),
         ("enter", "view_current", "View"),
         ("v", "view_current", "View"),
         ("i", "install_current", "Add"),
@@ -36,11 +38,14 @@ class RulesScreen(Screen[None]):
     ]
 
     def __init__(self) -> None:
-        """Initialize the screen with no repo filter and no install in flight."""
+        """Initialize with no repo filter and the persisted provenance defaults."""
         super().__init__()
         self._repo_filter: str | None = None
         self._installing: tuple[str, RuleInstallConfig] | None = None
         self._busy: BusyModal | None = None
+        prefs = user_config.load().tui.filters
+        self._show_plugin_owned = prefs.show_plugin_owned
+        self._show_dot_claude = prefs.show_dot_claude
 
     def compose(self) -> ComposeResult:
         """Build the title, search bar, rules table, status line, and hint."""
@@ -49,7 +54,8 @@ class RulesScreen(Screen[None]):
         yield DataTable(id="rules-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
-            "[/] Search  [f] Repo filter  [enter/v] View  [a/i] Add  [b] Back  [q] Quit",
+            "[/] Search  [f] Repo filter  [p] Plugin-owned  [d] .claude  "
+            "[enter/v] View  [a/i] Add  [b] Back  [q] Quit",
             id="hint",
             markup=False,
         )
@@ -57,7 +63,7 @@ class RulesScreen(Screen[None]):
     def on_mount(self) -> None:
         """Set up the table columns, populate all rules, and focus the table."""
         table = self.query_one(DataTable)
-        table.add_columns("qualified name", "title", "description")
+        table.add_columns("qualified name", "title", "description", "origin")
         self._populate("")
         table.focus()
 
@@ -75,26 +81,38 @@ class RulesScreen(Screen[None]):
         table = self.query_one(DataTable)
         selected = self._selected()
         table.clear()
-        rows = repo_rules.search(query) if query else repo_rules.list_rules()
+        rows = (
+            repo_rules.search(
+                query,
+                include_plugin_owned=self._show_plugin_owned,
+                include_dot_claude=self._show_dot_claude,
+            )
+            if query
+            else repo_rules.list_rules(
+                include_plugin_owned=self._show_plugin_owned,
+                include_dot_claude=self._show_dot_claude,
+            )
+        )
         if self._repo_filter is not None:
             rows = [r for r in rows if r.repo_alias == self._repo_filter]
-        filter_label = f" [repo={self._repo_filter}]" if self._repo_filter else ""
+        filter_label = self._filter_label()
         if not rows:
             if not query and self._repo_filter is None:
-                self._status("no rules indexed — add a repo from the Repos screen")
+                self._status(f"no rules indexed — add a repo from the Repos screen{filter_label}")
             else:
                 bits = []
                 if query:
                     bits.append(f"{query!r}")
                 if self._repo_filter:
                     bits.append(f"repo={self._repo_filter}")
-                self._status("no matches for " + " ".join(bits))
+                self._status("no matches for " + " ".join(bits) + filter_label)
             return
         for r in rows:
             table.add_row(
                 r.qualified_name,
                 r.title or "",
                 (r.description or "")[:60],
+                repo_rules._effective_origin(r),
                 key=r.qualified_name,
             )
         if selected is not None:
@@ -103,6 +121,29 @@ class RulesScreen(Screen[None]):
             except Exception:
                 pass
         self._status(f"{len(rows)} rule(s){filter_label}")
+
+    def _filter_label(self) -> str:
+        """Describe the active repo/provenance filters for the status line."""
+        bits = []
+        if self._repo_filter:
+            bits.append(f"[repo={self._repo_filter}]")
+        if self._show_plugin_owned:
+            bits.append("[+plugin-owned]")
+        if not self._show_dot_claude:
+            bits.append("[-.claude]")
+        return (" " + " ".join(bits)) if bits else ""
+
+    def action_toggle_plugin_owned(self) -> None:
+        """Toggle plugin-owned visibility and persist the preference."""
+        self._show_plugin_owned = not self._show_plugin_owned
+        user_config.set_value("tui.filters.show_plugin_owned", str(self._show_plugin_owned))
+        self._populate(self.query_one("#search-bar", Input).value)
+
+    def action_toggle_dot_claude(self) -> None:
+        """Toggle .claude-found visibility and persist the preference."""
+        self._show_dot_claude = not self._show_dot_claude
+        user_config.set_value("tui.filters.show_dot_claude", str(self._show_dot_claude))
+        self._populate(self.query_one("#search-bar", Input).value)
 
     def action_pick_repo_filter(self) -> None:
         """Open a picker to filter by a single repo (or clear the filter)."""

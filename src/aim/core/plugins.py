@@ -77,27 +77,36 @@ def _rank(plugin: DiscoveredPlugin, kind_order: dict[str, int]) -> tuple[int, in
     return (kind_order.get(plugin.kind, 99), plugin.source_path.count("/"), plugin.source_path)
 
 
-def owned_dir_prefixes(repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> set[str]:
-    """Source dirs of dir-kind plugins in a repo.
+def owned_dirs(repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> dict[str, str]:
+    """Source dirs of dir-kind plugins in a repo, mapped to the owning plugin name.
 
-    Skills/agents/rules living UNDER one of these are bundled with a plugin and
-    must not surface as standalone artifacts (filter with `is_plugin_owned`).
+    Skills/agents/rules/hooks living UNDER one of these are bundled with a plugin;
+    they are indexed with ``origin="plugin"`` (attributed via `owning_plugin`) and
+    hidden from lists by default rather than surfaced as standalone artifacts.
     """
-    prefixes: set[str] = set()
+    owned: dict[str, str] = {}
     for kind in plugin_kinds.load_kinds().values():
         for plugin in kind.discover(repo_alias, repo_dir, sha, tree).plugins:
             if plugin.source_unit == "dir":
-                prefixes.add(plugin.source_path.rstrip("/"))
-    return prefixes
+                owned[plugin.source_path.rstrip("/")] = plugin.name
+    return owned
 
 
-def is_plugin_owned(path: str, prefixes: set[str]) -> bool:
-    """True if a repo-relative path lives inside one of the plugin source dirs.
+def owning_plugin(path: str, owned: dict[str, str]) -> tuple[str, str] | None:
+    """The ``(source_dir, plugin_name)`` owning a repo-relative path, or None.
 
-    An empty prefix is a whole-repo plugin (``source: "./"``): it owns every path,
-    so the repo's skills/agents/rules don't also surface as standalone artifacts.
+    An empty prefix is a whole-repo plugin (``source: "./"``): it owns every path.
+    When several plugin dirs contain the path (nested dirs), the most specific
+    (longest) prefix wins so attribution is deterministic. The source dir lets
+    callers apply their location conventions relative to the plugin root (e.g. a
+    plugin's rules live at ``<plugin>/rules/``).
     """
-    return any(d == "" or path == d or path.startswith(f"{d}/") for d in prefixes)
+    best: tuple[str, str] | None = None
+    for d, name in owned.items():
+        if d == "" or path == d or path.startswith(f"{d}/"):
+            if best is None or len(d) > len(best[0]):
+                best = (d, name)
+    return best
 
 
 def _discover_in_repo(repo_alias: str, kinds: dict[str, plugin_kinds.PluginKind]) -> IndexResult:

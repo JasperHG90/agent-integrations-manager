@@ -651,8 +651,10 @@ def test_validate_remote_rejects_insecure_http(home: Path, project_root: Path) -
 
 
 def test_manifest_migration_adds_policy_fields() -> None:
+    from aim.core.models import CURRENT_MANIFEST_VERSION
+
     out = manifest_migrate.migrate({"manifest_version": 8, "skills": [], "rules": []})
-    assert out["manifest_version"] == 17
+    assert out["manifest_version"] == CURRENT_MANIFEST_VERSION
     assert out["plugins"] == []
     assert out["targets"] == []
     assert out["repos"] == {}
@@ -674,8 +676,10 @@ def test_declarations_migration_v3_to_v4_adds_policy(home: Path, project_root: P
     (project_root / "aim.toml").write_text(
         tomli_w.dumps({"manifest_version": 3, "instruction_template": "default"})
     )
+    from aim.core.models import CURRENT_DECLARATIONS_VERSION
+
     decl = declarations.load(project_root)
-    assert decl.manifest_version == 11
+    assert decl.manifest_version == CURRENT_DECLARATIONS_VERSION
     assert decl.policy == {}
     assert decl.archetype.is_builtin
     assert decl.template is None

@@ -68,6 +68,23 @@ def take_install_warnings() -> list[str]:
     return out
 
 
+def _warn_if_plugin_owned(row: agents.AgentIndex) -> None:
+    """Note when an agent being installed standalone is bundled inside a plugin.
+
+    Installing is allowed (it's just files at a pinned SHA, and the risk gate
+    still applies); the notice points at the plugin for users who wanted the
+    whole thing. Drained via `take_install_warnings()`.
+    """
+    from aim.core import origins
+
+    if agents._effective_origin(row) == origins.ORIGIN_PLUGIN:
+        owner = f"{row.repo_alias}/{row.owning_plugin}" if row.owning_plugin else "a plugin"
+        _agent_install_warnings.append(
+            f"note: {row.qualified_name} is bundled with plugin {owner}; installing "
+            "standalone. `aim plugin add` installs the whole plugin."
+        )
+
+
 def _load_manifest(project_root: Path) -> Manifest:
     """Load the project manifest, creating an empty one if absent."""
     return manifest.load_or_create(project_root)
@@ -246,6 +263,7 @@ def install(
         The created or updated manifest record for the installed agent.
     """
     row = _agent_index_row(qualified_name)
+    _warn_if_plugin_owned(row)
     version = resolve_install_version(
         row.repo_alias, row.source_path, track=track, pin=pin, artifact_name="AGENT.md"
     )
@@ -480,7 +498,11 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
             installed_at=target_version.installed_at,
         )
     )
-    existing.content_hash = _write_agent(project_root, qualified_name, content, target)
+    # Honor a prior --override-risk acknowledgment (as sync does): a rollback of
+    # an acknowledged artifact must not re-block on the same risk verdict.
+    existing.content_hash = _write_agent(
+        project_root, qualified_name, content, target, override_risk=existing.risk_acknowledged
+    )
     manifest.save(project_root, m)
     declarations._update_agent(project_root, existing)
     return existing

@@ -20,14 +20,26 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help="Discover and
 def skill_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also list skills bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide skills discovered under .claude/ directories."
+    ),
 ) -> None:
     """List indexed skills."""
-    rows = skills_mod.list_skills(repo)
+    rows = skills_mod.list_skills(
+        repo,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title="skills indexed",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 
@@ -37,14 +49,26 @@ def skill_list(
 def skill_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
+    include_plugin_owned: bool = typer.Option(
+        False,
+        "--include-plugin-owned",
+        help="Also match skills bundled inside plugins (hidden by default).",
+    ),
+    exclude_dot_claude: bool = typer.Option(
+        False, "--exclude-dot-claude", help="Hide skills discovered under .claude/ directories."
+    ),
 ) -> None:
     """Search indexed skills by substring."""
-    rows = skills_mod.search(query)
+    rows = skills_mod.search(
+        query,
+        include_plugin_owned=include_plugin_owned,
+        include_dot_claude=not exclude_dot_claude,
+    )
     format_mod.render(
         rows,
         _get_format(ctx),
         title=f"skills matching {query!r}",
-        columns=["qualified_name", "repo_alias", "title", "description"],
+        columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
 

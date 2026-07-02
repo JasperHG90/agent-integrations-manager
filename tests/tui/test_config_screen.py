@@ -86,3 +86,25 @@ async def test_active_profile_refreshes_on_resume(home: Path, project_root: Path
         updated = str(app.screen.query_one("#active-profile", Static).content)
         assert "custom-test" in updated
         assert updated != initial
+
+
+@pytest.mark.asyncio
+async def test_user_prefs_pane_saves_toggles(home: Path, project_root: Path) -> None:
+    from textual.widgets import Button
+
+    from aim.core import user_config
+    from aim.tui.widgets import ToggleRow
+
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    app = AimApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ConfigScreen(project_root))
+        await pilot.pause()
+        plugin_toggle = app.screen.query_one("#pref-plugin-owned", ToggleRow)
+        assert plugin_toggle.value is False  # default
+        plugin_toggle.toggle()
+        app.screen.query_one("#prefs-save", Button).press()
+        await pilot.pause()
+    assert user_config.load().tui.filters.show_plugin_owned is True
+    assert user_config.load().tui.filters.show_dot_claude is True
