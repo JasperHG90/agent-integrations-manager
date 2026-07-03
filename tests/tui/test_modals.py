@@ -535,3 +535,78 @@ async def test_rule_install_modal_override_risk_flows_into_config(
 
     assert result is not None
     assert result.override_risk is True
+
+
+def _mcp_server(name: str = "playwright-mcp", version: str = "1.0.0"):
+    from aim.core import mcp_registry
+
+    return mcp_registry.McpServer(
+        name=name,
+        description=f"{name} description",
+        version=version,
+        packages=[],
+        remotes=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_install_modal_args_override_flows_into_config(
+    home: Path, project_root: Path
+) -> None:
+    from aim.tui.modals.mcp_install import McpInstallConfig, McpInstallModal
+
+    app = AimApp()
+    result: McpInstallConfig | None = None
+
+    def capture(cfg: McpInstallConfig | None) -> None:
+        nonlocal result
+        result = cfg
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(McpInstallModal(_mcp_server()), capture)
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, McpInstallModal)
+        modal.query_one("#project-root", Input).value = str(project_root)
+        modal.query_one("#command", Input).value = "npx"
+        modal.query_one("#args", Input).value = '-y @playwright/mcp@latest --header "X: a b"'
+        modal.action_submit()
+        await pilot.pause()
+
+    assert result is not None
+    assert result.overrides == {
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest", "--header", "X: a b"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_mcp_install_modal_invalid_args_shows_error(home: Path, project_root: Path) -> None:
+    from textual.widgets import Static
+
+    from aim.tui.modals.mcp_install import McpInstallConfig, McpInstallModal
+
+    app = AimApp()
+    result: McpInstallConfig | None = None
+    dismissed = False
+
+    def capture(cfg: McpInstallConfig | None) -> None:
+        nonlocal result, dismissed
+        result = cfg
+        dismissed = True
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(McpInstallModal(_mcp_server()), capture)
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, McpInstallModal)
+        modal.query_one("#project-root", Input).value = str(project_root)
+        modal.query_one("#args", Input).value = '-y "unterminated'
+        modal.action_submit()
+        await pilot.pause()
+
+        # Modal stays open with an inline error; nothing was dismissed.
+        assert not dismissed
+        assert "invalid args" in str(modal.query_one("#error", Static).content)

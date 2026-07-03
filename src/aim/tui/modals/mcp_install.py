@@ -6,6 +6,7 @@ local alias, preferred transport, and simple overrides.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,6 +105,10 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
                 ),
                 Static("Override command (optional):", markup=False),
                 Input(placeholder="npx", id="command"),
+                Static(
+                    "Override args (optional, shell-style; quote to keep spaces):", markup=False
+                ),
+                Input(placeholder="-y @scope/server@latest", id="args"),
                 Static("Override URL (optional):", markup=False),
                 Input(placeholder="https://…", id="url"),
                 Horizontal(
@@ -139,7 +144,7 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Submit the form when a relevant text input is confirmed."""
-        if event.input.id in ("project-root", "alias", "command", "url"):
+        if event.input.id in ("project-root", "alias", "command", "args", "url"):
             self._submit()
 
     def action_submit(self) -> None:
@@ -171,11 +176,21 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
         if isinstance(transport, str):
             transport = transport.strip() or None
         command = self.query_one("#command", Input).value.strip() or None
+        args_raw = self.query_one("#args", Input).value.strip()
+        args: list[str] | None = None
+        if args_raw:
+            try:
+                args = shlex.split(args_raw)
+            except ValueError as exc:
+                self._error(f"invalid args: {exc}")
+                return
         url = self.query_one("#url", Input).value.strip() or None
         force = self.query_one("#force", ToggleRow).value
         overrides: dict[str, object] = {}
         if command:
             overrides["command"] = command
+        if args:
+            overrides["args"] = args
         if url:
             overrides["url"] = url
         self.dismiss(
