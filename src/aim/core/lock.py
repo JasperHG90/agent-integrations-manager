@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1002,6 +1003,18 @@ def _target_key(t: InstalledTarget) -> tuple:
     )
 
 
+def _hashable_overrides(overrides: dict[str, object] | None) -> str | None:
+    """Canonicalize an overrides mapping into a hashable, order-stable string.
+
+    Override values are arbitrary objects (possibly nested dicts/lists), so a
+    JSON string with sorted keys is used to make the identity key hashable and
+    insensitive to key ordering.
+    """
+    if overrides is None:
+        return None
+    return json.dumps(overrides, sort_keys=True, default=str)
+
+
 def _mcp_key(m: InstalledMcpServer) -> tuple:
     """Build the identity tuple used to detect whether a locked MCP server changed."""
     return (
@@ -1010,8 +1023,8 @@ def _mcp_key(m: InstalledMcpServer) -> tuple:
         m.entry_hash,
         m.current.definition_hash,
         m.current.registry_version,
-        m.current.overrides,
-        m.overrides,
+        _hashable_overrides(m.current.overrides),
+        _hashable_overrides(m.overrides),
     )
 
 

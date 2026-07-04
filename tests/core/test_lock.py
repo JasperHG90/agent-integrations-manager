@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from aim.core import declarations, git, lock, manifest, repos
 from aim.core import init as init_mod
-from aim.core.models import DeclaredSkill, ProjectDeclarations, SkillVersion
+from aim.core.models import (
+    DeclaredSkill,
+    InstalledMcpServer,
+    Manifest,
+    McpClaudeEntry,
+    McpServerVersion,
+    ProjectDeclarations,
+    SkillVersion,
+)
 from tests.fixtures import git_fixtures
 
 
@@ -523,3 +532,78 @@ def test_resolve_ref_cached_dedups_within_run(tmp_path: Path) -> None:
     finally:
         git.set_backend(real)
         lock._ref_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# MCP metadata preservation with overrides (dict fields must stay hashable)
+# ---------------------------------------------------------------------------
+
+
+def _mcp_server(*, overrides: dict[str, object] | None, at: datetime) -> InstalledMcpServer:
+    """Build an InstalledMcpServer carrying `overrides` on both the server and its
+    current version — the two dict-valued fields that feed `_mcp_key`."""
+    entry = McpClaudeEntry(type="stdio", command="run", args=["--x"])
+    return InstalledMcpServer(
+        alias="srv",
+        registry_name="reg/srv",
+        entry=entry,
+        entry_hash="e" * 64,
+        current=McpServerVersion(
+            definition_hash="d" * 64,
+            registry_version="1.0.0",
+            installed_at=at,
+            overrides=overrides,
+        ),
+        overrides=overrides,
+        history=[],
+    )
+
+
+def test_mcp_key_is_hashable_with_dict_overrides() -> None:
+    """`_mcp_key` must return a hashable tuple even when overrides are dicts —
+    it is used as a dict key in `_preserve_unchanged_metadata`."""
+    m = _mcp_server(
+        overrides={"args": ["--flag"], "env": {"A": "1"}}, at=datetime(2024, 1, 1, tzinfo=UTC)
+    )
+    hash(lock._mcp_key(m))  # must not raise TypeError: unhashable type: 'dict'
+
+
+def test_preserve_metadata_carries_history_for_unchanged_mcp_with_overrides() -> None:
+    """Regression: a re-lock of an MCP server with dict overrides must not crash
+    and must copy prior `current`/`history` onto the matching new entry."""
+    t0 = datetime(2024, 1, 1, tzinfo=UTC)
+    t1 = datetime(2024, 6, 1, tzinfo=UTC)
+    overrides: dict[str, object] = {"args": ["--flag"], "env": {"A": "1"}}
+
+    prev = _mcp_server(overrides=overrides, at=t0)
+    prev.history = [McpServerVersion(definition_hash="0" * 64, installed_at=t0)]
+    existing = Manifest(mcp_servers=[prev])
+
+    # Same identity (same overrides), freshly stamped time — should be treated as unchanged.
+    fresh = _mcp_server(overrides=dict(overrides), at=t1)
+    new = Manifest(mcp_servers=[fresh])
+
+    lock._preserve_unchanged_metadata(existing, new)
+
+    assert new.mcp_servers[0].current.installed_at == t0
+    assert len(new.mcp_servers[0].history) == 1
+
+
+def test_preserve_metadata_treats_changed_overrides_as_new_mcp() -> None:
+    """When overrides differ, the entry is a different identity — prior metadata
+    must NOT be carried over, and no crash from the dict fields."""
+    t0 = datetime(2024, 1, 1, tzinfo=UTC)
+    t1 = datetime(2024, 6, 1, tzinfo=UTC)
+
+    prev = _mcp_server(overrides={"args": ["--old"]}, at=t0)
+    prev.history = [McpServerVersion(definition_hash="0" * 64, installed_at=t0)]
+    existing = Manifest(mcp_servers=[prev])
+
+    fresh = _mcp_server(overrides={"args": ["--new"]}, at=t1)
+    new = Manifest(mcp_servers=[fresh])
+
+    lock._preserve_unchanged_metadata(existing, new)
+
+    # Overrides changed → not matched → keeps its fresh stamp and gains no prior history.
+    assert new.mcp_servers[0].current.installed_at == t1
+    assert new.mcp_servers[0].history == []
