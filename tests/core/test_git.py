@@ -123,3 +123,31 @@ def test_cat_files_text_falls_back_and_skips_missing(tmp_path: Path) -> None:
 
 def test_cat_files_text_empty_paths_returns_empty(tmp_path: Path) -> None:
     assert git.cat_files_text(tmp_path / "no-such-repo", "deadbeef", []) == {}
+
+
+def test_default_branch_returns_remote_default(backend: git.RealGitBackend, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(tmp_path / "src", {"README.md": "x\n"})
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    backend.clone_bare(f"file://{bare}", tmp_path / "clone")
+    assert backend.default_branch(tmp_path / "clone") == "main"
+
+
+def test_commits_behind_counts_missing_commits(backend: git.RealGitBackend, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(tmp_path / "src", {"README.md": "x\n"})
+    git_fixtures.add_tag(working, "v0")  # tags the initial commit
+    git_fixtures.add_commit(working, {"a.txt": "a\n"}, "c2")
+    git_fixtures.add_commit(working, {"b.txt": "b\n"}, "c3")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    backend.clone_bare(f"file://{bare}", tmp_path / "clone")
+    clone = tmp_path / "clone"
+
+    assert backend.commits_behind(clone, "v0", "main") == 2  # v0 is 2 behind main
+    assert backend.commits_behind(clone, "main", "main") == 0  # same ref, no lag
+
+
+def test_commits_behind_rejects_dash_prefix(backend: git.RealGitBackend, tmp_path: Path) -> None:
+    working = git_fixtures.make_source_repo(tmp_path / "src", {"README.md": "x\n"})
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    backend.clone_bare(f"file://{bare}", tmp_path / "clone")
+    with pytest.raises(git.GitError, match="ref must not start with '-'"):
+        backend.commits_behind(tmp_path / "clone", "--evil", "main")

@@ -85,6 +85,14 @@ class GitBackend(Protocol):
         """Return the SHA of the last commit touching `source_path`."""
         ...
 
+    def default_branch(self, repo_dir: Path) -> str | None:
+        """Return the remote's default branch name (e.g. `main`), or None."""
+        ...
+
+    def commits_behind(self, repo_dir: Path, ref: str, base: str) -> int:
+        """Count commits reachable from `base` but not from `ref`."""
+        ...
+
 
 def _run(
     args: Iterable[str],
@@ -338,6 +346,32 @@ class RealGitBackend:
         if not sha:
             raise GitError(f"no commits touch {path_spec} reachable from {ref}")
         return sha
+
+    def default_branch(self, repo_dir: Path) -> str | None:
+        """Return the remote's default branch (e.g. `main`), or None if undetermined.
+
+        A ``--mirror`` clone mirrors the remote's symbolic HEAD, so the bare clone's
+        HEAD points at the remote's default branch. Returns None when HEAD is detached
+        or unresolvable (e.g. an empty remote).
+        """
+        try:
+            out = _run(["git", "-C", str(repo_dir), "symbolic-ref", "--short", "HEAD"])
+        except GitError:
+            return None
+        name = out.decode().strip()
+        return name or None
+
+    def commits_behind(self, repo_dir: Path, ref: str, base: str) -> int:
+        """Count commits reachable from `base` but not from `ref` (`ref..base`).
+
+        This is how many commits `ref` is missing relative to `base` — the "behind"
+        distance. Raises GitError if either ref starts with '-' or does not resolve.
+        """
+        for name in (ref, base):
+            if name.startswith("-"):
+                raise GitError(f"ref must not start with '-': {name!r}")
+        out = _run(["git", "-C", str(repo_dir), "rev-list", "--count", f"{ref}..{base}"])
+        return int(out.decode().strip() or "0")
 
 
 def remove_clone(repo_dir: Path) -> None:

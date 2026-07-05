@@ -12,6 +12,7 @@ from textual.worker import WorkerState
 from aim.core import git, repos
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.repo_add import RepoAddModal, RepoAddResult
+from aim.tui.modals.repo_edit_ref import RepoEditRefModal, RepoEditRefResult
 
 
 def kind_tag(kinds: set[str]) -> str:
@@ -45,6 +46,7 @@ class ReposScreen(Screen[None]):
         ("b", "app.pop_screen", "Back"),
         ("a", "add_repo", "Add"),
         ("r", "refresh_current", "Refresh"),
+        ("e", "edit_ref_current", "Edit ref"),
         ("i", "reindex_current", "Reindex"),
         ("x", "remove_current", "Remove"),
         ("q", "app.quit", "Quit"),
@@ -53,6 +55,7 @@ class ReposScreen(Screen[None]):
     _adding: RepoAddResult | None = None
     _refreshing: str | None = None
     _reindexing: str | None = None
+    _editing: RepoEditRefResult | None = None
 
     def compose(self) -> ComposeResult:
         """Build the title, repos table, status line, and key hint."""
@@ -60,7 +63,7 @@ class ReposScreen(Screen[None]):
         yield DataTable(id="repos-table", cursor_type="row")
         yield Static("", id="status", markup=False)
         yield Static(
-            "[a] Add  [r] Refresh  [i] Reindex  [x] Remove  [b] Back  [q] Quit",
+            "[a] Add  [r] Refresh  [e] Edit ref  [i] Reindex  [x] Remove  [b] Back  [q] Quit",
             id="hint",
             markup=False,
         )
@@ -68,7 +71,7 @@ class ReposScreen(Screen[None]):
     def on_mount(self) -> None:
         """Set up the table columns, populate rows, and focus the table."""
         table = self.query_one(DataTable)
-        table.add_columns("alias", "url", "head", "last fetched", "contains")
+        table.add_columns("alias", "ref", "behind", "url", "head", "last fetched", "contains")
         self._populate()
         table.focus()
 
@@ -95,7 +98,9 @@ class ReposScreen(Screen[None]):
                     fetched = fetched.replace(tzinfo=UTC)
                 when = _humanize((now - fetched).total_seconds())
             tag = kind_tag(repos.artifact_kinds(r.alias))
-            table.add_row(r.alias, r.url, sha, when, tag, key=r.alias)
+            lag = repos.tracked_ref_lag(r.alias)
+            behind = f"{lag.behind} behind {lag.default_branch}" if lag else ""
+            table.add_row(r.alias, r.default_ref, behind, r.url, sha, when, tag, key=r.alias)
         if selected_alias is not None:
             try:
                 table.move_cursor(row=table.get_row_index(selected_alias), animate=False)
@@ -180,6 +185,15 @@ class ReposScreen(Screen[None]):
                 self._populate()
             elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._reindexing = None
+        editing = getattr(self, "_editing", None)
+        if editing is not None:
+            if event.state == WorkerState.RUNNING:
+                self._status(f"setting {editing.alias} ref -> {editing.default_ref}…")
+            elif event.state == WorkerState.SUCCESS:
+                self._editing = None
+                self._populate()
+            elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
+                self._editing = None
 
     def action_refresh_current(self) -> None:
         """Start a background refresh of the selected repo."""
@@ -205,6 +219,52 @@ class ReposScreen(Screen[None]):
         self.app.call_from_thread(self.app.notify, f"refreshed {alias}", title="Repo refreshed")
         self.app.call_from_thread(
             self._status, f"refreshed {alias}: HEAD={(repo.last_sha or '?')[:12]}"
+        )
+        self.app.call_from_thread(self._populate)
+
+    def action_edit_ref_current(self) -> None:
+        """Open the edit-ref modal for the selected repo and handle its result."""
+        alias = self._selected_alias()
+        if alias is None:
+            self._notify_or_status("no row selected")
+            return
+        current = repos.get(alias).default_ref
+        self.app.push_screen(RepoEditRefModal(alias, current), self._on_edit_ref)
+
+    def _on_edit_ref(self, result: RepoEditRefResult | None) -> None:
+        """Kick off a background set-ref for the modal result.
+
+        Args:
+            result: The completed edit-ref form, or None if the modal was cancelled.
+        """
+        if result is None:
+            return
+        self._status(f"setting {result.alias} ref -> {result.default_ref}…")
+        self._editing = result
+        self.run_worker(self._do_edit_ref_thread, exclusive=True, thread=True)
+
+    def _do_edit_ref_thread(self) -> None:
+        """Apply the pending ref change on a worker thread, reporting status to the UI."""
+        result = self._editing
+        if result is None:
+            return
+        try:
+            repo = repos.set_ref(result.alias, result.default_ref)
+        except (
+            repos.RepoNotFoundError,
+            repos.RefNotFoundError,
+            repos.RefDisappearedError,
+            git.GitError,
+        ) as exc:
+            self.app.call_from_thread(self.app.notify, f"set ref failed: {exc}", severity="error")
+            self.app.call_from_thread(self._status, f"set ref failed: {exc}")
+            return
+        self.app.call_from_thread(
+            self.app.notify, f"{result.alias} now tracks {result.default_ref}", title="Ref updated"
+        )
+        self.app.call_from_thread(
+            self._status,
+            f"set {result.alias} ref -> {result.default_ref} (HEAD={(repo.last_sha or '?')[:12]})",
         )
         self.app.call_from_thread(self._populate)
 

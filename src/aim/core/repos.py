@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -770,6 +771,10 @@ class RefDisappearedError(RuntimeError):
     """default_ref no longer resolves on the remote (branch deleted, etc.)."""
 
 
+class RefNotFoundError(ValueError):
+    """A ref requested via `set_ref` does not resolve in the repo's clone."""
+
+
 def _fetch(alias: str, *, allow_insecure: bool = False) -> None:
     """Fetch a repo's remote into its bare clone (network only, no DB writes).
 
@@ -888,6 +893,78 @@ def reindex(alias: str, *, allow_insecure: bool = False) -> RegisteredRepo:
     get(alias)  # raise RepoNotFoundError early if the alias is unknown
     _fetch(alias, allow_insecure=allow_insecure)
     return _resolve_and_reindex(alias, previous_sha=None, force=True)
+
+
+def set_ref(alias: str, new_ref: str, *, allow_insecure: bool = False) -> RegisteredRepo:
+    """Change the ref (branch or tag) a registered repo tracks, then reindex.
+
+    Fetches first so a freshly-pushed branch/tag is available, validates that
+    `new_ref` resolves BEFORE persisting (so a typo never leaves the repo pointing
+    at a dead ref), records the new `default_ref`, and re-resolves + reindexes so
+    the new ref takes effect immediately.
+
+    Args:
+        alias: The repo alias to re-point.
+        new_ref: The branch or tag to track (e.g. "main", "HEAD", "v1.2.0").
+        allow_insecure: Permit insecure (non-https) URLs.
+
+    Returns:
+        The updated repo record.
+
+    Raises:
+        RepoNotFoundError: If the alias is not registered.
+        RefNotFoundError: If `new_ref` does not resolve in the repo's clone.
+    """
+    get(alias)  # raise RepoNotFoundError early if the alias is unknown
+    _fetch(alias, allow_insecure=allow_insecure)
+    try:
+        git.get_backend().resolve_ref(clone_dir(alias), new_ref)
+    except git.GitError as exc:
+        raise RefNotFoundError(
+            f"{alias}: ref {new_ref!r} does not resolve; check the name (branch or tag) "
+            "and that it exists upstream"
+        ) from exc
+    with db.session() as session:
+        row = session.get(RegisteredRepo, alias)
+        if row is None:  # pragma: no cover — concurrent delete
+            raise RepoNotFoundError(alias)
+        row.default_ref = new_ref
+        session.add(row)
+        session.commit()
+    return _resolve_and_reindex(alias, previous_sha=None, force=True)
+
+
+@dataclass(frozen=True)
+class RefLag:
+    """How far a repo's tracked ref trails the remote's default branch."""
+
+    tracked_ref: str
+    default_branch: str
+    behind: int
+
+
+def tracked_ref_lag(alias: str) -> RefLag | None:
+    """Return how many commits the tracked ref is behind the remote default branch.
+
+    Computed offline from the local mirror (reflects the last fetch), so callers
+    that just fetched see current data. Returns None when there is nothing to warn
+    about: the tracked ref already matches the default branch, the default branch
+    can't be determined (e.g. a `HEAD`-tracker resolves to the same commit), or a
+    ref no longer resolves.
+    """
+    repo = get(alias)
+    repo_dir = clone_dir(alias)
+    backend = git.get_backend()
+    branch = backend.default_branch(repo_dir)
+    if branch is None:
+        return None
+    try:
+        if backend.resolve_ref(repo_dir, repo.default_ref) == backend.resolve_ref(repo_dir, branch):
+            return None  # tracked ref is at the default branch tip
+        behind = backend.commits_behind(repo_dir, repo.default_ref, branch)
+    except git.GitError:
+        return None
+    return RefLag(repo.default_ref, branch, behind) if behind > 0 else None
 
 
 def refresh_many(

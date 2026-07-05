@@ -6,10 +6,18 @@ from pathlib import Path
 
 import typer
 
-from aim.cli._shared import _friendly, _get_format, _here, _scanning
+from aim.cli._shared import (
+    _friendly,
+    _get_format,
+    _here,
+    _scanning,
+    _tracked_ref_lag_cell,
+    _warn_tracked_ref_lag,
+)
 from aim.core import format as format_mod
 from aim.core import plugin_install as plugin_install_mod
 from aim.core import plugins as plugins_mod
+from aim.core import repos as repos_mod
 from aim.core import risk as risk_mod
 
 app = typer.Typer(
@@ -105,12 +113,34 @@ def plugin_list(
     rows = plugins_mod.list_plugins(
         repo_alias=repo, marketplace=marketplace, flavor=flavor, project_root=_here(project)
     )
+    # Show the tracked ref and its lag per plugin so a stale-branch source is visible
+    # here too. Keep the full model fields (via model_dump) so `--json` stays a superset;
+    # cache the per-repo lag cell — plugins commonly share a repo.
+    ref_by_alias = {r.alias: r.default_ref for r in repos_mod.list_repos()}
+    lag_by_alias: dict[str, str] = {}
+    view = [
+        {
+            **p.model_dump(mode="json"),
+            "ref": ref_by_alias.get(p.repo_alias, ""),
+            "behind": lag_by_alias.setdefault(p.repo_alias, _tracked_ref_lag_cell(p.repo_alias)),
+        }
+        for p in rows
+    ]
     format_mod.render(
-        rows,
+        view,
         _get_format(ctx),
         title="plugins indexed",
-        columns=["qualified_name", "target", "marketplace_name", "version", "sha", "description"],
-        compact_columns=["qualified_name", "target", "sha", "description"],
+        columns=[
+            "qualified_name",
+            "target",
+            "marketplace_name",
+            "version",
+            "ref",
+            "behind",
+            "sha",
+            "description",
+        ],
+        compact_columns=["qualified_name", "target", "ref", "sha", "description"],
         row_extractor={"sha": "short_sha", "target": "flavor"},
     )
 
@@ -239,6 +269,7 @@ def plugin_update(
             override_risk=override_risk,
         )
         typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
+        _warn_tracked_ref_lag(updated.repo_alias)  # the breadcrumb: stuck? wrong branch.
         return
     if not all_plugins and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
@@ -247,6 +278,10 @@ def plugin_update(
     )
     for outcome in outcomes:
         typer.echo(f"{outcome.status:>12}  {outcome.qualified_name}  {outcome.detail}")
+    # Warn once per repo whose tracked ref is behind — the qualified name is
+    # "<repo_alias>/<plugin>", so the prefix is the registered alias.
+    for alias in dict.fromkeys(o.qualified_name.split("/", 1)[0] for o in outcomes):
+        _warn_tracked_ref_lag(alias)
     if any(outcome.status == "error" for outcome in outcomes):
         raise typer.Exit(code=1)
 

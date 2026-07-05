@@ -6,7 +6,14 @@ from pathlib import Path
 
 import typer
 
-from aim.cli._shared import _friendly, _get_allow_insecure, _get_format, _here
+from aim.cli._shared import (
+    _friendly,
+    _get_allow_insecure,
+    _get_format,
+    _here,
+    _tracked_ref_lag_cell,
+    _warn_tracked_ref_lag,
+)
 from aim.core import format as format_mod
 from aim.core import repos as repos_mod
 
@@ -46,20 +53,20 @@ def repo_add(
 @_friendly
 def repo_list(ctx: typer.Context) -> None:
     """List registered skill source repositories."""
-    repos = repos_mod.list_repos()
+    # Decorate each repo with a computed `behind` cell (a per-repo git call), so the
+    # table shows when a tracked ref trails the remote default branch. Keep the full
+    # model fields (via model_dump) so `--json` output stays a superset of before.
+    rows = [
+        {**r.model_dump(mode="json"), "behind": _tracked_ref_lag_cell(r.alias)}
+        for r in repos_mod.list_repos()
+    ]
     format_mod.render(
-        repos,
+        rows,
         _get_format(ctx),
         title="repos registered",
-        columns=["alias", "url", "default_ref", "head", "last_fetched"],
-        row_extractor={
-            "alias": "alias",
-            "url": "url",
-            "default_ref": "default_ref",
-            "head": "last_sha",
-            "last_fetched": "last_fetched_at",
-        },
-        compact_columns=["alias", "url", "default_ref"],
+        columns=["alias", "url", "default_ref", "behind", "head", "last_fetched"],
+        row_extractor={"head": "last_sha", "last_fetched": "last_fetched_at"},
+        compact_columns=["alias", "url", "default_ref", "behind"],
     )
 
 
@@ -96,6 +103,21 @@ def repo_rename(old: str, new: str) -> None:
     typer.echo(f"renamed {old} -> {new}")
 
 
+@app.command("set-ref")
+@_friendly
+def repo_set_ref(
+    ctx: typer.Context,
+    alias: str = typer.Argument(..., help="Registered repo alias."),
+    ref: str = typer.Argument(..., help="Branch or tag to track (e.g. main, HEAD, v1.2.0)."),
+) -> None:
+    """Change which branch/tag a registered repo tracks, then re-resolve and reindex."""
+    repo = repos_mod.set_ref(alias, ref, allow_insecure=_get_allow_insecure(ctx))
+    sha = repo.last_sha[:12] if repo.last_sha else "?"
+    typer.echo(f"set {alias} ref -> {ref} (HEAD={sha})")
+    _warn_tracked_ref_lag(alias)  # normally silent now; warns if the new ref is still behind
+    _warn_skipped_templates()
+
+
 @app.command("refresh")
 @_friendly
 def repo_refresh(
@@ -110,6 +132,7 @@ def repo_refresh(
         repo = repos_mod.refresh(alias, allow_insecure=allow_insecure)
         sha = repo.last_sha[:12] if repo.last_sha else "?"
         typer.echo(f"refreshed {alias}: HEAD={sha}")
+        _warn_tracked_ref_lag(alias)
         _warn_skipped_templates()
         return
     aliases = [r.alias for r in repos_mod.list_repos()]
@@ -124,6 +147,7 @@ def repo_refresh(
             continue
         sha = refreshed.last_sha[:12] if refreshed and refreshed.last_sha else "?"
         typer.echo(f"refreshed {a}: HEAD={sha}")
+        _warn_tracked_ref_lag(a)
     _warn_skipped_templates()
     if failures:
         raise typer.Exit(code=1)

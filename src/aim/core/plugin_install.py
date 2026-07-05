@@ -258,6 +258,9 @@ def install_plugin(
                 "not a git ref)"
             ) from exc
         raise
+    version = plugin_kinds.relabel_with_manifest_version(
+        kind, row.repo_alias, row.source_path, version, pinned=pin is not None
+    )
     content_hash, target = _deploy(
         project_root,
         kind,
@@ -344,8 +347,22 @@ def update(
         pin=existing.pin,
         artifact_name=kind.manifest_filename,
     )
+    new_version = plugin_kinds.relabel_with_manifest_version(
+        kind,
+        existing.repo_alias,
+        existing.source_path,
+        new_version,
+        pinned=existing.pin is not None,
+    )
     _check_local_edits(project_root, existing, force=force)
     if new_version.sha == existing.current.sha:
+        # Same bytes: no re-vendor. But the label may still be wrong (e.g. a plugin
+        # installed before manifest-version labels, stuck on a git tag) — repair it
+        # in place so `update` can correct the label without a SHA change.
+        if new_version.tag != existing.current.tag:
+            existing.current = new_version
+            manifest.save(project_root, m)
+            declarations._update_plugin(project_root, existing)
         return existing
     content_hash, target = _deploy(
         project_root,

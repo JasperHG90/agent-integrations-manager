@@ -23,6 +23,7 @@ from aim.tui.modals.init_modal import InitModal
 from aim.tui.modals.plugin_install import PluginInstallModal
 from aim.tui.modals.project_picker import ProjectPickerModal
 from aim.tui.modals.repo_add import RepoAddModal
+from aim.tui.modals.repo_edit_ref import RepoEditRefModal
 from aim.tui.modals.rule_install import RuleInstallModal
 from aim.tui.modals.skill_install import SkillInstallModal
 from aim.tui.widgets import ToggleRow
@@ -118,6 +119,21 @@ async def test_repos_screen_remove_opens_confirm(home: Path, tmp_path: Path) -> 
         await pilot.press("x")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmModal)
+
+
+@pytest.mark.asyncio
+async def test_repos_screen_edit_ref_opens_prefilled_modal(home: Path, tmp_path: Path) -> None:
+    bare = _bare_with_skills(tmp_path)
+    repos.add("anth", f"file://{bare}")
+    app = AimApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, RepoEditRefModal)
+        assert app.screen.query_one("#ref", Input).value == "HEAD"  # pre-filled with current ref
 
 
 @pytest.mark.asyncio

@@ -42,6 +42,39 @@ def _get_allow_insecure(ctx: typer.Context) -> bool:
     return bool((ctx.obj or {}).get("allow_insecure", False))
 
 
+def _lag_of(alias: str) -> Any:
+    """Return the tracked-ref lag for `alias`, or None (also for unknown aliases)."""
+    from aim.core import repos as repos_mod
+
+    try:
+        return repos_mod.tracked_ref_lag(alias)
+    except repos_mod.RepoNotFoundError:
+        return None
+
+
+def _tracked_ref_lag_cell(alias: str) -> str:
+    """A short `N behind <branch>` cell for repo tables, or '' when up to date."""
+    lag = _lag_of(alias)
+    return f"{lag.behind} behind {lag.default_branch}" if lag else ""
+
+
+def _warn_tracked_ref_lag(alias: str) -> None:
+    """Warn (stderr) when `alias` tracks a ref behind its remote default branch.
+
+    The breadcrumb that connects a stuck `plugin update` / `repo refresh` to the real
+    cause (tracking a stale branch or tag) and names the one-line fix.
+    """
+    lag = _lag_of(alias)
+    if lag is None:
+        return
+    typer.echo(
+        f"warning: {alias}: tracking {lag.tracked_ref!r} — {lag.behind} commit(s) behind "
+        f"{lag.default_branch!r}.",
+        err=True,
+    )
+    typer.echo(f"  fix: aim repo set-ref {alias} {lag.default_branch}", err=True)
+
+
 def _normalize_repo_url(url: str) -> str:
     """Canonicalize a git URL for equality comparison.
 
@@ -237,6 +270,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         repos_mod.RepoHasNoSkillsError,
         repos_mod.RepoHasNoArtifactsError,
         repos_mod.RefDisappearedError,
+        repos_mod.RefNotFoundError,
         rule_install_mod.RuleNotIndexedError,
         rule_install_mod.RuleNotInstalledError,
         rule_install_mod.RuleSourcePathChangedError,

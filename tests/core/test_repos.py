@@ -55,6 +55,14 @@ class _AuthFailingBackend:
         _ = (repo_dir, ref, source_path)
         raise git.GitError("not found")
 
+    def default_branch(self, repo_dir: Path) -> str | None:
+        _ = repo_dir
+        return None
+
+    def commits_behind(self, repo_dir: Path, ref: str, base: str) -> int:
+        _ = (repo_dir, ref, base)
+        raise git.GitError("not found")
+
 
 @pytest.fixture
 def fake_backend(monkeypatch: pytest.MonkeyPatch):
@@ -297,6 +305,61 @@ def test_reindex_unknown_alias_raises(home: Path) -> None:
         repos.reindex("nope")
 
 
+def _repo_tag_behind_main(tmp_path: Path) -> Path:
+    """Build a repo tagged `v0` at an early commit, with `main` one rule ahead."""
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"rules/base.md": "# Base\n\nbase.\n", "README.md": "x\n"}
+    )
+    git_fixtures.add_tag(working, "v0")  # v0 has only the base rule
+    git_fixtures.add_commit(working, {"rules/style.md": "# Style\n\nstyle.\n"}, "add style rule")
+    return git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+
+
+def test_set_ref_repoints_and_reindexes(home: Path, tmp_path: Path) -> None:
+    bare = _repo_tag_behind_main(tmp_path)
+    repos.add("r", f"file://{bare}", default_ref="v0")
+    assert {row.rule_name for row in repo_rules.list_rules("r")} == {"base"}  # v0 tree
+
+    updated = repos.set_ref("r", "main")
+    assert updated.default_ref == "main"
+    assert repos.get("r").default_ref == "main"
+    # Reindex ran: the rule that only exists on main is now discovered.
+    assert {row.rule_name for row in repo_rules.list_rules("r")} == {"base", "style"}
+
+
+def test_set_ref_unknown_alias_raises(home: Path) -> None:
+    with pytest.raises(repos.RepoNotFoundError):
+        repos.set_ref("nope", "main")
+
+
+def test_set_ref_bogus_ref_raises_and_preserves(home: Path, tmp_path: Path) -> None:
+    bare = _repo_tag_behind_main(tmp_path)
+    repos.add("r", f"file://{bare}", default_ref="v0")
+    with pytest.raises(repos.RefNotFoundError):
+        repos.set_ref("r", "no-such-ref")
+    assert repos.get("r").default_ref == "v0"  # unchanged — bad ref never persisted
+
+
+def test_tracked_ref_lag_reports_and_clears(home: Path, tmp_path: Path) -> None:
+    bare = _repo_tag_behind_main(tmp_path)
+    repos.add("r", f"file://{bare}", default_ref="v0")
+
+    lag = repos.tracked_ref_lag("r")
+    assert lag is not None
+    assert lag.tracked_ref == "v0"
+    assert lag.default_branch == "main"
+    assert lag.behind == 1
+
+    repos.set_ref("r", "main")
+    assert repos.tracked_ref_lag("r") is None  # now at the default branch tip
+
+
+def test_tracked_ref_lag_none_for_head_tracker(home: Path, tmp_path: Path) -> None:
+    bare = _repo_tag_behind_main(tmp_path)
+    repos.add("r", f"file://{bare}", default_ref="HEAD")  # tracks default branch
+    assert repos.tracked_ref_lag("r") is None
+
+
 def test_remove_deletes_rule_index(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(
         tmp_path,
@@ -366,6 +429,14 @@ def test_refresh_auth_failure_has_helpful_message(
 
         def last_touching_sha(self, repo_dir: Path, ref: str, source_path: str) -> str:
             _ = (repo_dir, ref, source_path)
+            raise git.GitError("not found")
+
+        def default_branch(self, repo_dir: Path) -> str | None:
+            _ = repo_dir
+            return None
+
+        def commits_behind(self, repo_dir: Path, ref: str, base: str) -> int:
+            _ = (repo_dir, ref, base)
             raise git.GitError("not found")
 
     git.set_backend(_FetchFailingBackend())

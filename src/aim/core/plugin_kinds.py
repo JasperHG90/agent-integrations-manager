@@ -32,7 +32,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aim.core import git, paths, policy, settings_json, validation
-from aim.core.models import InstalledPlugin, Manifest
+from aim.core.models import InstalledPlugin, Manifest, SkillVersion
 
 
 # --------------------------------------------------------------------------- #
@@ -84,6 +84,16 @@ class PluginKind(Protocol):
 
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         """Find this kind's plugins in a repo tree (paths from ``git ls-tree``)."""
+        ...
+
+    def manifest_version(self, repo_dir: Path, sha: str, source_path: str) -> str | None:
+        """The plugin's self-declared version from its manifest at ``sha``, or None.
+
+        This is the version the client's ecosystem publishes by (e.g. a Claude
+        plugin's ``plugin.json`` ``version``) — the source of truth for the human
+        label, since a plugin may never cut a git tag. Returns None when the kind
+        has no version convention or the manifest lacks one.
+        """
         ...
 
     def vendor_target(self, *, repo_alias: str, plugin_name: str, source_path: str) -> str:
@@ -323,6 +333,10 @@ class ClaudeKind:
                         _collect_commands(data[key], label, findings)
         return findings
 
+    def manifest_version(self, repo_dir: Path, sha: str, source_path: str) -> str | None:
+        """A claude plugin's ``version`` from its ``plugin.json`` at ``sha``, or None."""
+        return _plugin_json_version(repo_dir, sha, source_path)
+
     def discover(self, repo_alias: str, repo_dir: Path, sha: str, tree: list[str]) -> KindDiscovery:
         out = KindDiscovery()
         backend = git.get_backend()
@@ -549,6 +563,7 @@ class ManifestSpec(BaseModel):
     file: str  # the manifest filename, e.g. "gemini-extension.json" or "package.json" (JSON)
     name: str = "name"  # dotted keypath in the manifest to the plugin name
     description: str | None = None  # optional dotted keypath to a description string
+    version: str | None = None  # optional dotted keypath to the plugin's self-declared version
 
 
 class ConfigSpec(BaseModel):
@@ -695,6 +710,23 @@ class DeclarativeKind:
             return None
         return data if isinstance(data, dict) else None
 
+    def manifest_version(self, repo_dir: Path, sha: str, source_path: str) -> str | None:
+        """Read the version keypath from the plugin's manifest at ``sha``, or None.
+
+        Returns None when the kind declares no ``version`` keypath (the default) —
+        such kinds fall back to the git-derived label.
+        """
+        keypath = self.spec.manifest.version
+        if not keypath:
+            return None
+        rel = f"{source_path}/{self.spec.manifest.file}" if source_path else self.spec.manifest.file
+        try:
+            data = json.loads(git.get_backend().cat_file(repo_dir, sha, rel))
+        except (git.GitError, json.JSONDecodeError):
+            return None
+        value = _get_keypath(data, keypath) if isinstance(data, dict) else None
+        return value if isinstance(value, str) else None
+
     def _read_description(self, data: dict) -> str | None:
         """Read the description keypath when the kind declares one; else None."""
         keypath = self.spec.manifest.description
@@ -819,3 +851,33 @@ def load_kinds(project_root: Path | None = None) -> dict[str, PluginKind]:
 def get_kind(name: str, project_root: Path | None = None) -> PluginKind | None:
     """Return the kind named ``name``, or None if no spec is loaded for it."""
     return load_kinds(project_root).get(name)
+
+
+def relabel_with_manifest_version(
+    kind: PluginKind,
+    repo_alias: str,
+    source_path: str,
+    version: SkillVersion,
+    *,
+    pinned: bool,
+) -> SkillVersion:
+    """Relabel a git-resolved version with the plugin's self-declared manifest version.
+
+    aim locks the install SHA from git, but a plugin's *version* is the ``version``
+    field its client publishes by (e.g. a Claude plugin's ``plugin.json``) — many
+    plugins never cut a git tag, so ``git describe`` is the wrong label (it can even
+    return an unrelated moving tag like ``latest``). The SHA — content identity, drift
+    and update detection — is untouched; only the human-facing label changes. A
+    user-supplied ``--pin`` keeps its exact git-ref label.
+
+    This is the single source of truth for the plugin version label, shared by
+    ``plugin add``/``update`` and ``lock`` so all three agree.
+    """
+    from aim.core import repos
+
+    if pinned:
+        return version
+    declared = kind.manifest_version(repos.clone_dir(repo_alias), version.sha, source_path)
+    if declared:
+        return version.model_copy(update={"tag": declared})
+    return version

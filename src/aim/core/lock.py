@@ -713,13 +713,20 @@ def _resolve_plugin_version(plugin: DeclaredPlugin) -> SkillVersion:
     """
     kind = plugin_kinds.get_kind(plugin.flavor)
     artifact_name = kind.manifest_filename if kind is not None else "plugin.json"
-    return install.resolve_install_version(
+    version = install.resolve_install_version(
         plugin.repo_alias,
         plugin.source_path,
         track=plugin.track,
         pin=plugin.pin,
         artifact_name=artifact_name,
     )
+    if kind is not None:
+        # Same manifest-version label as `add`/`update`, so `lock` doesn't revert
+        # the plugin's self-declared version back to a git-derived tag.
+        version = plugin_kinds.relabel_with_manifest_version(
+            kind, plugin.repo_alias, plugin.source_path, version, pinned=plugin.pin is not None
+        )
+    return version
 
 
 def _hash_plugin_at_sha(plugin: DeclaredPlugin, sha: str, source_unit: str) -> str:

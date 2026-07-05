@@ -6,7 +6,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from aim import cli
 from aim.core import (
     declarations,
     lock,
@@ -19,6 +21,8 @@ from aim.core import (
     sync,
 )
 from tests.fixtures import git_fixtures
+
+_runner = CliRunner()
 
 OPENCODE_KIND_TOML = """
 name = "opencode"
@@ -454,6 +458,147 @@ def test_update_and_rollback(home: Path, project_root: Path, tmp_path: Path) -> 
     rolled = plugin_install.rollback(project_root, "a/design-audit")
     assert vendored.joinpath("SKILL.md").read_text() == "# audit\n"
     assert rolled.current.sha
+
+
+def test_install_labels_with_manifest_version_not_git_tag(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A plugin's version is the ``version`` in its plugin.json, not whatever git tag
+    # ``git describe`` happens to pick. Here a misleading tag sits on the same commit;
+    # the label must still come from plugin.json (design-audit declares 1.0.0).
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    git_fixtures.add_tag(working, "v2.5.0")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+
+    installed = plugin_install.install_plugin(project_root, "a/design-audit")
+    assert installed.current.tag == "1.0.0"
+
+
+def test_update_labels_with_bumped_manifest_version(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # Bumping only the plugin.json version (no new git tag) must move the label, even
+    # while a stale moving tag (`latest`) is still what ``git describe`` returns.
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    git_fixtures.add_tag(working, "latest")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    installed = plugin_install.install_plugin(project_root, "a/design-audit")
+    assert installed.current.tag == "1.0.0"
+
+    bumped = json.dumps({"name": "design-audit", "version": "1.0.1"})
+    git_fixtures.add_commit(
+        working, {"design-audit/.claude-plugin/plugin.json": bumped}, "bump to 1.0.1"
+    )
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("a")
+
+    updated = plugin_install.update(project_root, "a/design-audit")
+    assert updated.current.tag == "1.0.1"  # from the bumped manifest, not the `latest` tag
+
+
+def test_pin_keeps_git_ref_label_over_manifest_version(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # An explicit --pin means the user wants that exact git ref as the label; the
+    # manifest-version relabel is skipped so the pin stays visible.
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    git_fixtures.add_tag(working, "v2.5.0")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+
+    installed = plugin_install.install_plugin(project_root, "a/design-audit", pin="v2.5.0")
+    assert installed.current.tag == "v2.5.0"
+
+
+def test_lock_preserves_manifest_version_label(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # `aim lock` regenerates the lockfile from aim.toml; it must apply the same
+    # manifest-version relabel as install, or it reverts the label to the git tag.
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    git_fixtures.add_tag(working, "v2.5.0")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    plugin_install.install_plugin(project_root, "a/design-audit")
+
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+
+    m = manifest.load(project_root)
+    entry = next(p for p in m.plugins if p.qualified_name == "a/design-audit")
+    assert entry.current.tag == "1.0.0"  # not the v2.5.0 git tag
+
+
+def test_update_repairs_stale_label_without_sha_change(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A plugin already at the latest SHA but carrying a stale git-tag label must be
+    # corrected by `update` even though no re-vendor happens (SHA is unchanged).
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    plugin_install.install_plugin(project_root, "a/design-audit")
+
+    # Simulate a pre-fix install: overwrite the label with a git tag, same SHA.
+    m = manifest.load(project_root)
+    entry = next(p for p in m.plugins if p.qualified_name == "a/design-audit")
+    entry.current = entry.current.model_copy(update={"tag": "v0.9.0-stale"})
+    manifest.save(project_root, m)
+
+    updated = plugin_install.update(project_root, "a/design-audit")
+    assert updated.current.tag == "1.0.0"
+
+
+def test_declarative_kind_labels_with_manifest_version(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A declarative kind that declares a `version` keypath labels from the manifest,
+    # not the git tag; without the keypath it falls back to the git-derived label.
+    kind_toml = (
+        'name = "opencode"\n'
+        "[manifest]\n"
+        'file = "package.json"\n'
+        'name = "name"\n'
+        'version = "version"\n'
+        "[register]\n"
+        'vendor_into = ".opencode/plugins/{name}"\n'
+    )
+    (paths.user_config_dir() / "targets").mkdir(parents=True, exist_ok=True)
+    (paths.user_config_dir() / "targets" / "opencode.toml").write_text(kind_toml)
+
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={
+            "logger/package.json": json.dumps({"name": "logger", "version": "3.4.5"}),
+            "logger/index.ts": "export const plugin = 1\n",
+        },
+    )
+    git_fixtures.add_tag(working, "v9.9.9")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+
+    installed = plugin_install.install_plugin(project_root, "a/logger")
+    assert installed.current.tag == "3.4.5"  # from package.json version keypath
+
+
+def test_cli_plugin_update_warns_when_repo_behind(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # A plugin whose repo tracks a stale tag: `plugin update` must point the user at
+    # the real cause (wrong branch) and the one-line fix.
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=_marketplace_files())
+    git_fixtures.add_tag(working, "v0")
+    git_fixtures.add_commit(working, {"README.md": "advanced\n"}, "advance main")
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}", default_ref="v0")
+    plugin_install.install_plugin(project_root, "a/design-audit")
+
+    res = _runner.invoke(cli.app, ["plugin", "update", "design-audit", str(project_root)])
+
+    assert res.exit_code == 0, res.output
+    assert "behind" in res.output
+    assert "set-ref a main" in res.output
 
 
 def test_prune_removes_undeclared_plugin(home: Path, project_root: Path, tmp_path: Path) -> None:
