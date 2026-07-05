@@ -179,7 +179,7 @@ def test_read_agent_content_missing_raises(home: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_plugin_owned_agent_indexed_hidden_by_default(home: Path, tmp_path: Path) -> None:
+def test_plugin_owned_agent_indexed_shown_by_default(home: Path, tmp_path: Path) -> None:
     import json
 
     marketplace = {
@@ -198,12 +198,14 @@ def test_plugin_owned_agent_indexed_hidden_by_default(home: Path, tmp_path: Path
     repos.add("pm", f"file://{bare}")
     from aim.core import origins
 
-    assert [r.qualified_name for r in agents.list_agents()] == ["pm/review"]
-    rows = agents.list_agents(include_plugin_owned=True)
+    rows = agents.list_agents()  # shown by default
     assert [r.qualified_name for r in rows] == ["pm/review", "pm/triage"]
     by_name = {r.qualified_name: r for r in rows}
     assert by_name["pm/triage"].origin == origins.ORIGIN_PLUGIN
     assert by_name["pm/triage"].owning_plugin == "helper"
+    # opt-out hides the plugin-owned agent, leaving the standalone one
+    standalone = agents.list_agents(include_plugin_owned=False)
+    assert [r.qualified_name for r in standalone] == ["pm/review"]
     assert by_name["pm/review"].origin == origins.ORIGIN_CANONICAL
 
 

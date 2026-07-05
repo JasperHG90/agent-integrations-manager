@@ -13,7 +13,7 @@ _runner = CliRunner()
 
 def test_defaults_when_file_missing(home: Path) -> None:
     cfg = user_config.load()
-    assert cfg.tui.filters.show_plugin_owned is False
+    assert cfg.tui.filters.show_plugin_owned is True
     assert cfg.tui.filters.show_dot_claude is True
     assert not user_config.config_path().exists()
 
@@ -32,7 +32,7 @@ def test_set_get_unset_dotted_keys(home: Path) -> None:
     user_config.set_value("tui.filters.show_dot_claude", "off")
     assert user_config.get("tui.filters.show_dot_claude") is False
     user_config.unset("tui.filters.show_plugin_owned")
-    assert user_config.get("tui.filters.show_plugin_owned") is False
+    assert user_config.get("tui.filters.show_plugin_owned") is True  # default
 
 
 def test_unknown_key_raises(home: Path) -> None:
@@ -54,7 +54,7 @@ def test_corrupt_file_yields_defaults(home: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("this is [not toml")
     cfg = user_config.load()
-    assert cfg.tui.filters.show_plugin_owned is False
+    assert cfg.tui.filters.show_plugin_owned is True
 
 
 def test_unknown_keys_on_disk_ignored(home: Path) -> None:
@@ -67,7 +67,7 @@ def test_unknown_keys_on_disk_ignored(home: Path) -> None:
 def test_list_values_reports_leaves_with_defaults(home: Path) -> None:
     user_config.set_value("tui.filters.show_plugin_owned", "true")
     rows = {key: (value, default) for key, value, default in user_config.list_values()}
-    assert rows["tui.filters.show_plugin_owned"] == (True, False)
+    assert rows["tui.filters.show_plugin_owned"] == (True, True)
     assert rows["tui.filters.show_dot_claude"] == (True, True)
 
 
@@ -95,7 +95,7 @@ def test_cli_config_set_get_list_path(home: Path) -> None:
 
     res = _runner.invoke(cli.app, ["app", "config", "unset", "tui.filters.show_plugin_owned"])
     assert res.exit_code == 0, res.output
-    assert user_config.get("tui.filters.show_plugin_owned") is False
+    assert user_config.get("tui.filters.show_plugin_owned") is True  # default
 
 
 def test_cli_config_unknown_key_errors(home: Path) -> None:

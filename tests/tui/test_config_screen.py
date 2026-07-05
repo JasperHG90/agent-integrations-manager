@@ -102,9 +102,9 @@ async def test_user_prefs_pane_saves_toggles(home: Path, project_root: Path) -> 
         app.push_screen(ConfigScreen(project_root))
         await pilot.pause()
         plugin_toggle = app.screen.query_one("#pref-plugin-owned", ToggleRow)
-        assert plugin_toggle.value is False  # default
+        assert plugin_toggle.value is True  # default: plugin-owned shown
         plugin_toggle.toggle()
         app.screen.query_one("#prefs-save", Button).press()
         await pilot.pause()
-    assert user_config.load().tui.filters.show_plugin_owned is True
+    assert user_config.load().tui.filters.show_plugin_owned is False
     assert user_config.load().tui.filters.show_dot_claude is True

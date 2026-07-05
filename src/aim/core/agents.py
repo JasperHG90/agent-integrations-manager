@@ -370,7 +370,7 @@ def _effective_origin(row: AgentIndex) -> str:
 def list_agents(
     repo_alias: str | None = None,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[AgentIndex]:
     """List indexed agents, optionally filtered to one repo.
@@ -378,7 +378,7 @@ def list_agents(
     Args:
         repo_alias: If given, restrict results to this repo's agents.
         include_plugin_owned: Also return agents bundled inside plugins
-            (hidden by default).
+            (shown by default).
         include_dot_claude: Return agents discovered under `.claude/` dirs
             (shown by default).
 
@@ -406,7 +406,7 @@ def list_agents(
 def search(
     query: str,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[AgentIndex]:
     """Case-insensitive substring search across qualified_name, title, description, tools."""

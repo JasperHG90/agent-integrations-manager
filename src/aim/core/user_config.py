@@ -36,13 +36,13 @@ class InvalidConfigValueError(ValueError):
 class TuiFilterPrefs(BaseModel):
     """Provenance-filter defaults for the TUI artifact screens.
 
-    Defaults mirror the core list functions: plugin-owned hidden,
-    `.claude/`-found shown.
+    Defaults mirror the core list functions: plugin-owned and `.claude/`-found
+    are both shown by default.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    show_plugin_owned: bool = False
+    show_plugin_owned: bool = True
     show_dot_claude: bool = True
 
 

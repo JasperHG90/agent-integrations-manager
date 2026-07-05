@@ -140,7 +140,7 @@ def test_read_rule_content_missing_raises(home: Path, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_plugin_owned_rule_indexed_hidden_by_default(home: Path, tmp_path: Path) -> None:
+def test_plugin_owned_rule_indexed_shown_by_default(home: Path, tmp_path: Path) -> None:
     import json
 
     marketplace = {
@@ -159,12 +159,14 @@ def test_plugin_owned_rule_indexed_hidden_by_default(home: Path, tmp_path: Path)
     repos.add("pm", f"file://{bare}")
     from aim.core import origins
 
-    assert [r.qualified_name for r in repo_rules.list_rules()] == ["pm/be-concise"]
-    rows = repo_rules.list_rules(include_plugin_owned=True)
+    rows = repo_rules.list_rules()  # shown by default
     assert [r.qualified_name for r in rows] == ["pm/be-concise", "pm/style"]
     by_name = {r.qualified_name: r for r in rows}
     assert by_name["pm/style"].origin == origins.ORIGIN_PLUGIN
     assert by_name["pm/style"].owning_plugin == "helper"
+    # opt-out hides the plugin-owned rule, leaving the standalone one
+    standalone = repo_rules.list_rules(include_plugin_owned=False)
+    assert [r.qualified_name for r in standalone] == ["pm/be-concise"]
 
 
 def test_dot_claude_rule_excludable(home: Path, tmp_path: Path) -> None:

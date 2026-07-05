@@ -328,7 +328,7 @@ def _effective_origin(row: SkillIndex) -> str:
 def list_skills(
     repo_alias: str | None = None,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[SkillIndex]:
     """Return indexed skills sorted by qualified name, optionally repo-filtered.
@@ -336,7 +336,7 @@ def list_skills(
     Args:
         repo_alias: If given, restrict results to this repo's skills.
         include_plugin_owned: Also return skills bundled inside plugins
-            (hidden by default).
+            (shown by default).
         include_dot_claude: Return skills discovered under `.claude/` dirs
             (shown by default).
 
@@ -364,7 +364,7 @@ def list_skills(
 def search(
     query: str,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[SkillIndex]:
     """Search indexed skills by case-insensitive substring across key fields.

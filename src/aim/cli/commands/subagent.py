@@ -13,6 +13,7 @@ from aim.cli._shared import (
     _qualified_for_add,
     _run_bulk_update,
     _scanning,
+    _warn_hidden_by_filter,
 )
 from aim.core import agent_install as agent_install_mod
 from aim.core import agents as agents_mod
@@ -29,10 +30,10 @@ app = typer.Typer(
 def agent_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
-    include_plugin_owned: bool = typer.Option(
+    standalone_only: bool = typer.Option(
         False,
-        "--include-plugin-owned",
-        help="Also list sub-agents bundled inside plugins (hidden by default).",
+        "--standalone-only",
+        help="Show only standalone sub-agents; hide those bundled inside plugins.",
     ),
     exclude_dot_claude: bool = typer.Option(
         False, "--exclude-dot-claude", help="Hide sub-agents discovered under .claude/ directories."
@@ -41,7 +42,7 @@ def agent_list(
     """List indexed sub-agents."""
     rows = agents_mod.list_agents(
         repo,
-        include_plugin_owned=include_plugin_owned,
+        include_plugin_owned=not standalone_only,
         include_dot_claude=not exclude_dot_claude,
     )
     format_mod.render(
@@ -51,6 +52,12 @@ def agent_list(
         columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
+    _warn_hidden_by_filter(
+        rows,
+        lambda: agents_mod.list_agents(repo),
+        standalone_only=standalone_only,
+        exclude_dot_claude=exclude_dot_claude,
+    )
 
 
 @app.command("search")
@@ -58,10 +65,10 @@ def agent_list(
 def agent_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
-    include_plugin_owned: bool = typer.Option(
+    standalone_only: bool = typer.Option(
         False,
-        "--include-plugin-owned",
-        help="Also match sub-agents bundled inside plugins (hidden by default).",
+        "--standalone-only",
+        help="Match only standalone sub-agents; hide those bundled inside plugins.",
     ),
     exclude_dot_claude: bool = typer.Option(
         False, "--exclude-dot-claude", help="Hide sub-agents discovered under .claude/ directories."
@@ -70,7 +77,7 @@ def agent_search(
     """Search indexed sub-agents by substring."""
     rows = agents_mod.search(
         query,
-        include_plugin_owned=include_plugin_owned,
+        include_plugin_owned=not standalone_only,
         include_dot_claude=not exclude_dot_claude,
     )
     format_mod.render(
@@ -79,6 +86,12 @@ def agent_search(
         title=f"subagents matching {query!r}",
         columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
+    )
+    _warn_hidden_by_filter(
+        rows,
+        lambda: agents_mod.search(query),
+        standalone_only=standalone_only,
+        exclude_dot_claude=exclude_dot_claude,
     )
 
 
@@ -188,9 +201,10 @@ def agent_update(
 ) -> None:
     """Refresh an installed sub-agent, or update in bulk with --all / --repo."""
     if qualified_name is not None:
-        updated = agent_install_mod.update(
-            _here(project), qualified_name, force=force, override_risk=override_risk
-        )
+        with _scanning(f"Updating {qualified_name}…"):
+            updated = agent_install_mod.update(
+                _here(project), qualified_name, force=force, override_risk=override_risk
+            )
         typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
         return
     if not all_agents and repo is None:

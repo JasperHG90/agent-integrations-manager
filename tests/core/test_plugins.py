@@ -237,7 +237,9 @@ def test_plugin_bundled_artifacts_not_indexed(home: Path, tmp_path: Path) -> Non
     repos.add("a", f"file://{bare}")
     names = {r.skill_name for r in skills.list_skills()}
     assert "standalone" in names
-    assert "inner" not in names  # bundled in the 'bundler' plugin
+    assert "inner" in names  # bundled in 'bundler', shown by default
+    # the standalone-only view excludes the plugin-bundled skill
+    assert {r.skill_name for r in skills.list_skills(include_plugin_owned=False)} == {"standalone"}
 
 
 def test_repo_root_plugin_discovered(home: Path, tmp_path: Path) -> None:
@@ -265,8 +267,9 @@ def test_repo_root_plugin_discovered(home: Path, tmp_path: Path) -> None:
     assert rows[0].source_path == ""  # repo root
     assert rows[0].version == "6.0.3"
     assert rows[0].marketplace_name == "superpowers-dev"
-    # The repo's own skill is bundled in the whole-repo plugin, not standalone.
-    assert "tdd" not in {r.skill_name for r in skills.list_skills()}
+    # The repo's own skill is bundled in the whole-repo plugin: shown by default,
+    # but absent from the standalone-only view.
+    assert "tdd" not in {r.skill_name for r in skills.list_skills(include_plugin_owned=False)}
 
 
 def test_plugin_version_from_plugin_json(home: Path, tmp_path: Path) -> None:

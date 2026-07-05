@@ -75,6 +75,34 @@ def _warn_tracked_ref_lag(alias: str) -> None:
     typer.echo(f"  fix: aim repo set-ref {alias} {lag.default_branch}", err=True)
 
 
+def _warn_hidden_by_filter(
+    rows: list[Any],
+    list_all: Callable[[], list[Any]],
+    *,
+    standalone_only: bool,
+    exclude_dot_claude: bool,
+) -> None:
+    """When a filtered list came back empty, say how many rows a filter is hiding.
+
+    Turns a dead-end "no X indexed" into an actionable hint when the emptiness is
+    caused by --standalone-only / --exclude-dot-claude rather than a truly empty index.
+    """
+    if rows or not (standalone_only or exclude_dot_claude):
+        return
+    hidden = len(list_all())
+    if hidden == 0:
+        return
+    flags = [
+        f
+        for f, on in (
+            ("--standalone-only", standalone_only),
+            ("--exclude-dot-claude", exclude_dot_claude),
+        )
+        if on
+    ]
+    typer.echo(f"note: {hidden} hidden by {' '.join(flags)} — drop it to show them.", err=True)
+
+
 def _normalize_repo_url(url: str) -> str:
     """Canonicalize a git URL for equality comparison.
 
@@ -462,13 +490,14 @@ def _run_bulk_update(
         force: Overwrite local edits.
         override_risk: Bypass a risk gate the user has acknowledged.
     """
-    outcomes = update_many(
-        _here(project),
-        repo_alias=repo,
-        only_outdated=only_outdated,
-        force=force,
-        override_risk=override_risk,
-    )
+    with _scanning("Updating…"):
+        outcomes = update_many(
+            _here(project),
+            repo_alias=repo,
+            only_outdated=only_outdated,
+            force=force,
+            override_risk=override_risk,
+        )
     for outcome in outcomes:
         typer.echo(f"{outcome['status']:>12}  {outcome['qualified_name']}  {outcome['detail']}")
     if any(outcome["status"] == "error" for outcome in outcomes):

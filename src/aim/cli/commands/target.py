@@ -114,14 +114,16 @@ def target_update(
 ) -> None:
     """Refresh an installed target, or update in bulk with --all / --repo."""
     if qualified_name is not None:
-        updated = target_install_mod.update(_here(project), qualified_name, force=force)
+        with _scanning(f"Updating {qualified_name}…"):
+            updated = target_install_mod.update(_here(project), qualified_name, force=force)
         typer.echo(f"updated target {qualified_name} -> {updated.current.identifier()}")
         return
     if not all_targets and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
-    outcomes = target_install_mod.update_many(
-        _here(project), repo_alias=repo, only_outdated=only_outdated, force=force
-    )
+    with _scanning("Updating…"):
+        outcomes = target_install_mod.update_many(
+            _here(project), repo_alias=repo, only_outdated=only_outdated, force=force
+        )
     for outcome in outcomes:
         typer.echo(f"{outcome['status']:>12}  {outcome['qualified_name']}  {outcome['detail']}")
     if any(outcome["status"] == "error" for outcome in outcomes):

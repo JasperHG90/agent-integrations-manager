@@ -6,7 +6,14 @@ from pathlib import Path
 
 import typer
 
-from aim.cli._shared import _friendly, _get_format, _here, _qualified_for_add, _scanning
+from aim.cli._shared import (
+    _friendly,
+    _get_format,
+    _here,
+    _qualified_for_add,
+    _scanning,
+    _warn_hidden_by_filter,
+)
 from aim.core import format as format_mod
 from aim.core import install as install_mod
 from aim.core import risk as risk_mod
@@ -20,10 +27,10 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help="Discover and
 def skill_list(
     ctx: typer.Context,
     repo: str | None = typer.Option(None, "--repo", "-r", help="Filter by repo alias."),
-    include_plugin_owned: bool = typer.Option(
+    standalone_only: bool = typer.Option(
         False,
-        "--include-plugin-owned",
-        help="Also list skills bundled inside plugins (hidden by default).",
+        "--standalone-only",
+        help="Show only standalone skills; hide those bundled inside plugins.",
     ),
     exclude_dot_claude: bool = typer.Option(
         False, "--exclude-dot-claude", help="Hide skills discovered under .claude/ directories."
@@ -32,7 +39,7 @@ def skill_list(
     """List indexed skills."""
     rows = skills_mod.list_skills(
         repo,
-        include_plugin_owned=include_plugin_owned,
+        include_plugin_owned=not standalone_only,
         include_dot_claude=not exclude_dot_claude,
     )
     format_mod.render(
@@ -42,6 +49,12 @@ def skill_list(
         columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
     )
+    _warn_hidden_by_filter(
+        rows,
+        lambda: skills_mod.list_skills(repo),
+        standalone_only=standalone_only,
+        exclude_dot_claude=exclude_dot_claude,
+    )
 
 
 @app.command("search")
@@ -49,10 +62,10 @@ def skill_list(
 def skill_search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Substring to match."),
-    include_plugin_owned: bool = typer.Option(
+    standalone_only: bool = typer.Option(
         False,
-        "--include-plugin-owned",
-        help="Also match skills bundled inside plugins (hidden by default).",
+        "--standalone-only",
+        help="Match only standalone skills; hide those bundled inside plugins.",
     ),
     exclude_dot_claude: bool = typer.Option(
         False, "--exclude-dot-claude", help="Hide skills discovered under .claude/ directories."
@@ -61,7 +74,7 @@ def skill_search(
     """Search indexed skills by substring."""
     rows = skills_mod.search(
         query,
-        include_plugin_owned=include_plugin_owned,
+        include_plugin_owned=not standalone_only,
         include_dot_claude=not exclude_dot_claude,
     )
     format_mod.render(
@@ -70,6 +83,12 @@ def skill_search(
         title=f"skills matching {query!r}",
         columns=["qualified_name", "repo_alias", "title", "description", "origin"],
         compact_columns=["qualified_name", "title", "description"],
+    )
+    _warn_hidden_by_filter(
+        rows,
+        lambda: skills_mod.search(query),
+        standalone_only=standalone_only,
+        exclude_dot_claude=exclude_dot_claude,
     )
 
 
@@ -189,22 +208,24 @@ def skill_update(
             )
             typer.echo(f"{verb} {qualified_name}: {preview.current_sha[:7]} -> {ident}")
             return
-        updated = install_mod.update(
-            _here(project), qualified_name, force=force, override_risk=override_risk
-        )
+        with _scanning(f"Updating {qualified_name}…"):
+            updated = install_mod.update(
+                _here(project), qualified_name, force=force, override_risk=override_risk
+            )
         assert not isinstance(updated, install_mod.UpdatePreview)
         typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
         return
     if not all_skills and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
-    outcomes = install_mod.update_many(
-        _here(project),
-        repo_alias=repo,
-        only_outdated=only_outdated,
-        force=force,
-        dry_run=diff,
-        override_risk=override_risk,
-    )
+    with _scanning("Updating…"):
+        outcomes = install_mod.update_many(
+            _here(project),
+            repo_alias=repo,
+            only_outdated=only_outdated,
+            force=force,
+            dry_run=diff,
+            override_risk=override_risk,
+        )
     for outcome in outcomes:
         typer.echo(f"{outcome.status:>12}  {outcome.qualified_name}  {outcome.detail}")
     if any(outcome.status == "error" for outcome in outcomes):

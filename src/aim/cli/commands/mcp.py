@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from aim.cli._shared import _friendly, _get_allow_insecure, _get_format, _here
+from aim.cli._shared import _friendly, _get_allow_insecure, _get_format, _here, _scanning
 from aim.core import format as format_mod
 from aim.core import manifest as manifest_mod
 from aim.core import mcp_install as mcp_install_mod
@@ -117,15 +117,16 @@ def mcp_add_cmd(
         overrides["url"] = url
     if header:
         overrides["headers"] = _parse_header_list(header)
-    installed = mcp_install_mod.install(
-        _here(project),
-        registry_name,
-        alias=alias,
-        preferred_transport=transport,
-        overrides=overrides or None,
-        force=force,
-        allow_insecure=_get_allow_insecure(ctx),
-    )
+    with _scanning(f"Installing {registry_name}…"):
+        installed = mcp_install_mod.install(
+            _here(project),
+            registry_name,
+            alias=alias,
+            preferred_transport=transport,
+            overrides=overrides or None,
+            force=force,
+            allow_insecure=_get_allow_insecure(ctx),
+        )
     typer.echo(f"added MCP server {installed.registry_name} as {installed.alias}")
 
 
@@ -138,9 +139,10 @@ def mcp_update_cmd(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite local edits."),
 ) -> None:
     """Refresh a managed MCP server from the registry."""
-    updated = mcp_install_mod.update(
-        _here(project), alias, force=force, allow_insecure=_get_allow_insecure(ctx)
-    )
+    with _scanning(f"Updating {alias}…"):
+        updated = mcp_install_mod.update(
+            _here(project), alias, force=force, allow_insecure=_get_allow_insecure(ctx)
+        )
     typer.echo(f"updated MCP server {updated.alias} -> {updated.current.registry_version or '?'}")
 
 

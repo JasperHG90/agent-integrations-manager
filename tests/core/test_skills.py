@@ -386,19 +386,19 @@ def test_plugin_owned_skill_indexed_with_origin(home: Path, tmp_path: Path) -> N
     repos.add("pm", f"file://{bare}")
     from aim.core import origins
 
-    assert skills.list_skills() == []  # hidden by default
-    rows = skills.list_skills(include_plugin_owned=True)
+    rows = skills.list_skills()  # shown by default
     assert [r.qualified_name for r in rows] == ["pm/audit"]
     assert rows[0].origin == origins.ORIGIN_PLUGIN
     assert rows[0].owning_plugin == "design-audit"
+    assert skills.list_skills(include_plugin_owned=False) == []  # opt-out hides them
 
 
 def test_plugin_owned_skill_search_respects_flag(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(tmp_path, _plugin_repo_files())
     repos.add("pm", f"file://{bare}")
-    assert skills.search("audit") == []
-    rows = skills.search("audit", include_plugin_owned=True)
+    rows = skills.search("audit")  # shown by default
     assert [r.qualified_name for r in rows] == ["pm/audit"]
+    assert skills.search("audit", include_plugin_owned=False) == []
 
 
 def test_dot_claude_skill_origin_and_exclusion(home: Path, tmp_path: Path) -> None:

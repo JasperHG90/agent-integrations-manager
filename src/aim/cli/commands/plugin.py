@@ -261,21 +261,23 @@ def plugin_update(
     """Update an installed plugin, or update in bulk with --all / --repo."""
     if name is not None:
         qualified_name, resolved_flavor = _resolve_installed(_here(project), name, repo, flavor)
-        updated = plugin_install_mod.update(
-            _here(project),
-            qualified_name,
-            flavor=resolved_flavor,
-            force=force,
-            override_risk=override_risk,
-        )
+        with _scanning(f"Updating {qualified_name}…"):
+            updated = plugin_install_mod.update(
+                _here(project),
+                qualified_name,
+                flavor=resolved_flavor,
+                force=force,
+                override_risk=override_risk,
+            )
         typer.echo(f"updated {qualified_name} -> {updated.current.identifier()}")
         _warn_tracked_ref_lag(updated.repo_alias)  # the breadcrumb: stuck? wrong branch.
         return
     if not all_plugins and repo is None:
         raise typer.BadParameter("pass a <name>, --all, or --repo <alias>")
-    outcomes = plugin_install_mod.update_many(
-        _here(project), repo_alias=repo, force=force, override_risk=override_risk
-    )
+    with _scanning("Updating plugins…"):
+        outcomes = plugin_install_mod.update_many(
+            _here(project), repo_alias=repo, force=force, override_risk=override_risk
+        )
     for outcome in outcomes:
         typer.echo(f"{outcome.status:>12}  {outcome.qualified_name}  {outcome.detail}")
     # Warn once per repo whose tracked ref is behind — the qualified name is

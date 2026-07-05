@@ -11,6 +11,7 @@ from aim.cli._shared import (
     _get_allow_insecure,
     _get_format,
     _here,
+    _scanning,
     _tracked_ref_lag_cell,
     _warn_tracked_ref_lag,
 )
@@ -36,13 +37,14 @@ def repo_add(
     ),
 ) -> None:
     """Register and bare-clone a skill source repository."""
-    repo = repos_mod.add(
-        alias,
-        url,
-        default_ref=default_ref,
-        allow_empty=allow_empty,
-        allow_insecure=_get_allow_insecure(ctx),
-    )
+    with _scanning(f"Cloning {alias}…"):
+        repo = repos_mod.add(
+            alias,
+            url,
+            default_ref=default_ref,
+            allow_empty=allow_empty,
+            allow_insecure=_get_allow_insecure(ctx),
+        )
     typer.echo(f"added repo {repo.alias} -> {repo.url}")
     if repo.last_sha:
         typer.echo(f"  HEAD: {repo.last_sha[:12]}")
@@ -111,7 +113,8 @@ def repo_set_ref(
     ref: str = typer.Argument(..., help="Branch or tag to track (e.g. main, HEAD, v1.2.0)."),
 ) -> None:
     """Change which branch/tag a registered repo tracks, then re-resolve and reindex."""
-    repo = repos_mod.set_ref(alias, ref, allow_insecure=_get_allow_insecure(ctx))
+    with _scanning(f"Setting {alias} ref to {ref}…"):
+        repo = repos_mod.set_ref(alias, ref, allow_insecure=_get_allow_insecure(ctx))
     sha = repo.last_sha[:12] if repo.last_sha else "?"
     typer.echo(f"set {alias} ref -> {ref} (HEAD={sha})")
     _warn_tracked_ref_lag(alias)  # normally silent now; warns if the new ref is still behind
@@ -129,7 +132,8 @@ def repo_refresh(
     """Fetch the latest commits for a registered repo (or all repos) and re-index."""
     allow_insecure = _get_allow_insecure(ctx)
     if alias is not None:
-        repo = repos_mod.refresh(alias, allow_insecure=allow_insecure)
+        with _scanning(f"Refreshing {alias}…"):
+            repo = repos_mod.refresh(alias, allow_insecure=allow_insecure)
         sha = repo.last_sha[:12] if repo.last_sha else "?"
         typer.echo(f"refreshed {alias}: HEAD={sha}")
         _warn_tracked_ref_lag(alias)
@@ -140,7 +144,9 @@ def repo_refresh(
         typer.echo("no repos registered")
         return
     failures = 0
-    for a, refreshed, err in repos_mod.refresh_many(aliases, allow_insecure=allow_insecure):
+    with _scanning(f"Refreshing {len(aliases)} repo(s)…"):
+        results = repos_mod.refresh_many(aliases, allow_insecure=allow_insecure)
+    for a, refreshed, err in results:
         if err is not None:
             failures += 1
             typer.echo(f"  {a}: {err}", err=True)
@@ -166,7 +172,8 @@ def repo_reindex(
     plain `refresh` would skip because the SHA did not move.
     """
     allow_insecure = _get_allow_insecure(ctx)
-    repo = repos_mod.reindex(alias, allow_insecure=allow_insecure)
+    with _scanning(f"Reindexing {alias}…"):
+        repo = repos_mod.reindex(alias, allow_insecure=allow_insecure)
     sha = repo.last_sha[:12] if repo.last_sha else "?"
     typer.echo(f"reindexed {alias}: HEAD={sha}")
     _warn_skipped_templates()

@@ -137,7 +137,8 @@ def archetype_update(
     ),
 ) -> None:
     """Re-resolve the selected archetype to its tracked ref and re-render AGENTS.md."""
-    updated = archetype_install_mod.update(_here(project), override_risk=override_risk)
+    with _scanning("Updating instructions…"):
+        updated = archetype_install_mod.update(_here(project), override_risk=override_risk)
     typer.echo(
         f"updated instruction archetype {updated.qualified_name} -> {updated.current.identifier()}"
     )

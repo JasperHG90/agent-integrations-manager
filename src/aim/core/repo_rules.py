@@ -315,7 +315,7 @@ def _effective_origin(row: RuleIndex) -> str:
 def list_rules(
     repo_alias: str | None = None,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[RuleIndex]:
     """Return indexed rules sorted by qualified name, optionally filtered by repo.
@@ -323,7 +323,7 @@ def list_rules(
     Args:
         repo_alias: If given, restrict results to this repo's rules.
         include_plugin_owned: Also return rules bundled inside plugins
-            (hidden by default).
+            (shown by default).
         include_dot_claude: Return rules discovered under `.claude/` dirs
             (shown by default).
 
@@ -351,7 +351,7 @@ def list_rules(
 def search(
     query: str,
     *,
-    include_plugin_owned: bool = False,
+    include_plugin_owned: bool = True,
     include_dot_claude: bool = True,
 ) -> list[RuleIndex]:
     """Case-insensitive substring search across qualified_name, title, description."""
