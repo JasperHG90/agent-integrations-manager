@@ -1,9 +1,10 @@
-manifest_version = 10
+manifest_version = 11
 layout_profile = "claude"
 symlinks = [
     "CLAUDE.md",
 ]
 mcp_servers = []
+targets = []
 
 [archetype]
 qualified_name = "default"
@@ -163,14 +164,6 @@ source_path = "gemini-extension.json"
 risk_acknowledged = false
 
 [[plugin]]
-qualified_name = "8b8de8ec329cb5d5/memex"
-repo_alias = "8b8de8ec329cb5d5"
-flavor = "claude"
-source_path = "packages/claude-code-plugin"
-marketplace_name = "memex"
-risk_acknowledged = true
-
-[[plugin]]
 qualified_name = "71f157ee09e4fef6/persona"
 repo_alias = "71f157ee09e4fef6"
 flavor = "gemini"
@@ -182,4 +175,12 @@ qualified_name = "8c6014a36ca90e3f/superpowers"
 repo_alias = "8c6014a36ca90e3f"
 flavor = "gemini"
 source_path = ""
+risk_acknowledged = true
+
+[[plugin]]
+qualified_name = "8b8de8ec329cb5d5/memex"
+repo_alias = "8b8de8ec329cb5d5"
+flavor = "claude"
+source_path = "packages/claude-code-plugin"
+marketplace_name = "memex"
 risk_acknowledged = true

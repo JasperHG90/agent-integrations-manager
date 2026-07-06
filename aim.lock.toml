@@ -1,5 +1,6 @@
-manifest_version = 16
+manifest_version = 17
 mcp_servers = []
+targets = []
 managed_files = [
     "AGENTS.md",
     "CLAUDE.md",
@@ -295,11 +296,25 @@ flavor = "claude"
 source_path = "packages/claude-code-plugin"
 target_dir = ".claude/plugins/aim-8b8de8ec329cb5d5/memex"
 marketplace_name = "aim-8b8de8ec329cb5d5"
-history = []
-content_hash = "1f9be4467759832908623ce6298a7fabca0ebfeac0ceb411a72eded682dff010"
+content_hash = "506a7126e557ab90f15477f7a24459eafbc6b80cabdf4ee94eac964e75be8b08"
 risk_acknowledged = true
 
 [plugin.current]
+tag = "1.1.1"
+sha = "1f6732a14229ea151e16b581a06e98966ef6e483"
+installed_at = "2026-07-06T06:05:55.476780Z"
+
+[[plugin.history]]
+tag = "1.1.0"
+sha = "f14461896733bf3b6f33984db9b9d191b20a835b"
+installed_at = "2026-07-06T06:05:21.681013Z"
+
+[[plugin.history]]
+tag = "1.0.0-rc4"
+sha = "a8b90a207489e64a6fc44a3d092491853884291b"
+installed_at = "2026-07-05T18:39:48.757234Z"
+
+[[plugin.history]]
 tag = "v1.0.0rc6"
 sha = "2a053a7b14bbdee282c15b2a75645d0a2ee37efe"
 installed_at = "2026-06-28T13:26:39.104879Z"
