@@ -220,16 +220,18 @@ def _gate_rule(
     """
     pol = policy.effective_policy(project_root)
     alias = qualified_name.split("/", 1)[0]
-    policy.assert_repo_allowed(pol, alias, _repo_url(alias))
+    url = _repo_url(alias)
+    policy.assert_repo_allowed(pol, alias, url)
     policy.assert_artifact_allowed(pol, "rule", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"rule {qualified_name}")
-    risk.gate(
-        content,
-        qualified_name=qualified_name,
-        pol=pol,
-        override_risk=override_risk,
-        kind="rule",
-    )
+    if not policy.repo_is_trusted(pol, alias, url):
+        risk.gate(
+            content,
+            qualified_name=qualified_name,
+            pol=pol,
+            override_risk=override_risk,
+            kind="rule",
+        )
 
 
 def _deploy(

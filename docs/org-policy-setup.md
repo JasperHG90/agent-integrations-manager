@@ -28,6 +28,7 @@ name = "acme-baseline"
 
 [repos]
 blocked = ["https://github.com/evil/repo"]   # by normalized URL or alias
+trusted = ["https://github.com/acme/tools"]  # skip risk scanning (still block/unicode checked)
 
 [artifacts]
 blocked_skills = ["somerepo/badskill"]

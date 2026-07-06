@@ -206,8 +206,14 @@ def test_tiered_clean_screen_defers_to_judge() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _set_risk_policy(project_root: Path, *, mode: str, allow_override: bool = True) -> None:
-    pol = policy.Policy(name="local")
+def _set_risk_policy(
+    project_root: Path,
+    *,
+    mode: str,
+    allow_override: bool = True,
+    trusted_repos: list[str] | None = None,
+) -> None:
+    pol = policy.Policy(name="local", trusted_repos=trusted_repos or [])
     pol.risk.classifier = True
     pol.risk.mode = mode
     pol.risk.allow_override = allow_override
@@ -239,6 +245,22 @@ def test_gate_noop_when_risk_disabled(home: Path, project_root: Path) -> None:
     # consulted, so the gate does not block.
     risk.set_classifier(FakeClassifier(risk.RiskLevel.HIGH))
     agent_install._gate_agent(project_root, "r/ok", "danger")  # no raise
+
+
+def test_gate_skips_scan_for_trusted_repo(home: Path, project_root: Path) -> None:
+    # A trusted repo skips risk scanning entirely, even in block mode with a HIGH
+    # verdict. The alias ("acme") derives from the qualified name.
+    fake = FakeClassifier(risk.RiskLevel.HIGH)
+    risk.set_classifier(fake)
+    # Untrusted: the classifier is consulted and the deploy is blocked.
+    _set_risk_policy(project_root, mode="block")
+    with pytest.raises(risk.RiskBlockedError):
+        agent_install._gate_agent(project_root, "acme/a", "danger")
+    assert fake.calls == 1
+    # Trusted by alias: the gate is bypassed, so the classifier is never re-consulted.
+    _set_risk_policy(project_root, mode="block", trusted_repos=["acme"])
+    agent_install._gate_agent(project_root, "acme/a", "danger")  # no raise
+    assert fake.calls == 1
 
 
 # ---------------------------------------------------------------------------

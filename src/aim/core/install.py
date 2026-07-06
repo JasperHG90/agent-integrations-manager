@@ -356,7 +356,8 @@ def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
     snap = _ensure_snapshot(plan.repo_alias, plan.version.sha, plan.source_path, plan.skill_name)
     _ensure_symlinks_safe(snap)
     pol = policy.effective_policy(plan.project_root)
-    policy.assert_repo_allowed(pol, plan.repo_alias, _repo_url(plan.repo_alias))
+    repo_url = _repo_url(plan.repo_alias)
+    policy.assert_repo_allowed(pol, plan.repo_alias, repo_url)
     policy.assert_artifact_allowed(pol, "skill", plan.qualified_name)
     hidden = content_guard.scan_directory(snap)
     if hidden:
@@ -365,7 +366,8 @@ def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
         )
     # Guarded because gathering skill text is risk-only work; skip it when risk is off
     # (agents/rules already hold their content, so they call risk.gate unconditionally).
-    if pol.risk.active_for("skill"):
+    # A trusted repo skips the scan (and the gathering) entirely.
+    if pol.risk.active_for("skill") and not policy.repo_is_trusted(pol, plan.repo_alias, repo_url):
         risk.gate(
             _gather_skill_text(snap),
             qualified_name=plan.qualified_name,

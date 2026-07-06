@@ -51,16 +51,18 @@ def _gate_archetype(
     """
     pol = policy.effective_policy(project_root)
     alias = qualified_name.split("/", 1)[0]
-    policy.assert_repo_allowed(pol, alias, _repo_url(alias))
+    url = _repo_url(alias)
+    policy.assert_repo_allowed(pol, alias, url)
     policy.assert_archetype_allowed(pol, qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"archetype {qualified_name}")
-    risk.gate(
-        content,
-        qualified_name=qualified_name,
-        pol=pol,
-        override_risk=override_risk,
-        kind="archetype",
-    )
+    if not policy.repo_is_trusted(pol, alias, url):
+        risk.gate(
+            content,
+            qualified_name=qualified_name,
+            pol=pol,
+            override_risk=override_risk,
+            kind="archetype",
+        )
 
 
 def _render(project_root: Path, m: object) -> None:

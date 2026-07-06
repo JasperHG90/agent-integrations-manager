@@ -127,6 +127,10 @@ class Policy(BaseModel):
     version: int = 1
     name: str = "local"
     blocked_repos: list[str] = Field(default_factory=list)
+    # Repos the policy author trusts: their artifacts always skip risk scanning
+    # (matched by alias or normalized URL, like blocked_repos). A repo that is both
+    # blocked and trusted is still refused — assert_repo_allowed runs first.
+    trusted_repos: list[str] = Field(default_factory=list)
     blocked_skills: list[str] = Field(default_factory=list)
     blocked_agents: list[str] = Field(default_factory=list)
     blocked_rules: list[str] = Field(default_factory=list)
@@ -305,6 +309,7 @@ def from_mapping(data: dict) -> Policy:
         version=int(data.get("version", 1)),
         name=str(data.get("name", "local")),
         blocked_repos=list(repos_t.get("blocked", [])),
+        trusted_repos=list(repos_t.get("trusted", [])),
         blocked_skills=list(artifacts_t.get("blocked_skills", [])),
         blocked_agents=list(artifacts_t.get("blocked_agents", [])),
         blocked_rules=list(artifacts_t.get("blocked_rules", [])),
@@ -347,8 +352,13 @@ def to_mapping(policy: Policy) -> dict:
         The mapping representation.
     """
     doc: dict = {"version": policy.version, "name": policy.name}
+    repos_doc: dict = {}
     if policy.blocked_repos:
-        doc["repos"] = {"blocked": policy.blocked_repos}
+        repos_doc["blocked"] = policy.blocked_repos
+    if policy.trusted_repos:
+        repos_doc["trusted"] = policy.trusted_repos
+    if repos_doc:
+        doc["repos"] = repos_doc
     artifacts: dict = {}
     if policy.blocked_skills:
         artifacts["blocked_skills"] = policy.blocked_skills
@@ -837,6 +847,36 @@ def assert_repo_allowed(policy: Policy, alias: str, url: str) -> None:
             raise PolicyViolationError(
                 f"repo {alias!r} ({url}) is blocked by policy {policy.name!r}"
             )
+
+
+def repo_is_trusted(policy: Policy, alias: str, url: str) -> bool:
+    """Return whether a repo is on the policy's trusted allow-list.
+
+    Trusted repos skip risk scanning entirely. Matching mirrors
+    ``assert_repo_allowed``: an entry matches by exact alias or by normalized URL.
+    A repo that is both blocked and trusted is still refused, because every deploy
+    gate calls ``assert_repo_allowed`` before consulting this.
+
+    Args:
+        policy: The active policy.
+        alias: The repo's local alias.
+        url: The repo's git URL.
+
+    Returns:
+        True if the repo is trusted and risk scanning should be skipped.
+    """
+    if not policy.trusted_repos:
+        return False
+    norm = normalize_repo_url(url)
+    for entry in policy.trusted_repos:
+        # An empty/whitespace entry must never trust everything: trust fails OPEN
+        # (an unregistered alias has url=""), so a stray "" would silently disable
+        # scanning for every such artifact. Blocking has the opposite (safe) skew.
+        if not entry.strip():
+            continue
+        if entry == alias or normalize_repo_url(entry) == norm:
+            return True
+    return False
 
 
 def assert_artifact_allowed(policy: Policy, kind: str, qualified_name: str) -> None:

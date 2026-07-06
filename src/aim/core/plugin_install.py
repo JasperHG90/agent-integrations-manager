@@ -147,8 +147,10 @@ def _deploy(
         raise install.ManifestPathEscapeError(f"plugin vendor path escapes project root: {rel!r}")
 
     pol = policy.effective_policy(project_root)
-    policy.assert_repo_allowed(pol, repo_alias, install._repo_url(repo_alias))
+    repo_url = install._repo_url(repo_alias)
+    policy.assert_repo_allowed(pol, repo_alias, repo_url)
     policy.assert_artifact_allowed(pol, "plugin", qualified_name)
+    scan = not policy.repo_is_trusted(pol, repo_alias, repo_url)
 
     if kind.source_unit == "dir":
         snap = install._ensure_snapshot(repo_alias, version.sha, source_path, plugin_name)
@@ -159,7 +161,7 @@ def _deploy(
                 f"{qualified_name}: hidden Unicode found in plugin files:\n" + "\n".join(hidden)
             )
         _surface_executable_surface(kind, snap, qualified_name)
-        if pol.risk.active_for("plugin"):
+        if scan and pol.risk.active_for("plugin"):
             risk.gate(
                 install._gather_skill_text(snap),
                 qualified_name=qualified_name,
@@ -184,7 +186,7 @@ def _deploy(
             f"could not read {repo_alias}/{plugin_name}@{version.sha[:12]}: {exc}"
         ) from exc
     content_guard.assert_no_hidden_unicode(content, source=qualified_name)
-    if pol.risk.active_for("plugin"):
+    if scan and pol.risk.active_for("plugin"):
         risk.gate(
             content,
             qualified_name=qualified_name,

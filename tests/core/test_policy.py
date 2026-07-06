@@ -104,6 +104,7 @@ def test_toml_roundtrip_preserves_fields() -> None:
     pol = policy.Policy(
         name="acme",
         blocked_repos=["git@github.com:evil/x.git"],
+        trusted_repos=["git@github.com:trusted/y.git"],
         blocked_skills=["r/bad"],
         allowed_profiles=["claude"],
     )
@@ -113,6 +114,7 @@ def test_toml_roundtrip_preserves_fields() -> None:
     pol.risk.preset_overrides = {"obfuscation": False, "destructive_ops": "medium"}
     back = policy.from_toml(policy.to_toml(pol))
     assert back.blocked_repos == pol.blocked_repos
+    assert back.trusted_repos == pol.trusted_repos
     assert back.blocked_skills == pol.blocked_skills
     assert back.allowed_profiles == pol.allowed_profiles
     assert back.risk.classifier is True
@@ -196,6 +198,26 @@ def test_assert_repo_allowed_by_url_and_alias() -> None:
     policy.assert_repo_allowed(pol, "good", "https://github.com/good/repo")
 
 
+def test_repo_is_trusted_by_url_and_alias() -> None:
+    pol = policy.Policy(name="p", trusted_repos=["https://github.com/acme/x", "goodalias"])
+    # matched by normalized URL (ssh form, .git suffix, and case all normalize)
+    assert policy.repo_is_trusted(pol, "anything", "git@github.com:Acme/X.git")
+    # matched by exact alias
+    assert policy.repo_is_trusted(pol, "goodalias", "https://ok.example/repo")
+    # neither alias nor URL matches
+    assert not policy.repo_is_trusted(pol, "other", "https://github.com/other/repo")
+    # empty trust list -> nothing is trusted
+    assert not policy.repo_is_trusted(policy.Policy(), "any", "https://x/y")
+    # a stray empty/whitespace entry must NOT trust an unregistered alias (url="")
+    assert not policy.repo_is_trusted(policy.Policy(trusted_repos=["", "  "]), "any", "")
+
+
+def test_compute_hash_covers_trusted_repos() -> None:
+    a = policy.Policy(name="x")
+    b = policy.Policy(name="x", trusted_repos=["r"])
+    assert policy.compute_hash(a) != policy.compute_hash(b)
+
+
 def test_assert_artifact_allowed() -> None:
     pol = policy.Policy(name="p", blocked_skills=["r/bad"], blocked_agents=["r/a"])
     with pytest.raises(policy.PolicyViolationError):
@@ -239,6 +261,24 @@ def test_gates_still_enforce_hidden_unicode(home: Path, project_root: Path) -> N
         agent_install._gate_agent(project_root, "r/ok", "hello​world")
     with pytest.raises(content_guard.HiddenUnicodeError):
         rule_install._gate_rule(project_root, "r/ok", "hello​world")
+
+
+def test_blocked_repo_beats_trusted(home: Path, project_root: Path) -> None:
+    # A repo on BOTH lists is still refused: assert_repo_allowed (block) runs
+    # before the trust check at every gate, so blocking wins over trust.
+    _set_local(
+        project_root,
+        policy.Policy(name="local", blocked_repos=["acme"], trusted_repos=["acme"]),
+    )
+    with pytest.raises(policy.PolicyViolationError):
+        agent_install._gate_agent(project_root, "acme/a", "content")
+
+
+def test_trusted_repo_still_enforces_hidden_unicode(home: Path, project_root: Path) -> None:
+    # Trust skips RISK scanning only; the hidden-unicode guard still fires.
+    _set_local(project_root, policy.Policy(name="local", trusted_repos=["acme"]))
+    with pytest.raises(content_guard.HiddenUnicodeError):
+        agent_install._gate_agent(project_root, "acme/a", "hello​world")
 
 
 # ---------------------------------------------------------------------------
