@@ -266,6 +266,26 @@ def install(
     """
     row = _agent_index_row(qualified_name)
     _warn_if_plugin_owned(row)
+    # Two same-named agents from different repos share one <agents_dir>/<name>.md;
+    # the second install would silently destroy the first and wedge every sync.
+    m0 = manifest.load_or_default(project_root)
+    clash = next(
+        (
+            a
+            for a in m0.agents
+            if a.qualified_name.split("/", 1)[-1] == row.agent_name
+            and a.qualified_name != qualified_name
+        ),
+        None,
+    )
+    if clash is not None:
+        from aim.core.install import TargetPathCollisionError
+
+        raise TargetPathCollisionError(
+            f"{qualified_name}: agent name {row.agent_name!r} is already installed as "
+            f"{clash.qualified_name}; two agents with the same name cannot share a "
+            f"deploy path — remove one first"
+        )
     version = resolve_install_version(
         row.repo_alias, row.source_path, track=track, pin=pin, artifact_name="AGENT.md"
     )

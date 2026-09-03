@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from sqlmodel import select
 
@@ -305,6 +306,30 @@ def artifact_kinds(alias: str) -> set[str]:
             select(TargetIndex).where(TargetIndex.repo_alias == alias).limit(1)
         ).first():  # type: ignore[arg-type]
             kinds.add("target")
+    return kinds
+
+
+def artifact_kinds_many() -> dict[str, set[str]]:
+    """Return the artifact kinds present in every registered repo, keyed by alias.
+
+    One DISTINCT query per index table (7 total) instead of 7 queries per repo,
+    so callers rendering many repos at once (e.g. the TUI repos screen) stay
+    fast. Aliases with no indexed artifacts are absent from the result.
+    """
+    tables: tuple[tuple[Any, str], ...] = (
+        (SkillIndex, "skill"),
+        (AgentIndex, "agent"),
+        (RuleIndex, "rules"),
+        (ArchetypeIndex, "archetype"),
+        (TemplateIndex, "template"),
+        (PluginIndex, "plugin"),
+        (TargetIndex, "target"),
+    )
+    kinds: dict[str, set[str]] = {}
+    with db.session() as session:
+        for model, kind in tables:
+            for alias in session.exec(select(model.repo_alias).distinct()).all():
+                kinds.setdefault(alias, set()).add(kind)
     return kinds
 
 
@@ -612,6 +637,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
                     title=row.title,
                     description=row.description,
                     indexed_at_sha=row.indexed_at_sha,
+                    indexed_via=row.indexed_via,
                 )
             )
             session.delete(row)
@@ -727,6 +753,7 @@ def rename(old: str, new: str) -> RegisteredRepo:
                                 title=row.title,
                                 description=row.description,
                                 indexed_at_sha=row.indexed_at_sha,
+                                indexed_via=row.indexed_via,
                             )
                         )
                         session.delete(row)

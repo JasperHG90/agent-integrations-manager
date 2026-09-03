@@ -5,10 +5,11 @@ Per the plan: one model layer to avoid drift between DB and JSON shapes.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
 
@@ -142,22 +143,30 @@ class McpServerCache(SQLModel, table=True):  # type: ignore[call-arg]
 
 
 class ArchetypeIndex(SQLModel, table=True):  # type: ignore[call-arg]
-    """A discovered project-instruction archetype within a registered repo.
+    """An indexed project-instruction archetype within a registered repo.
 
-    An archetype is a directory (never the repo root) holding one or more standard
-    instruction files (AGENTS.md / CLAUDE.md / GEMINI.md / OPENCODE.md). It is a
-    selectable base for a project's AGENTS.md, used by `archetype list/search/use`.
+    An archetype holds one or more standard instruction files (AGENTS.md /
+    CLAUDE.md / GEMINI.md / OPENCODE.md). It is a selectable base for a
+    project's AGENTS.md, used by `archetype list/search/use`. Rows come from
+    discovery of the canonical `instructions/<name>/` locations, or from an
+    explicit link registration pointing at an instruction file anywhere in the
+    repo (including its root).
     """
 
     qualified_name: str = SQLField(primary_key=True)  # "<alias>/<archetype_name>"
     repo_alias: str = SQLField(index=True)
     archetype_name: str = SQLField(index=True)
-    source_path: str  # path of the archetype DIRECTORY relative to repo root
+    source_path: str  # path of the archetype DIRECTORY relative to repo root ("" = root)
     instruction_path: str  # path of the chosen base instruction file (e.g. .../AGENTS.md)
     available: str = ""  # CSV of standard filenames present, e.g. "AGENTS.md,CLAUDE.md"
     title: str | None = None
     description: str | None = None
     indexed_at_sha: str
+    # "discovered" (canonical instructions/ dir) or "link" (explicitly registered
+    # by URL/path). None = legacy pre-column row (treated as discovered). Named
+    # indexed_via, NOT origin: sibling index tables use `origin` for the
+    # origins.py vocabulary (canonical/dot-claude/other/plugin) — a different axis.
+    indexed_via: str | None = None
 
 
 class MarketplaceIndex(SQLModel, table=True):  # type: ignore[call-arg]
@@ -276,8 +285,8 @@ class DeclaredTarget(BaseModel):
     source_path: str  # path of the target .toml file relative to repo root
     track: str | None = None
     pin: str | None = None
-    # Carried for parity with other artifacts; targets are not risk-scanned, so it
-    # is effectively always False.
+    # --override-risk on `target add`; lets re-locks and syncs re-vendor without
+    # re-blocking, like the other artifact kinds.
     risk_acknowledged: bool = False
 
 
@@ -389,8 +398,11 @@ class ProjectDeclarations(BaseModel):
     targets: list[DeclaredTarget] = Field(default_factory=list)
 
 
-CURRENT_MANIFEST_VERSION = 17  # v17 adds installed plugin targets
+CURRENT_MANIFEST_VERSION = 18  # v18 adds managed_base_hash (AGENTS.md base ownership)
 HISTORY_CAP = 10
+
+
+_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 
 class SkillVersion(BaseModel):
@@ -401,6 +413,19 @@ class SkillVersion(BaseModel):
     tag: str | None = None
     sha: str
     installed_at: datetime
+
+    @field_validator("sha")
+    @classmethod
+    def _sha_is_hex(cls, value: str) -> str:
+        """Require a plain lowercase-hex object id.
+
+        The sha travels through the committed (teammate-supplied) lockfile and
+        is later interpolated into git argv and cache paths, so it must never
+        be able to carry an option (`--output=...`) or a path segment (`../`).
+        """
+        if not _SHA_RE.fullmatch(value):
+            raise ValueError(f"sha {value!r} is not a git object id (lowercase hex, 7-64 chars)")
+        return value
 
     def identifier(self) -> str:
         """Return the user-facing composite identifier `<tag>+<short_sha>` or SHA-only."""
@@ -545,8 +570,9 @@ class InstalledTarget(BaseModel):
     """An installed plugin target (a kind TOML), mirroring InstalledRule.
 
     A target is a single .toml file vendored into the project's ``.aim/targets/``
-    directory, so like a rule it has no per-target render path. It is config (not
-    agent-facing instructions), so it is not risk-scanned.
+    directory, so like a rule it has no per-target render path. Its TOML is
+    risk-scanned like other artifacts — its ``[register.config]`` writes reach
+    client config files.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -664,6 +690,11 @@ class Manifest(BaseModel):
     # Hash of the last-written body of each managed region inside AGENTS.md (and
     # symlinks). Drift means the user edited inside markers — warn before rewrite.
     managed_region_hashes: dict[str, str] = Field(default_factory=dict)
+    # Hash of the content OUTSIDE aim regions as last authored by aim. When the
+    # on-disk base still matches, aim owns it and may swap it (archetype apply,
+    # template refresh); when it differs, a human edited it and renders preserve
+    # it instead of overwriting. None = never authored by this aim version.
+    managed_base_hash: str | None = None
     # Name of the active layout profile. None resolves to no profile.
     layout_profile: str | None = None
     # Explicit list of symlinks so sync can recreate them.

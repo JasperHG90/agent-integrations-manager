@@ -102,13 +102,12 @@ _MENU_ITEMS: list[tuple[str, str, str]] = [
     ("A", "SUBAGENTS", "browse, search, install sub-agents"),
     ("M", "MCP", "search registry, install MCP servers"),
     ("G", "PLUGINS", "browse, search, install plugins"),
-    ("E", "TARGETS", "browse, search, install plugin targets"),
     ("U", "RULES", "global rules library"),
     ("T", "TEMPLATES", "reusable project setups"),
     ("B", "ARCHETYPES", "AGENTS.md base from a repo"),
     ("P", "PROJECT", "installed skills/agents/MCP in the current project"),
     ("C", "CONFIG", "roots, rule-repo overlays, init profiles"),
-    ("L", "PROFILES", "layout profiles for agent tooling paths"),
+    ("L", "LAYOUT", "layout profiles + plugin install targets"),
     ("Q", "QUIT", ""),
 ]
 
@@ -133,13 +132,12 @@ class MainScreen(Screen[None]):
         ("a", "open_agents", "Subagents"),
         ("m", "open_mcp", "MCP servers"),
         ("g", "open_plugins", "Plugins"),
-        ("e", "open_targets", "Targets"),
         ("u", "open_rules", "Rules"),
         ("t", "open_templates", "Templates"),
         ("b", "open_archetypes", "Archetypes"),
         ("p", "open_project", "Project"),
         ("c", "open_config", "Config"),
-        ("l", "open_layout_profiles", "Layout profiles"),
+        ("l", "open_layout", "Layout"),
         ("q", "app.quit", "Quit"),
     ]
 
@@ -164,7 +162,7 @@ class MainScreen(Screen[None]):
             classes="menu",
         )
         yield Static(
-            "  I/K/Y/X/R/S/A/M/G/E/U/T/B/P/C/L  navigate    CTRL+P  palette    Q  quit",
+            "  I/K/Y/X/R/S/A/M/G/U/T/B/P/C/L  navigate    CTRL+P  palette    Q  quit",
             id="hint",
             markup=False,
         )
@@ -198,12 +196,6 @@ class MainScreen(Screen[None]):
         from aim.tui.screens.plugin_screen import PluginsScreen
 
         self.app.push_screen(PluginsScreen(project_root=self._project_root))
-
-    def action_open_targets(self) -> None:
-        """Push the plugin-targets browse/search/install screen."""
-        from aim.tui.screens.targets_screen import TargetsScreen
-
-        self.app.push_screen(TargetsScreen())
 
     def action_open_rules(self) -> None:
         """Push the global rules library screen."""
@@ -239,11 +231,11 @@ class MainScreen(Screen[None]):
         """Refresh the banner when the screen regains focus."""
         self.query_one("#banner", Static).update(_render_banner(self._project_root))
 
-    def action_open_layout_profiles(self) -> None:
-        """Push the layout profiles screen for the current project."""
-        from aim.tui.screens.layout_profiles_screen import LayoutProfilesScreen
+    def action_open_layout(self) -> None:
+        """Push the combined layout-profiles + plugin-targets screen."""
+        from aim.tui.screens.layout_screen import LayoutScreen
 
-        self.app.push_screen(LayoutProfilesScreen(project_root=self._project_root))
+        self.app.push_screen(LayoutScreen(project_root=self._project_root))
 
     def action_open_init(self) -> None:
         """Open the init modal and run init with its returned config."""

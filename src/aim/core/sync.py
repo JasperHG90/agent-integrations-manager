@@ -244,6 +244,29 @@ def _alias_taken(alias: str) -> bool:
     return True
 
 
+def _ensure_archetype_indexed(m: Manifest) -> None:
+    """Recreate the index row for an explicitly linked locked archetype.
+
+    Best-effort browse/update UX: sync's own rendering reads the base body at
+    the pinned SHA and never needs the index, so failures here are swallowed.
+    """
+    installed = m.archetype
+    if installed is None:
+        return
+    try:
+        archetypes.index_row(installed.qualified_name)
+        return  # already indexed (canonical discovery or an earlier link)
+    except archetypes.ArchetypeNotIndexedError:
+        pass
+    local = repos.get_by_url(installed.repo_url)
+    alias = local.alias if local is not None else installed.repo_alias
+    name = installed.qualified_name.split("/", 1)[-1]
+    try:
+        archetypes.register_link(alias, installed.source_path, name=name)
+    except (archetypes.ArchetypeLinkError, repos.RepoNotFoundError, git.GitError):
+        return  # file moved upstream or repo unreadable — pinned renders still work
+
+
 async def _ensure_repos(pairs: dict[str, str], allow_insecure: bool) -> list[str]:
     """Concurrently register and index every repo in the alias-to-url mapping.
 
@@ -685,7 +708,12 @@ def _sync_target(
             )
 
     try:
-        target_install._gate_target(project_root, installed.qualified_name, expected_content)
+        target_install._gate_target(
+            project_root,
+            installed.qualified_name,
+            expected_content,
+            override_risk=installed.risk_acknowledged,
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(expected_content, encoding="utf-8")
     except Exception as exc:
@@ -938,6 +966,11 @@ async def run(options: SyncOptions) -> SyncResult:
     repo_pairs = _locked_repo_pairs(m)
     result.repo_errors = await _ensure_repos(repo_pairs, options.allow_insecure)
     _notify(options.progress_callback, "repos", "all", "ok")
+
+    # Discovery only indexes canonical instructions/ dirs, so an explicitly
+    # linked archetype has no index row on a teammate's machine. Recreate it
+    # from the lockfile so `archetype list/update` keep working after sync.
+    await asyncio.to_thread(_ensure_archetype_indexed, m)
 
     # In files mode each rule is deployed and drift-guarded here; in inline mode
     # the rule bodies are instead rendered into AGENTS.md by the later step.

@@ -26,7 +26,7 @@ class ImportTomlModal(ModalScreen[ImportTomlResult | None]):
     """Modal prompting for a TOML path and importing it as a project profile."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "action_load", "Load", priority=True),
     ]
 

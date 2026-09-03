@@ -40,9 +40,9 @@ class RulePickerModal(ModalScreen[RulePick | None]):
     """Modal screen for searching and selecting a registered rule."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("slash", "focus_search", "Search", priority=True),
-        Binding("enter", "action_pick", "Pick", priority=True),
+        Binding("enter", "pick", "Pick", priority=True),
     ]
 
     def __init__(self) -> None:

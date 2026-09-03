@@ -35,8 +35,8 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
     """Modal for configuring and confirming an MCP server install."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
-        ("b", "action_cancel", "Back"),
+        Binding("escape", "cancel", "Cancel", priority=True),
+        ("b", "cancel", "Back"),
         Binding("enter", "submit", "Install", priority=True),
     ]
 
@@ -215,9 +215,3 @@ class McpInstallModal(ModalScreen[McpInstallConfig | None]):
     def action_cancel(self) -> None:
         """Dismiss the modal without producing an install config."""
         self.dismiss(None)
-
-    def on_key(self, event) -> None:
-        """Cancel the modal when the escape key is pressed."""
-        if event.key == "escape":
-            event.stop()
-            self.action_cancel()

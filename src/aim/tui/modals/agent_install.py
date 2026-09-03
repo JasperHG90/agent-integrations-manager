@@ -28,7 +28,7 @@ class AgentInstallModal(ModalScreen[AgentInstallConfig | None]):
     """Modal that prompts for the project root and optional ref to install into."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "submit", "Install", priority=True),
     ]
 
@@ -109,9 +109,3 @@ class AgentInstallModal(ModalScreen[AgentInstallConfig | None]):
     def action_cancel(self) -> None:
         """Dismiss the modal without producing a config."""
         self.dismiss(None)
-
-    def on_key(self, event) -> None:
-        """Cancel the modal on the escape key, stopping further propagation."""
-        if event.key == "escape":
-            event.stop()
-            self.action_cancel()

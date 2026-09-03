@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from aim.cli import _looks_like_url, _parse_source_url
+from aim.cli._shared import _parse_source_subpath
 
 
 @pytest.mark.parametrize(
@@ -51,3 +52,33 @@ def test_parse_source_url(url: str, expected: tuple[str, str | None, str | None]
 )
 def test_looks_like_url(target: str, is_url: bool) -> None:
     assert _looks_like_url(target) is is_url
+
+
+@pytest.mark.parametrize(
+    ("url", "subpath"),
+    [
+        # Blob URL to an instruction file keeps the full in-repo path.
+        ("https://github.com/org/repo/blob/main/docs/AGENTS.md", "docs/AGENTS.md"),
+        ("https://github.com/org/repo/blob/main/AGENTS.md", "AGENTS.md"),
+        # Tree URL to a directory.
+        ("https://gitlab.com/org/repo/-/tree/develop/instructions/lean", "instructions/lean"),
+        # Pasted-link noise: GitHub's raw/plain toggle and copy-permalink line
+        # anchors are not part of the in-repo path.
+        ("https://github.com/org/repo/blob/main/AGENTS.md?plain=1", "AGENTS.md"),
+        ("https://github.com/org/repo/blob/main/docs/AGENTS.md#L1-L20", "docs/AGENTS.md"),
+        ("https://github.com/org/repo/blob/main/docs/AGENTS.md?plain=1#L10", "docs/AGENTS.md"),
+        # Plain clone URLs carry no subpath.
+        ("https://github.com/org/repo", None),
+        ("git@github.com:org/repo.git", None),
+    ],
+)
+def test_parse_source_subpath(url: str, subpath: str | None) -> None:
+    assert _parse_source_subpath(url) == subpath
+
+
+def test_parse_source_url_strips_query_and_fragment() -> None:
+    assert _parse_source_url("https://github.com/org/repo/blob/main/AGENTS.md?plain=1") == (
+        "https://github.com/org/repo",
+        "main",
+        "AGENTS",
+    )

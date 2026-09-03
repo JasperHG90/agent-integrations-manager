@@ -100,3 +100,34 @@ def test_require_secure_url_allows_file_and_ssh() -> None:
 
 def test_require_secure_url_allows_http_with_flag() -> None:
     content_guard.require_secure_url("http://example.com/repo.git", allow_insecure=True)
+
+
+@pytest.mark.parametrize(
+    "codepoint",
+    [
+        0xFE00,  # variation selector 1
+        0xFE0D,  # variation selector 14
+        0xE0100,  # variation selector 17 (supplement — byte-smuggling vector)
+        0xE01EF,  # variation selector 256
+        0x2062,  # invisible times
+        0x2063,  # invisible separator
+        0x206A,  # inhibit symmetric swapping
+        0x00AD,  # soft hyphen
+        0x034F,  # combining grapheme joiner
+        0x115F,  # Hangul choseong filler
+        0x3164,  # Hangul filler
+        0xFFA0,  # halfwidth Hangul filler
+        0x2800,  # Braille blank pattern
+    ],
+)
+def test_scan_text_finds_smuggling_codepoints(codepoint: int) -> None:
+    """Variation-selector and invisible-filler smuggling (the successor to
+    tag-char smuggling) must be flagged like any other hidden character."""
+    findings = content_guard.scan_text(f"before{chr(codepoint)}after")
+    assert findings, f"U+{codepoint:04X} passed the guard"
+
+
+def test_scan_text_allows_emoji_presentation_selectors() -> None:
+    """VS15/VS16 are how ordinary emoji pick their presentation (e.g. warning
+    sign + FE0F) — blocking them would reject innocent docs wholesale."""
+    assert content_guard.scan_text("stay safe ⚠️ ok ❤︎") == []

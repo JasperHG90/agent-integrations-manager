@@ -24,11 +24,27 @@ class InsecureTransportError(ValueError):
 _HIDDEN_RANGES: tuple[tuple[int, int], ...] = (
     # Zero-width / invisible formatting characters
     (0x200B, 0x200F),  # ZWSP, ZWNJ, ZWJ, LRM, RLM
-    (0x2060, 0x2060),  # word joiner
+    (0x2060, 0x2064),  # word joiner, invisible times/separator/plus (2061-2064)
+    (0x206A, 0x206F),  # deprecated formatting controls (ISS, ASS, …)
     (0x180E, 0x180E),  # Mongolian vowel separator
+    (0x00AD, 0x00AD),  # soft hyphen
+    (0x034F, 0x034F),  # combining grapheme joiner
     # Bidirectional formatting controls
     (0x202A, 0x202E),  # LRE, RLE, PDF, LRO, RLO
     (0x2066, 0x2069),  # LRI, RLI, FSI, PDI
+    # Invisible filler letters (render as blank glyphs, carry no text)
+    (0x115F, 0x1160),  # Hangul choseong/jungseong fillers
+    (0x17B4, 0x17B5),  # Khmer inherent vowels
+    (0x3164, 0x3164),  # Hangul filler
+    (0xFFA0, 0xFFA0),  # halfwidth Hangul filler
+    (0x2800, 0x2800),  # Braille blank pattern
+    # Variation selectors — the current byte-smuggling vector (each VS encodes
+    # data while rendering as nothing when unpaired with a base glyph).
+    # VS15/VS16 (FE0E/FE0F) are deliberately EXCLUDED: they are how ordinary
+    # emoji select their presentation (e.g. U+26A0 U+FE0F), so blocking them
+    # would reject innocent docs wholesale.
+    (0xFE00, 0xFE0D),  # VS1-14
+    (0xE0100, 0xE01EF),  # VS17-256 (the supplement — just past the tag range)
     # Tag characters (rendered invisibly by most software)
     (0xE0000, 0xE007F),
 )

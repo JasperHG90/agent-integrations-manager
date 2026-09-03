@@ -1,0 +1,23 @@
+{
+  "skill_name": "add-provider",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We just started using opencode on the team and I want aim to handle it in this repo — skills and rules should land under .opencode/ and it reads OPENCODE.md. Can you set that up?",
+      "expected_output": "A .aim/layout-profiles/opencode.toml with .opencode/* dirs, OPENCODE.md in symlinks, activated via aim init --profile opencode, followed by lock/sync verification.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Cursor extensions are just folders with an extension.json in them. Teach aim to install those into .cursor/extensions/ so we can ship them from our tooling repo.",
+      "expected_output": "A targets/cursor.toml KindSpec (manifest.file = extension.json, register.vendor_into = .cursor/extensions/{name}), shipped in a source repo and installed via aim target add, verified with aim target list / plugin list.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "make aim work with windsurf in this project. it only reads a single instructions file (.windsurfrules I think?) and has no plugins",
+      "expected_output": "A layout profile only (no target): rules_mode inline. Recognizes .windsurfrules is not a legal symlinks entry (mirrors must be *.md starting alphanumeric) and either configures Windsurf to read AGENTS.md or sets agents_md to the client filename, stating the trade-off; activated and rendered; explicitly skips creating a target.",
+      "files": []
+    }
+  ]
+}

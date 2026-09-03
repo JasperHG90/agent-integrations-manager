@@ -12,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Static
 
 from aim.core import default_mcp_servers, mcp_registry
+from aim.tui import _threads
 
 
 @dataclass(frozen=True)
@@ -39,9 +40,9 @@ class McpPickerModal(ModalScreen[McpPick | None]):
     """Modal screen for searching and selecting an MCP server to add."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("slash", "focus_search", "Search", priority=True),
-        Binding("enter", "action_pick", "Pick", priority=True),
+        Binding("enter", "pick", "Pick", priority=True),
     ]
 
     def __init__(self) -> None:
@@ -49,6 +50,7 @@ class McpPickerModal(ModalScreen[McpPick | None]):
         super().__init__()
         self._results: list[mcp_registry.McpSearchResult] = []
         self._last_query: str = ""
+        self._search_seq = 0
 
     def compose(self) -> ComposeResult:
         """Build the modal layout with search bar, results table, and buttons."""
@@ -138,25 +140,39 @@ class McpPickerModal(ModalScreen[McpPick | None]):
             return
         self._last_query = q
         self._status(f"searching for {q!r}…")
-        self.run_worker(
-            lambda: self._search_worker(q),
-            name="mcp_picker_search",
-            group="mcp_picker_search",
-            thread=True,
-        )
+        # Daemon thread, not a Textual worker: worker threads are joined at
+        # interpreter exit, so a search mid-flight stalled quitting (see
+        # aim.tui._threads). Staleness is handled by the sequence guard.
+        self._search_seq += 1
+        seq = self._search_seq
+        _threads.run_detached(lambda: self._search_worker(q, seq), name="mcp-picker-search")
 
-    def _search_worker(self, q: str) -> None:
+    def _search_worker(self, q: str, seq: int) -> None:
         """Search the registry off-thread and marshal results back to the UI thread.
 
         Args:
             q: Query string to search the registry for.
+            seq: Search sequence captured at launch; a stale thread (the user
+                typed again) delivers nothing.
         """
         try:
             results, next_cursor = mcp_registry.search_registry(q)
         except mcp_registry.McpRegistryError as exc:
-            self.app.call_from_thread(self._on_search_error, str(exc))
+            self._deliver(seq, self._on_search_error, str(exc))
             return
-        self.app.call_from_thread(self._on_search_results, results, next_cursor)
+        self._deliver(seq, self._on_search_results, results, next_cursor)
+
+    def _deliver(self, seq: int, callback, *args) -> None:  # type: ignore[no-untyped-def]
+        """Marshal a search outcome to the UI thread unless it went stale."""
+
+        def _apply() -> None:
+            if seq == self._search_seq:
+                callback(*args)
+
+        try:
+            self.app.call_from_thread(_apply)
+        except Exception:
+            pass  # app shut down or modal dismissed mid-search
 
     def _on_search_results(
         self,

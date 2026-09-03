@@ -247,9 +247,17 @@ def test_gate_noop_when_risk_disabled(home: Path, project_root: Path) -> None:
     agent_install._gate_agent(project_root, "r/ok", "danger")  # no raise
 
 
-def test_gate_skips_scan_for_trusted_repo(home: Path, project_root: Path) -> None:
+def test_gate_skips_scan_for_trusted_repo(home: Path, project_root: Path, tmp_path: Path) -> None:
     # A trusted repo skips risk scanning entirely, even in block mode with a HIGH
-    # verdict. The alias ("acme") derives from the qualified name.
+    # verdict — but ONLY when trusted by URL. An alias entry is attacker-satisfiable
+    # (the alias derives from the URL's last path segment) and must not bypass.
+    from aim.core import repos
+    from tests.fixtures import git_fixtures
+
+    working = git_fixtures.make_source_repo(tmp_path / "src", files={"agents/a/AGENT.md": "# a\n"})
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("acme", f"file://{bare}")
+
     fake = FakeClassifier(risk.RiskLevel.HIGH)
     risk.set_classifier(fake)
     # Untrusted: the classifier is consulted and the deploy is blocked.
@@ -257,10 +265,16 @@ def test_gate_skips_scan_for_trusted_repo(home: Path, project_root: Path) -> Non
     with pytest.raises(risk.RiskBlockedError):
         agent_install._gate_agent(project_root, "acme/a", "danger")
     assert fake.calls == 1
-    # Trusted by alias: the gate is bypassed, so the classifier is never re-consulted.
+    # Trusted by ALIAS only: the gate still runs and still blocks (fails safe;
+    # the HIGH verdict may come from the cache, so no call-count assertion).
     _set_risk_policy(project_root, mode="block", trusted_repos=["acme"])
+    with pytest.raises(risk.RiskBlockedError):
+        agent_install._gate_agent(project_root, "acme/a", "danger")
+    # Trusted by URL: the gate is bypassed entirely — no raise, no new calls.
+    calls_before = fake.calls
+    _set_risk_policy(project_root, mode="block", trusted_repos=[f"file://{bare}"])
     agent_install._gate_agent(project_root, "acme/a", "danger")  # no raise
-    assert fake.calls == 1
+    assert fake.calls == calls_before
 
 
 # ---------------------------------------------------------------------------

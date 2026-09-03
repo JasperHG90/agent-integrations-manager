@@ -151,3 +151,16 @@ def test_commits_behind_rejects_dash_prefix(backend: git.RealGitBackend, tmp_pat
     backend.clone_bare(f"file://{bare}", tmp_path / "clone")
     with pytest.raises(git.GitError, match="ref must not start with '-'"):
         backend.commits_behind(tmp_path / "clone", "--evil", "main")
+
+
+def test_archive_rejects_dash_prefixed_sha(backend: git.RealGitBackend, tmp_path: Path) -> None:
+    """The sha slot must never be parseable as a git option: a lockfile-supplied
+    `--output=<victim>` used to make `git archive` truncate an arbitrary file."""
+    working = git_fixtures.make_source_repo(tmp_path / "src", {"README.md": "x\n"})
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    backend.clone_bare(f"file://{bare}", tmp_path / "clone")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n")
+    with pytest.raises(git.GitError, match="sha must not start with '-'"):
+        backend.archive(tmp_path / "clone", f"--output={victim}", "", tmp_path / "out")
+    assert victim.read_text() == "precious\n"  # untouched

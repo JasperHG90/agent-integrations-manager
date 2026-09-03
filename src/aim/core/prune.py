@@ -59,9 +59,15 @@ class PruneOptions:
 class PruneItem:
     """Describe one prune candidate and the action taken or planned for it."""
 
-    kind: str  # "skill" | "agent" | "rule" | "mcp" | "symlink" | "plugin"
+    kind: str  # "skill" | "agent" | "rule" | "mcp" | "symlink" | "plugin" | "target"
     path: str  # relative path, MCP alias, or "<inline>/<name>" for inline rules
     action: str  # "removed" | "would-remove" | "removed-stale-entry" | "skipped" | "kept" | "skipped-unsafe" | "error: ..."
+    # The artifact's identity (qualified name; alias for mcp; "<qn>@<flavor>"
+    # for plugins). Deletion and lockfile filtering key on THIS, never on the
+    # path: two same-named artifacts from different repos share a deploy path,
+    # and path-keyed pruning deleted the still-declared one along with the
+    # undeclared one. None for symlinks, whose path is their identity.
+    qualified_name: str | None = None
 
 
 @dataclass
@@ -162,20 +168,6 @@ def _rule_rel(profile: layout_profiles.LayoutProfile, rule_name: str) -> str:
     return f"{profile.rules_dir}/{rule_name}.md"
 
 
-def _rule_name_from_rel(rel: str) -> str:
-    """Recover the unqualified rule name from its relative path or inline key.
-
-    Args:
-        rel: An ``<inline>/<name>`` key or a file path produced by ``_rule_rel``.
-
-    Returns:
-        The bare rule name.
-    """
-    if rel.startswith("<inline>/"):
-        return rel[len("<inline>/") :]
-    return Path(rel).stem
-
-
 def _resolve_profile(
     project_root: Path, options: PruneOptions, decl_profile: str | None
 ) -> layout_profiles.LayoutProfile:
@@ -240,35 +232,51 @@ def _drift(
         if matching is not None:
             matched_patterns.add(matching)
 
-    def _maybe(candidate_kind: str, rel: str, declared: bool) -> None:
+    def _maybe(candidate_kind: str, rel: str, declared: bool, identity: str | None) -> None:
         """Classify one installed item as kept, skipped, or would-remove."""
         if declared:
-            kept.append(PruneItem(candidate_kind, rel, "kept"))
+            kept.append(PruneItem(candidate_kind, rel, "kept", identity))
             _record_pattern_match(rel)
             return
         matching = _matching_pattern(rel, exclude_patterns)
         if matching is not None:
-            candidates.append(PruneItem(candidate_kind, rel, "skipped"))
+            candidates.append(PruneItem(candidate_kind, rel, "skipped", identity))
             matched_patterns.add(matching)
         else:
-            candidates.append(PruneItem(candidate_kind, rel, "would-remove"))
+            candidates.append(PruneItem(candidate_kind, rel, "would-remove", identity))
+
+    declared_target_qnames = {t.qualified_name for t in decl.targets}
 
     for s in m.skills:
-        _maybe("skill", s.target_dir, s.qualified_name in declared_skill_qnames)
+        _maybe("skill", s.target_dir, s.qualified_name in declared_skill_qnames, s.qualified_name)
     for a in m.agents:
-        _maybe("agent", a.target_path, a.qualified_name in declared_agent_qnames)
+        _maybe("agent", a.target_path, a.qualified_name in declared_agent_qnames, a.qualified_name)
     for rule in m.rules:
         rule_name = rule.qualified_name.split("/", 1)[-1]
-        _maybe("rule", _rule_rel(profile, rule_name), rule.qualified_name in declared_rule_qnames)
+        _maybe(
+            "rule",
+            _rule_rel(profile, rule_name),
+            rule.qualified_name in declared_rule_qnames,
+            rule.qualified_name,
+        )
     for sym in m.symlinks:
-        _maybe("symlink", sym, sym in declared_symlinks)
+        _maybe("symlink", sym, sym in declared_symlinks, None)
     for mc in m.mcp_servers:
-        _maybe("mcp", mc.alias, mc.alias in declared_mcp_aliases)
+        _maybe("mcp", mc.alias, mc.alias in declared_mcp_aliases, mc.alias)
     for plug in m.plugins:
         _maybe(
             "plugin",
             plug.target_dir,
             (plug.qualified_name, plug.flavor) in declared_plugin_keys,
+            f"{plug.qualified_name}@{plug.flavor}",
+        )
+    for tgt in m.targets:
+        tgt_name = tgt.qualified_name.split("/", 1)[-1]
+        _maybe(
+            "target",
+            f".aim/targets/{tgt_name}.toml",
+            tgt.qualified_name in declared_target_qnames,
+            tgt.qualified_name,
         )
 
     warnings = _obsolete_pattern_warnings(exclude_patterns, matched_patterns)
@@ -351,12 +359,18 @@ def _check_layout_match(m: manifest.Manifest, decl: declarations.ProjectDeclarat
     Raises:
         PruneError: If the resolved layout profiles differ.
     """
-    # aim.toml uses None to mean "default"; the lockfile stores the resolved name.
+    # Both sides use None to mean "default": aim.toml always, and lockfiles
+    # created by the install path (which never ran `aim lock`). Compare
+    # RESOLVED-to-RESOLVED — comparing the raw lockfile value against the
+    # resolved declaration made prune unusable for every install-path project
+    # ("layout_profile=None but declares None; run `aim sync`" — and sync
+    # never assigns it; only `aim lock` does).
     decl_resolved = decl.layout_profile or layout_profiles.BUILTIN_CLAUDE.name
-    if m.layout_profile != decl_resolved:
+    lock_resolved = m.layout_profile or layout_profiles.BUILTIN_CLAUDE.name
+    if lock_resolved != decl_resolved:
         raise PruneError(
-            f"lockfile layout_profile={m.layout_profile!r} but aim.toml declares "
-            f"{decl.layout_profile!r}; run `aim sync` first to reconcile"
+            f"lockfile layout_profile resolves to {lock_resolved!r} but aim.toml resolves "
+            f"to {decl_resolved!r}; run `aim lock` (then `aim sync`) to reconcile"
         )
 
 
@@ -410,12 +424,20 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
     profile = _resolve_profile(project_root, options, decl.layout_profile)
     exclude_patterns = _load_aimignore(project_root) + list(options.excludes)
 
-    current, _, _ = _drift(m, decl, profile, exclude_patterns)
+    current, kept_now, _ = _drift(m, decl, profile, exclude_patterns)
 
-    # Items in the original plan that the user confirmed.
-    plan_keys = {(c.kind, c.path) for c in plan_result.removed if c.action == "would-remove"}
+    # Items in the original plan that the user confirmed — keyed by IDENTITY,
+    # not just path: two artifacts can share a deploy path, and only the
+    # undeclared one may be pruned.
+    plan_keys = {
+        (c.kind, c.path, c.qualified_name)
+        for c in plan_result.removed
+        if c.action == "would-remove"
+    }
     # Items that are STILL drift candidates now.
-    current_keys = {(c.kind, c.path) for c in current if c.action == "would-remove"}
+    current_keys = {
+        (c.kind, c.path, c.qualified_name) for c in current if c.action == "would-remove"
+    }
     to_apply_keys = plan_keys & current_keys
 
     result = PruneResult()
@@ -424,12 +446,18 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
         result.warnings.append("Plan is stale; re-run `aim prune`")
         return result
 
-    skill_paths = {p for k, p in to_apply_keys if k == "skill"}
-    agent_paths = {p for k, p in to_apply_keys if k == "agent"}
-    rule_rels = {p for k, p in to_apply_keys if k == "rule"}
-    symlink_paths = {p for k, p in to_apply_keys if k == "symlink"}
-    mcp_aliases = {p for k, p in to_apply_keys if k == "mcp"}
-    plugin_paths = {p for k, p in to_apply_keys if k == "plugin"}
+    # Paths a KEPT (still-declared) item claims must survive on disk even when
+    # a pruned item shares them.
+    kept_paths = {(c.kind, c.path) for c in kept_now}
+
+    skill_qns = {qn for k, _, qn in to_apply_keys if k == "skill"}
+    agent_qns = {qn for k, _, qn in to_apply_keys if k == "agent"}
+    rule_qns = {qn for k, _, qn in to_apply_keys if k == "rule"}
+    rule_rels = {p for k, p, _ in to_apply_keys if k == "rule"}
+    symlink_paths = {p for k, p, _ in to_apply_keys if k == "symlink"}
+    mcp_aliases = {p for k, p, _ in to_apply_keys if k == "mcp"}
+    plugin_ids = {qn for k, _, qn in to_apply_keys if k == "plugin"}
+    target_qns = {qn for k, _, qn in to_apply_keys if k == "target"}
 
     # --- Phase 1: read .mcp.json BEFORE any deletion (fail fast, no partial state). ---
     mcp_data: dict | None = None
@@ -442,30 +470,39 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
                 raise PruneError(f"failed to read {profile.mcp_json}: {exc}") from exc
 
     # --- Phase 2: delete on-disk files / dirs. ---
-    for kind, path in sorted(to_apply_keys):
+    for kind, path, identity in sorted(to_apply_keys, key=lambda t: (t[0], t[1], t[2] or "")):
         if kind == "mcp":
             continue  # handled in phase 3
         if kind == "rule" and profile.rules_mode == "inline":
-            result.removed.append(PruneItem(kind, path, "removed-stale-entry"))
+            result.removed.append(PruneItem(kind, path, "removed-stale-entry", identity))
             result.warnings.append(
                 f"rule {path!r} removed from lockfile; AGENTS.md is stale until `aim sync`"
+            )
+            continue
+        if (kind, path) in kept_paths:
+            # A still-declared artifact shares this path: drop only the lockfile
+            # entry; deleting the file would destroy the kept artifact's install.
+            result.removed.append(PruneItem(kind, path, "removed-stale-entry", identity))
+            result.warnings.append(
+                f"{identity or path}: shares {path} with a still-declared artifact; "
+                "lockfile entry removed, file kept"
             )
             continue
         entry = project_root / path
         if entry.exists() or entry.is_symlink():
             if not _ensure_inside(project_root, entry):
-                result.kept.append(PruneItem(kind, path, "skipped-unsafe"))
+                result.kept.append(PruneItem(kind, path, "skipped-unsafe", identity))
                 continue
             try:
                 if entry.is_dir():
                     shutil.rmtree(entry)
                 else:
                     entry.unlink()
-                result.removed.append(PruneItem(kind, path, "removed"))
+                result.removed.append(PruneItem(kind, path, "removed", identity))
             except Exception as exc:  # pragma: no cover - defensive
-                result.kept.append(PruneItem(kind, path, f"error: {exc}"))
+                result.kept.append(PruneItem(kind, path, f"error: {exc}", identity))
         else:
-            result.removed.append(PruneItem(kind, path, "removed-stale-entry"))
+            result.removed.append(PruneItem(kind, path, "removed-stale-entry", identity))
 
     # --- Phase 3: mutate + write .mcp.json. ---
     if mcp_aliases:
@@ -491,9 +528,9 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
     # claude plugins additionally need their settings.json enablement + marketplace
     # manifest reconciled. m.plugins is filtered here (before regeneration) so the
     # rewritten marketplace lists only survivors.
-    if plugin_paths:
-        pruned_plugins = [p for p in m.plugins if p.target_dir in plugin_paths]
-        m.plugins = [p for p in m.plugins if p.target_dir not in plugin_paths]
+    if plugin_ids:
+        pruned_plugins = [p for p in m.plugins if f"{p.qualified_name}@{p.flavor}" in plugin_ids]
+        m.plugins = [p for p in m.plugins if f"{p.qualified_name}@{p.flavor}" not in plugin_ids]
         for p in pruned_plugins:
             pkind = plugin_kinds.get_kind(p.flavor, project_root)
             if pkind is None:
@@ -507,13 +544,14 @@ def apply(options: PruneOptions, plan_result: PruneResult) -> PruneResult:
                     f"failed to update client config for {p.qualified_name}: {exc}"
                 ) from exc
 
-    # --- Phase 4: mutate + save the lockfile. ---
-    rule_names_to_remove = {_rule_name_from_rel(rel) for rel in rule_rels}
-    m.skills = [s for s in m.skills if s.target_dir not in skill_paths]
-    m.agents = [a for a in m.agents if a.target_path not in agent_paths]
-    m.rules = [r for r in m.rules if r.qualified_name.split("/", 1)[-1] not in rule_names_to_remove]
+    # --- Phase 4: mutate + save the lockfile (by identity — a path or bare
+    # name filter would also take a still-declared same-named artifact). ---
+    m.skills = [s for s in m.skills if s.qualified_name not in skill_qns]
+    m.agents = [a for a in m.agents if a.qualified_name not in agent_qns]
+    m.rules = [r for r in m.rules if r.qualified_name not in rule_qns]
     m.symlinks = [s for s in m.symlinks if s not in symlink_paths]
     m.mcp_servers = [mc for mc in m.mcp_servers if mc.alias not in mcp_aliases]
+    m.targets = [t for t in m.targets if t.qualified_name not in target_qns]
     # Inline rules are rendered into AGENTS.md managed regions; removing a rule
     # invalidates those region hashes. Clear them so the next `aim sync` rewrites
     # without false-negative drift detection.

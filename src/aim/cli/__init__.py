@@ -199,6 +199,14 @@ def check_cmd(
                         err=True,
                     )
                     bad += 1
+            # A deleted region is the most complete drift of all — the loop
+            # above only visits regions still present in the file.
+            for missing in sorted(set(m.managed_region_hashes) - {r.name for r in regions}):
+                typer.echo(
+                    f"{proj}/{managed}: region {missing!r} deleted (markers missing)",
+                    err=True,
+                )
+                bad += 1
         for skill in m.skills:
             target = proj / skill.target_dir
             if skill.content_hash is None or not target.exists():

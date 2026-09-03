@@ -71,7 +71,7 @@ class RiskKindSettings(BaseModel):
 
 
 # Artifact kinds that have a risk gate and support per-type risk overrides.
-_RISK_KINDS = ("skill", "agent", "rule", "mcp", "plugin", "archetype")
+_RISK_KINDS = ("skill", "agent", "rule", "mcp", "plugin", "archetype", "target")
 
 
 class RiskSettings(BaseModel):
@@ -136,6 +136,7 @@ class Policy(BaseModel):
     blocked_rules: list[str] = Field(default_factory=list)
     blocked_mcp: list[str] = Field(default_factory=list)  # by alias or registry_name
     blocked_plugins: list[str] = Field(default_factory=list)  # by qualified_name
+    blocked_targets: list[str] = Field(default_factory=list)  # by qualified_name
     allowed_profiles: list[str] = Field(default_factory=list)  # empty = all allowed
     # Allow-list of selectable instruction archetypes (by qualified name). Empty = all
     # allowed; non-empty constrains `archetype use` to the listed archetypes.
@@ -315,6 +316,7 @@ def from_mapping(data: dict) -> Policy:
         blocked_rules=list(artifacts_t.get("blocked_rules", [])),
         blocked_mcp=list(artifacts_t.get("blocked_mcp", [])),
         blocked_plugins=list(artifacts_t.get("blocked_plugins", [])),
+        blocked_targets=list(artifacts_t.get("blocked_targets", [])),
         allowed_profiles=list(profiles_t.get("allowed", [])),
         allowed_archetypes=list(archetypes_t.get("allowed", [])),
         risk=risk,
@@ -370,6 +372,8 @@ def to_mapping(policy: Policy) -> dict:
         artifacts["blocked_mcp"] = policy.blocked_mcp
     if policy.blocked_plugins:
         artifacts["blocked_plugins"] = policy.blocked_plugins
+    if policy.blocked_targets:
+        artifacts["blocked_targets"] = policy.blocked_targets
     if artifacts:
         doc["artifacts"] = artifacts
     if policy.allowed_profiles:
@@ -852,20 +856,24 @@ def assert_repo_allowed(policy: Policy, alias: str, url: str) -> None:
 def repo_is_trusted(policy: Policy, alias: str, url: str) -> bool:
     """Return whether a repo is on the policy's trusted allow-list.
 
-    Trusted repos skip risk scanning entirely. Matching mirrors
-    ``assert_repo_allowed``: an entry matches by exact alias or by normalized URL.
-    A repo that is both blocked and trusted is still refused, because every deploy
-    gate calls ``assert_repo_allowed`` before consulting this.
+    Trusted repos skip risk scanning entirely, so matching is URL-only —
+    deliberately NOT mirroring ``assert_repo_allowed``'s alias matching. An
+    alias is auto-derived from the URL's last path segment, which an attacker
+    fully controls: `trusted = ["acme-tools"]` would trust ANY repo named
+    acme-tools (github.com/evil/acme-tools included). On an allow-list that
+    fails open; on the blocklist alias matching fails safe and stays.
+    A repo that is both blocked and trusted is still refused, because every
+    deploy gate calls ``assert_repo_allowed`` before consulting this.
 
     Args:
         policy: The active policy.
-        alias: The repo's local alias.
+        alias: The repo's local alias (accepted for signature parity; never matched).
         url: The repo's git URL.
 
     Returns:
         True if the repo is trusted and risk scanning should be skipped.
     """
-    if not policy.trusted_repos:
+    if not policy.trusted_repos or not url.strip():
         return False
     norm = normalize_repo_url(url)
     for entry in policy.trusted_repos:
@@ -874,9 +882,25 @@ def repo_is_trusted(policy: Policy, alias: str, url: str) -> bool:
         # scanning for every such artifact. Blocking has the opposite (safe) skew.
         if not entry.strip():
             continue
-        if entry == alias or normalize_repo_url(entry) == norm:
+        if _looks_like_repo_url(entry) and normalize_repo_url(entry) == norm:
             return True
     return False
+
+
+def _looks_like_repo_url(entry: str) -> bool:
+    """Return whether a trusted-repos entry is a URL form (vs a bare alias)."""
+    e = entry.strip()
+    return "://" in e or (e.startswith("git@") and ":" in e)
+
+
+def non_url_trusted_entries(policy: Policy) -> list[str]:
+    """Return `trusted_repos` entries that are ignored because they are not URLs.
+
+    Bare-alias entries never match (see `repo_is_trusted`); surfacing them lets
+    `aim lock` warn the policy author that a trust entry is a silent no-op
+    instead of quietly scanning artifacts they intended to skip.
+    """
+    return [e for e in policy.trusted_repos if e.strip() and not _looks_like_repo_url(e)]
 
 
 def assert_artifact_allowed(policy: Policy, kind: str, qualified_name: str) -> None:
@@ -895,6 +919,7 @@ def assert_artifact_allowed(policy: Policy, kind: str, qualified_name: str) -> N
         "agent": policy.blocked_agents,
         "rule": policy.blocked_rules,
         "plugin": policy.blocked_plugins,
+        "target": policy.blocked_targets,
     }.get(kind, [])
     if qualified_name in blocked:
         raise PolicyViolationError(

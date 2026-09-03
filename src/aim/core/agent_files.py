@@ -7,6 +7,7 @@ reads from it and updates managed-file/region-hash bookkeeping.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from aim.core import agents_md, content_guard, hashing, layout_profiles, repo_rules, templates
@@ -160,29 +161,83 @@ def write_agent_files(
     else:
         fresh_regions = canonical_regions
 
-    drift_warnings: list[str] = []
-    agents_path = project_root / profile.agents_md
+    # Gate archetype content at the single render chokepoint: select, lock, and
+    # sync all funnel here, so a policy-blocked repo, a non-allow-listed
+    # archetype, or risk-flagged content can never re-render into AGENTS.md —
+    # the highest-value injection target — via a tracked update.
+    if m.archetype is not None and archetype_base is not None:
+        from aim.core import archetype_install
 
-    if agents_path.exists() and not force:
-        existing = agents_path.read_text()
-        drift_warnings.extend(
-            _detect_region_drift(agents_path.name, existing, m.managed_region_hashes)
+        archetype_install.gate_archetype(
+            project_root,
+            m.archetype.qualified_name,
+            archetype_base,
+            override_risk=m.archetype.risk_acknowledged,
         )
-        merged = agents_md.merge(existing, fresh_regions)
-    elif archetype_base is not None:
-        merged = agents_md.merge(archetype_base, fresh_regions)
+
+    # The document aim would author on a clean slate.
+    if archetype_base is not None:
+        fresh_doc = agents_md.merge(archetype_base, fresh_regions)
     else:
-        merged = _render_for_template(
+        fresh_doc = _render_for_template(
             templates.BUILTIN_DEFAULT,
             applied,
             rules_mode=profile.rules_mode,
         )
+
+    drift_warnings: list[str] = []
+    agents_path = project_root / profile.agents_md
+
+    if not agents_path.exists():
+        merged = fresh_doc
+        base_authored = True
+    else:
+        existing = agents_path.read_text()
+        drift_warnings.extend(
+            _detect_region_drift(agents_path.name, existing, m.managed_region_hashes)
+        )
+        existing_base = agents_md.base_text(existing)
+        # aim owns the base when it still matches what aim last authored (or is
+        # byte-identical to what aim would author now); only then may a render
+        # swap it (archetype apply/update, template refresh, clear).
+        owned = (
+            m.managed_base_hash is not None
+            and hashing.hash_text(existing_base) == m.managed_base_hash
+        )
+        pristine = existing_base == agents_md.base_text(fresh_doc)
+        if force or owned or pristine:
+            if force and not (owned or pristine):
+                drift_warnings.append(
+                    f"{agents_path.name}: content outside aim regions was edited; "
+                    "overwriting (--force)"
+                )
+            merged = fresh_doc
+            base_authored = True
+        else:
+            # Hand-edited base: preserve it verbatim, refresh only aim's regions.
+            merged = agents_md.merge(existing, fresh_regions)
+            base_authored = False
+            if archetype_base is not None:
+                drift_warnings.append(
+                    f"{agents_path.name}: content outside aim regions was hand-edited; "
+                    "keeping it — the archetype base was NOT applied "
+                    "(run `aim sync --force` to replace it)"
+                )
 
     new_hashes = {r.name: hashing.hash_text(r.body) for r in agents_md.parse(merged)}
 
     symlink_paths: list[Path] = []
     for link_name in m.symlinks:
         target = project_root / link_name
+        if target == agents_path:
+            # A mirror must never BE the instruction file: symlinking AGENTS.md
+            # onto itself bricks the project (ELOOP on every later write).
+            # Lexical comparison only — resolve() would also match an existing
+            # valid mirror, which must fall through to the skip below.
+            drift_warnings.append(
+                f"{link_name}: refusing to mirror {profile.agents_md} onto itself"
+            )
+            continue
         symlink_paths.append(target)
         if target.exists() and target.resolve() == agents_path.resolve():
             continue
@@ -191,7 +246,9 @@ def write_agent_files(
             continue
         if target.exists() or target.is_symlink():
             target.unlink()
-        target.symlink_to(agents_path.name)
+        # Link relative to the mirror's own directory so a nested agents_md
+        # (e.g. docs/AGENTS.md) still yields a resolvable mirror at the root.
+        target.symlink_to(os.path.relpath(agents_path, start=target.parent))
 
     # Write AGENTS.md last so symlinks can reference it safely.
     agents_path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +256,10 @@ def write_agent_files(
     agents_path.write_text(merged)
 
     m.managed_region_hashes = new_hashes
+    if base_authored:
+        m.managed_base_hash = hashing.hash_text(agents_md.base_text(merged))
+    # else: keep the stored hash — it fingerprints the last aim-authored base,
+    # so a user who reverts their edits regains aim ownership automatically.
     managed = [
         profile.agents_md,
         *(p.name for p in symlink_paths),

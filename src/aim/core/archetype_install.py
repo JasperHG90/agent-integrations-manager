@@ -8,6 +8,7 @@ All archetype content passes the same policy/security/risk gate as other artifac
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from aim.core import (
@@ -30,6 +31,18 @@ class NoArchetypeSelectedError(ValueError):
     """Raised when an update is requested but no archetype is selected."""
 
 
+_render_warnings: list[str] = []
+_render_warnings_lock = threading.Lock()
+
+
+def take_render_warnings() -> list[str]:
+    """Drain and return warnings produced by the last archetype render."""
+    with _render_warnings_lock:
+        out = list(_render_warnings)
+        _render_warnings.clear()
+    return out
+
+
 def _repo_url(alias: str) -> str:
     """Return the URL for a registered repo alias, or empty string if unknown."""
     try:
@@ -38,10 +51,15 @@ def _repo_url(alias: str) -> str:
         return ""
 
 
-def _gate_archetype(
+def gate_archetype(
     project_root: Path, qualified_name: str, content: str, *, override_risk: bool = False
 ) -> None:
     """Run repo/policy/security/risk checks on an archetype's base body.
+
+    Called from `agent_files.write_agent_files` — the single render chokepoint
+    — so select, lock, and sync all enforce the same gate. A tracked archetype
+    that turns hostile upstream is caught on the next re-render, not just at
+    select time.
 
     Args:
         project_root: Root of the project whose effective policy applies.
@@ -66,9 +84,18 @@ def _gate_archetype(
 
 
 def _render(project_root: Path, m: object) -> None:
-    """Re-render AGENTS.md from the manifest and persist the manifest."""
+    """Re-render AGENTS.md from the manifest and persist the manifest.
+
+    Deliberately NOT forced: `write_agent_files` swaps the base only when aim
+    still owns it (untouched scaffold). A hand-edited base is preserved and
+    surfaces a warning via `take_render_warnings` instead of being destroyed —
+    the README's "anything you write outside the regions is preserved" contract
+    holds for archetype operations too.
+    """
     profile = layout_profiles.resolve_active(project_root)
-    agent_files.write_agent_files(project_root, m, profile, force=True)
+    warnings = agent_files.write_agent_files(project_root, m, profile)
+    with _render_warnings_lock:
+        _render_warnings.extend(warnings)
     manifest.save(project_root, m)  # type: ignore[arg-type]
 
 
@@ -105,7 +132,7 @@ def select(
         artifact_name=Path(row.instruction_path).name,
     )
     content = archetypes.read_base_body(row.repo_alias, version.sha, row.instruction_path)
-    _gate_archetype(project_root, qualified_name, content, override_risk=override_risk)
+    gate_archetype(project_root, qualified_name, content, override_risk=override_risk)
     installed = InstalledArchetype(
         qualified_name=qualified_name,
         repo_alias=row.repo_alias,

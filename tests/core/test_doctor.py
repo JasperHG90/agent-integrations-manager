@@ -63,6 +63,20 @@ def test_doctor_detects_region_drift(home: Path, project_root: Path) -> None:
     assert any("region 'header' edited" in f.message for f in report.by_severity("warning"))
 
 
+def test_doctor_detects_deleted_region(home: Path, project_root: Path) -> None:
+    """Deleting a managed region outright (markers included) is drift too —
+    regression: the region loop only visited regions still present in the file."""
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    _run_lock_and_sync(project_root)
+    agents = project_root / "AGENTS.md"
+    text = agents.read_text()
+    start = text.index("<!-- BEGIN aim: header -->")
+    end = text.index("<!-- END aim: header -->") + len("<!-- END aim: header -->")
+    agents.write_text(text[:start] + text[end:])
+    report = doctor.audit(project_roots=[project_root])
+    assert any("region 'header' deleted" in f.message for f in report.by_severity("warning"))
+
+
 def test_doctor_detects_missing_target_dir(home: Path, project_root: Path, tmp_path: Path) -> None:
     bare = _bare_with_skill(tmp_path)
     repos.add("anth", f"file://{bare}")

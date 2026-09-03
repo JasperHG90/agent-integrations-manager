@@ -198,13 +198,16 @@ def test_assert_repo_allowed_by_url_and_alias() -> None:
     policy.assert_repo_allowed(pol, "good", "https://github.com/good/repo")
 
 
-def test_repo_is_trusted_by_url_and_alias() -> None:
-    pol = policy.Policy(name="p", trusted_repos=["https://github.com/acme/x", "goodalias"])
+def test_repo_is_trusted_by_url_only() -> None:
+    pol = policy.Policy(name="p", trusted_repos=["https://github.com/acme/x", "acme-tools"])
     # matched by normalized URL (ssh form, .git suffix, and case all normalize)
     assert policy.repo_is_trusted(pol, "anything", "git@github.com:Acme/X.git")
-    # matched by exact alias
-    assert policy.repo_is_trusted(pol, "goodalias", "https://ok.example/repo")
-    # neither alias nor URL matches
+    # An alias entry is IGNORED: the alias is auto-derived from the URL's last
+    # path segment, which an attacker controls — trusting by name would trust
+    # github.com/evil/acme-tools too, disabling risk scanning for it.
+    assert not policy.repo_is_trusted(pol, "acme-tools", "https://github.com/evil/acme-tools")
+    assert not policy.repo_is_trusted(pol, "acme-tools", "https://github.com/acme/acme-tools")
+    # No URL match either way.
     assert not policy.repo_is_trusted(pol, "other", "https://github.com/other/repo")
     # empty trust list -> nothing is trusted
     assert not policy.repo_is_trusted(policy.Policy(), "any", "https://x/y")

@@ -762,14 +762,44 @@ class DeclarativeKind:
     def unregister(self, project_root: Path, installed: InstalledPlugin, m: Manifest) -> None:
         self._apply(project_root, installed, remove=True)
 
+    # Client config files a declarative kind must never write: they belong to
+    # aim's hardened writers, and their keys launch shell commands (`hooks` in
+    # claude settings, `command`/`args` in .mcp.json) — a spec targeting them
+    # is a command-injection vector, not a plugin registration.
+    _FORBIDDEN_CONFIG_FILES = frozenset(
+        {".claude/settings.json", ".claude/settings.local.json", ".mcp.json"}
+    )
+
+    def _config_file_is_forbidden(self, project_root: Path, path: Path) -> bool:
+        """Return whether a resolved config path is one aim refuses to write.
+
+        Compared as casefolded project-relative strings, NOT Path objects:
+        macOS/Windows filesystems are case-insensitive, so `.claude/Settings.json`
+        resolves to a distinct Path yet writes into the same file.
+        """
+        root = project_root.resolve()
+        try:
+            rel = path.relative_to(root).as_posix().casefold()
+        except ValueError:  # pragma: no cover — safe_project_path already confines
+            return True
+        return rel in {f.casefold() for f in self._FORBIDDEN_CONFIG_FILES}
+
     def _apply(self, project_root: Path, plugin: InstalledPlugin, *, remove: bool) -> None:
         name = plugin.qualified_name.split("/", 1)[1]
         ctx = _ctx(repo_alias=plugin.repo_alias, plugin_name=name)
         for cfg in self.spec.registration.config:
             if cfg.format != "json":
                 continue  # json first; yaml/toml are easy follow-ons
-            path = paths.safe_project_path(project_root, _render(cfg.file, ctx))
+            rendered_file = _render(cfg.file, ctx)
+            path = paths.safe_project_path(project_root, rendered_file)
             if path is None:
+                continue
+            if self._config_file_is_forbidden(project_root, path):
+                with _load_lock:
+                    _load_warnings.append(
+                        f"kind {self.name!r}: refused to write {rendered_file} — "
+                        "client config with executable keys is owned by aim's writers"
+                    )
                 continue
             data = {}
             if path.exists() and path.read_text(encoding="utf-8").strip():
@@ -826,14 +856,27 @@ def _kinds_dirs(project_root: Path | None) -> list[Path]:
     return dirs
 
 
-def load_kinds(project_root: Path | None = None) -> dict[str, PluginKind]:
-    """Return all available kinds by name: built-ins, then external TOML specs.
+@dataclass(frozen=True)
+class KindSpecFile:
+    """An external kind spec together with where it was loaded from."""
 
-    External specs override built-ins, and project specs override global ones, by
-    ``name`` (last writer wins in built-in → global → project order).
+    scope: str  # "global" (user config targets dir) | "project" (.aim/targets)
+    path: Path
+    spec: KindSpec
+
+
+def list_kind_specs(project_root: Path | None = None) -> list[KindSpecFile]:
+    """Return every external kind spec that parses, in load order.
+
+    Load order is global → project, so consumers that dedupe by ``spec.name``
+    with last-wins reproduce `load_kinds`'s override semantics. Invalid specs
+    are skipped and recorded in the load-warning channel, exactly as during
+    `load_kinds`.
     """
-    kinds: dict[str, PluginKind] = {k.name: k for k in _BUILTINS}
-    for d in _kinds_dirs(project_root):
+    out: list[KindSpecFile] = []
+    dirs = _kinds_dirs(project_root)
+    for i, d in enumerate(dirs):
+        scope = "global" if i == 0 else "project"
         if not d.is_dir():
             continue
         for toml_path in sorted(d.glob("*.toml")):
@@ -844,7 +887,19 @@ def load_kinds(project_root: Path | None = None) -> dict[str, PluginKind]:
                 with _load_lock:
                     _load_warnings.append(f"{toml_path}: ignored invalid target spec: {exc}")
                 continue
-            kinds[spec.name] = DeclarativeKind(spec)
+            out.append(KindSpecFile(scope=scope, path=toml_path, spec=spec))
+    return out
+
+
+def load_kinds(project_root: Path | None = None) -> dict[str, PluginKind]:
+    """Return all available kinds by name: built-ins, then external TOML specs.
+
+    External specs override built-ins, and project specs override global ones, by
+    ``name`` (last writer wins in built-in → global → project order).
+    """
+    kinds: dict[str, PluginKind] = {k.name: k for k in _BUILTINS}
+    for ksf in list_kind_specs(project_root):
+        kinds[ksf.spec.name] = DeclarativeKind(ksf.spec)
     return kinds
 
 

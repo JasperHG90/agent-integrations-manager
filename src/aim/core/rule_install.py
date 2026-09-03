@@ -283,6 +283,28 @@ def install(
     """
     row = _rule_index_row(qualified_name)
     _warn_if_plugin_owned(row)
+    # Two same-named rules from different repos share one <rules_dir>/<name>.md
+    # (or one inline region): the second install silently destroys the first and
+    # wedges every subsequent sync in an edited-since-install flip-flop.
+    bare_name = qualified_name.split("/", 1)[-1]
+    m0 = manifest.load_or_default(project_root)
+    clash = next(
+        (
+            r
+            for r in m0.rules
+            if r.qualified_name.split("/", 1)[-1] == bare_name
+            and r.qualified_name != qualified_name
+        ),
+        None,
+    )
+    if clash is not None:
+        from aim.core.install import TargetPathCollisionError
+
+        raise TargetPathCollisionError(
+            f"{qualified_name}: rule name {bare_name!r} is already installed as "
+            f"{clash.qualified_name}; two rules with the same name cannot share a "
+            f"deploy path — remove one first"
+        )
     version = resolve_install_version(
         row.repo_alias,
         row.rule_md_path,

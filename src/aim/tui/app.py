@@ -10,6 +10,7 @@ from textual.app import App
 from textual.binding import Binding
 
 from aim.core import default_mcp_servers, layout_profiles, mcp_registry
+from aim.tui import _threads
 from aim.tui.modals.palette import (
     PaletteEntry,
     PaletteModal,
@@ -66,9 +67,14 @@ class AimApp(App[None]):
         self.push_screen(MainScreen(project_root=self._project_root))
 
         self.run_worker(self._sync_profiles, group="profile_sync", thread=True)
-        # Pre-seed default MCP registry entries in the background so the MCP
-        # screen opens instantly from cache instead of blocking on the network.
-        self.run_worker(self._seed_default_mcp_servers, group="mcp_seed", thread=True)
+        # Pre-seed default MCP registry entries so the MCP screen opens from
+        # cache. A DAEMON thread, deliberately NOT a Textual worker: worker
+        # threads are joined at interpreter exit, so a thread blocked in an
+        # HTTP fetch (10s retry budget per request) stalled quitting until the
+        # registry round-trips finished. A daemon thread dies with the process;
+        # the sqlite cache is WAL crash-safe, and the MCP screen re-seeds on
+        # open anyway (also detached — see aim.tui._threads).
+        _threads.run_detached(self._seed_default_mcp_servers, name="mcp-seed")
 
     def _sync_profiles(self) -> None:
         """Reconcile repo profiles with the DB cache, surfacing warnings on the UI thread."""
@@ -85,7 +91,16 @@ class AimApp(App[None]):
             pass
 
     def action_open_palette(self) -> None:
-        """Open the command palette modal."""
+        """Open the command palette modal.
+
+        Refused while a busy overlay is on top: anything stacked above it would
+        be popped by the overlay's dismiss (Screen.dismiss pops the TOP screen),
+        stranding the overlay with no bindings to escape it.
+        """
+        from aim.tui.modals.busy import BusyModal
+
+        if isinstance(self.screen, BusyModal):
+            return
         entries = build_entries(self)
         self.push_screen(PaletteModal(entries), self._on_palette)
 

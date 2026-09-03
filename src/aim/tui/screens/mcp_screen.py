@@ -7,10 +7,11 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Input, Static
-from textual.worker import WorkerState, get_current_worker
+from textual.worker import WorkerState
 
 from aim.core import default_mcp_servers, manifest, mcp_registry, validation
 from aim.core import mcp_install as install_mod
+from aim.tui import _threads
 from aim.tui.modals.busy import BusyModal
 from aim.tui.modals.mcp_install import McpInstallConfig, McpInstallModal
 
@@ -43,6 +44,7 @@ class McpScreen(Screen[None]):
         self._installed_results: list[mcp_registry.McpSearchResult] | None = None
         self._installing: tuple[mcp_registry.McpServer, McpInstallConfig] | None = None
         self._busy: BusyModal | None = None
+        self._search_seq = 0
 
     def compose(self) -> ComposeResult:
         """Build the title, search bar, results table, status and hint widgets."""
@@ -63,7 +65,10 @@ class McpScreen(Screen[None]):
         self._installed_results = self._load_installed()
         if self._default_results is None:
             self._status("loading default MCP servers…")
-            self.run_worker(self._load_defaults, group="mcp_defaults", thread=True)
+            # Daemon thread, not a Textual worker: worker threads are joined at
+            # interpreter exit, so a fetch mid-flight stalled quitting (see
+            # aim.tui._threads).
+            _threads.run_detached(self._load_defaults, name="mcp-defaults")
         else:
             self._populate("")
             table.focus()
@@ -95,10 +100,11 @@ class McpScreen(Screen[None]):
         return out
 
     def _load_defaults(self) -> None:
-        """Seed the default servers and cached servers off-thread, then hand them back."""
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
+        """Seed the default servers and cached servers off-thread, then hand them back.
+
+        Runs on a daemon thread; the delivery is best-effort because the screen
+        or the whole app may be gone by the time the network round-trip ends.
+        """
         try:
             servers = mcp_registry.seed_default_servers(
                 default_mcp_servers.DEFAULT_MCP_SERVER_NAMES
@@ -110,7 +116,10 @@ class McpScreen(Screen[None]):
             for server in servers.values()
         ]
         cached = self._load_cached_servers()
-        self.app.call_from_thread(self._on_defaults_loaded, defaults, cached)
+        try:
+            self.app.call_from_thread(self._on_defaults_loaded, defaults, cached)
+        except Exception:
+            pass  # app shut down or screen popped mid-fetch
 
     def _load_cached_servers(self) -> list[mcp_registry.McpSearchResult]:
         """Return locally cached servers as search results with freshness metadata.
@@ -118,9 +127,6 @@ class McpScreen(Screen[None]):
         Returns:
             Cached server results, or an empty list if the worker was cancelled.
         """
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return []
         out: list[mcp_registry.McpSearchResult] = []
         for _name, server, fetched_at, valid_until in mcp_registry.list_cached_servers():
             out.append(
@@ -166,28 +172,37 @@ class McpScreen(Screen[None]):
             return
         self._last_query = q
         self._status(f"searching for {q!r}…")
-        self.run_worker(
-            lambda: self._search_worker(q),
-            name="mcp_search",
-            group="mcp_search",
-            thread=True,
-        )
+        self._search_seq += 1
+        seq = self._search_seq
+        _threads.run_detached(lambda: self._search_worker(q, seq), name="mcp-search")
 
-    def _search_worker(self, q: str) -> None:
+    def _search_worker(self, q: str, seq: int) -> None:
         """Query the registry off-thread and dispatch results or an error to the UI.
 
         Args:
             q: The search query.
+            seq: Search sequence captured at launch; a stale thread (the user
+                typed again) delivers nothing. Replaces the cancellation that
+                exclusive Textual workers used to provide.
         """
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
         try:
             results, next_cursor = mcp_registry.search_registry(q)
         except mcp_registry.McpRegistryError as exc:
-            self.app.call_from_thread(self._on_search_error, str(exc))
+            self._deliver(seq, self._on_search_error, str(exc))
             return
-        self.app.call_from_thread(self._on_search_results, results, next_cursor)
+        self._deliver(seq, self._on_search_results, results, next_cursor)
+
+    def _deliver(self, seq: int, callback, *args) -> None:  # type: ignore[no-untyped-def]
+        """Marshal a search outcome to the UI thread unless it went stale."""
+
+        def _apply() -> None:
+            if seq == self._search_seq:
+                callback(*args)
+
+        try:
+            self.app.call_from_thread(_apply)
+        except Exception:
+            pass  # app shut down or screen popped mid-search
 
     def _on_search_results(
         self,
@@ -439,10 +454,15 @@ class McpScreen(Screen[None]):
                 self._dismiss_busy()
 
     def _dismiss_busy(self) -> None:
-        """Close the loading overlay if one is showing. Runs on the UI thread."""
-        if self._busy is not None:
+        """Close the loading overlay if one is showing. Runs on the UI thread.
+
+        Dismiss only when the overlay is the top screen: Screen.dismiss() pops
+        whatever is on top, so calling it while another screen covers the
+        overlay would pop THAT screen and leave the overlay stuck.
+        """
+        if self._busy is not None and self.app.screen is self._busy:
             self._busy.dismiss()
-            self._busy = None
+        self._busy = None
 
     def _status(self, msg: str) -> None:
         """Update the status line with the given message."""

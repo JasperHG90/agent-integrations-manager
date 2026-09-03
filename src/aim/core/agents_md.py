@@ -123,6 +123,15 @@ def merge(existing: str, new_regions: dict[str, str]) -> str:
     return out
 
 
+def base_text(text: str) -> str:
+    """Return `text` with every aim region (markers and body) removed.
+
+    The remainder is the "base": the prose aim does not manage per-region.
+    Used to fingerprint whether the base was authored by aim or hand-edited.
+    """
+    return _REGION_RE.sub("", text)
+
+
 def build(regions: Iterable[tuple[str, str]]) -> str:
     """Construct an AGENTS.md body from scratch from ordered regions.
 

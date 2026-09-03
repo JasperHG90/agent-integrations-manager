@@ -167,6 +167,36 @@ def _audit_project(root: Path, report: DoctorReport) -> None:
                         f"{managed}: region {region.name!r} edited since last write",
                     )
                 )
+        # A deleted region never enters the loop above — flag it as drift too.
+        for missing in sorted(set(m.managed_region_hashes) - {r.name for r in regions}):
+            report.findings.append(
+                Finding(
+                    "warning",
+                    root,
+                    f"{managed}: region {missing!r} deleted (markers missing)",
+                )
+            )
+
+    # An archetype is selected but the on-disk base is not the aim-authored one:
+    # the render preserved a hand-edited base, so the lockfile and AGENTS.md
+    # deliberately diverge — surface it so the state is visible, not silent.
+    if m.archetype is not None and m.managed_base_hash is not None and m.managed_files:
+        base_file = root / m.managed_files[0]
+        if base_file.exists():
+            try:
+                current_base = hashing.hash_text(agents_md.base_text(base_file.read_text()))
+            except agents_md.RegionError:
+                current_base = None
+            if current_base is not None and current_base != m.managed_base_hash:
+                report.findings.append(
+                    Finding(
+                        "warning",
+                        root,
+                        f"{m.managed_files[0]}: base prose diverges from the selected "
+                        f"archetype {m.archetype.qualified_name} (hand-edited; "
+                        "`aim sync --force` applies the archetype base)",
+                    )
+                )
 
     for skill in m.skills:
         target = _safe_project_path(root, skill.target_dir)

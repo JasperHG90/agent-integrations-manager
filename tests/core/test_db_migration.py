@@ -115,6 +115,98 @@ def test_repo_id_index_non_unique_on_duplicate_legacy_db(home: Path, tmp_path: P
     assert is_unique is False  # index exists (not None) but fell back to non-unique
 
 
+def test_archetype_indexed_via_backfill(home: Path, tmp_path: Path) -> None:
+    """The indexed_via migration backfills legacy rows from their path: canonical
+    instructions/ rows become discovered, everything else becomes a link — so
+    pre-narrowing non-canonical archetypes survive the first reindex as links
+    instead of silently vanishing."""
+    from alembic import command
+    from sqlalchemy import create_engine
+
+    db_path = tmp_path / "legacy.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "a7c1e9b3d5f2")  # pre indexed_via
+        with engine.begin() as conn:
+            for name, source_dir, path in (
+                ("co/lean", "instructions/lean", "instructions/lean/AGENTS.md"),
+                ("co/deep", "instructions/a/b", "instructions/a/b/AGENTS.md"),
+                ("co/python", "bases/python", "bases/python/AGENTS.md"),
+                ("co/aimdir", ".aim/instructions/aimdir", ".aim/instructions/aimdir/AGENTS.md"),
+            ):
+                conn.exec_driver_sql(
+                    "INSERT INTO archetypeindex (qualified_name, repo_alias, archetype_name, "
+                    "source_path, instruction_path, available, indexed_at_sha) "
+                    "VALUES (?, 'co', ?, ?, ?, 'AGENTS.md', 'deadbeef')",
+                    (name, name.split("/")[1], source_dir, path),
+                )
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "head")
+        with engine.connect() as conn:
+            rows = dict(
+                conn.exec_driver_sql(
+                    "SELECT qualified_name, indexed_via FROM archetypeindex"
+                ).fetchall()
+            )
+    finally:
+        engine.dispose()
+    assert rows == {
+        "co/lean": "discovered",
+        "co/deep": "link",  # nested under instructions/ is NOT canonical
+        "co/python": "link",
+        "co/aimdir": "discovered",
+    }
+
+
+def test_heal_migration_repairs_old_shape_b9_database(home: Path, tmp_path: Path) -> None:
+    """A DB stamped b9d2e4f6a1c3 by the EARLY shape of that revision (which
+    added `origin`, not `indexed_via`) must be healed on the next upgrade.
+
+    This is the exact 'no such column: archetypeindex.indexed_via' crash a dev
+    database hit after the revision was rewritten in place: alembic believed
+    b9d2e4f6a1c3 was applied, so the rewritten column addition never ran.
+    """
+    from alembic import command
+    from sqlalchemy import create_engine, inspect
+
+    db_path = tmp_path / "old-shape.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "a7c1e9b3d5f2")  # pre-b9
+        with engine.begin() as conn:
+            # Reproduce the early b9 shape by hand: origin column + stamp.
+            conn.exec_driver_sql("ALTER TABLE archetypeindex ADD COLUMN origin VARCHAR")
+            conn.exec_driver_sql("UPDATE alembic_version SET version_num = 'b9d2e4f6a1c3'")
+            conn.exec_driver_sql(
+                "INSERT INTO archetypeindex (qualified_name, repo_alias, archetype_name, "
+                "source_path, instruction_path, available, indexed_at_sha, origin) "
+                "VALUES ('a/adhd', 'a', 'adhd', 'docs/adhd', 'docs/adhd/AGENTS.md', "
+                "'AGENTS.md', 'deadbeef', 'link')"
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO archetypeindex (qualified_name, repo_alias, archetype_name, "
+                "source_path, instruction_path, available, indexed_at_sha, origin) "
+                "VALUES ('a/lean', 'a', 'lean', 'instructions/lean', "
+                "'instructions/lean/AGENTS.md', 'AGENTS.md', 'deadbeef', NULL)"
+            )
+        with engine.connect() as conn:
+            command.upgrade(db._alembic_config(conn), "head")
+        with engine.connect() as conn:
+            columns = {c["name"] for c in inspect(conn).get_columns("archetypeindex")}
+            rows = dict(
+                conn.exec_driver_sql(
+                    "SELECT qualified_name, indexed_via FROM archetypeindex"
+                ).fetchall()
+            )
+    finally:
+        engine.dispose()
+    assert "indexed_via" in columns
+    assert "origin" not in columns
+    assert rows == {"a/adhd": "link", "a/lean": "discovered"}  # values kept; NULL backfilled
+
+
 def test_head_revision_matches_script_head(home: Path) -> None:
     """`db.HEAD_REVISION` must equal Alembic's script head, or the cheap check rots.
 

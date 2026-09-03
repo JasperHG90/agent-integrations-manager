@@ -269,6 +269,11 @@ class RealGitBackend:
         ensures git's stderr surfaces instead of being shadowed by tar's
         "empty input" error.
         """
+        # The sha slot is the only argv position here git would parse as an
+        # option; it can come from a teammate-supplied lockfile, so guard it
+        # like resolve_ref guards refs (the model validates the format too).
+        if sha.startswith("-"):
+            raise GitError(f"sha must not start with '-': {sha!r}")
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Empty source_path means the whole repo root is the skill.
         path_spec = source_path or "."

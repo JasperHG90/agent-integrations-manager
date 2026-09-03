@@ -39,9 +39,9 @@ class SkillPickerModal(ModalScreen[SkillPick | None]):
     """Modal screen for searching indexed skills and picking one to add."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("slash", "focus_search", "Search", priority=True),
-        Binding("enter", "action_pick", "Pick", priority=True),
+        Binding("enter", "pick", "Pick", priority=True),
     ]
 
     def __init__(self) -> None:

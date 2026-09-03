@@ -122,7 +122,7 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
     """
     from aim.tui.screens.agents_screen import AgentsScreen
     from aim.tui.screens.config_screen import ConfigScreen
-    from aim.tui.screens.layout_profiles_screen import LayoutProfilesScreen
+    from aim.tui.screens.layout_screen import LayoutScreen
     from aim.tui.screens.mcp_screen import McpScreen
     from aim.tui.screens.plugin_screen import PluginsScreen
     from aim.tui.screens.project_screen import ProjectScreen
@@ -151,7 +151,11 @@ def build_entries(app) -> list[PaletteEntry]:  # type: ignore[no-untyped-def]
             "action", "Open Project templates", lambda: app.push_screen(ProjectTemplatesScreen())
         ),
         PaletteEntry("action", "Open Project", lambda: app.push_screen(ProjectScreen())),
-        PaletteEntry("action", "Open Profiles", lambda: app.push_screen(LayoutProfilesScreen())),
+        PaletteEntry(
+            "action",
+            "Open Layout",
+            lambda: app.push_screen(LayoutScreen(project_root=project_root)),
+        ),
         PaletteEntry("action", "Open Config", lambda: app.push_screen(ConfigScreen())),
         PaletteEntry("action", "Quit", lambda: app.exit()),
     ]

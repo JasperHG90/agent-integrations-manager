@@ -13,6 +13,7 @@ so `aim repo add`/`refresh` can surface them.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -293,6 +294,8 @@ def _project_target_rows(
     repo_alias: str | None,
     marketplace: str | None,
     flavor: str | None,
+    *,
+    should_abort: Callable[[], bool] | None = None,
 ) -> list[PluginIndex]:
     """Live-discover plugins from project-only targets as in-memory PluginIndex rows.
 
@@ -318,6 +321,8 @@ def _project_target_rows(
     aliases = [repo_alias] if repo_alias is not None else [r.alias for r in repos.list_repos()]
     out: list[PluginIndex] = []
     for alias in aliases:
+        if should_abort is not None and should_abort():
+            return out  # cancelled mid-scan; partial rows are fine for a cache
         try:
             res = _discover_in_repo(alias, only)
         except git.GitError:
@@ -347,6 +352,26 @@ def _project_target_rows(
                 )
             )
     return out
+
+
+def project_overlay_rows(
+    project_root: Path, *, should_abort: Callable[[], bool] | None = None
+) -> list[PluginIndex]:
+    """Live-discover plugins from project-only targets, as in-memory rows.
+
+    Public wrapper over the overlay `list_plugins(project_root=...)` applies:
+    it is git-subprocess-heavy (one discovery pass over EVERY registered repo),
+    so interactive callers must run it off the UI thread and cache the result
+    instead of paying it per paint or per keystroke.
+
+    Args:
+        project_root: The project whose ``.aim/targets`` specs to apply.
+        should_abort: Checked between repos; return True to stop early with the
+            rows gathered so far (lets a cancelled worker unblock app shutdown).
+    """
+    with db.session() as session:
+        indexed = list(session.exec(select(PluginIndex)).all())
+    return _project_target_rows(project_root, indexed, None, None, None, should_abort=should_abort)
 
 
 def list_plugins(

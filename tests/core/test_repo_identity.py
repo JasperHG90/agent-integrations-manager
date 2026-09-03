@@ -9,6 +9,7 @@ forms and different local aliases produce identical files.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -293,9 +294,11 @@ def test_declarations_round_trip(home: Path, project_root: Path, tmp_path: Path)
     assert loaded.skills[0].qualified_name == "a/foo"
     assert loaded.skills[0].repo_alias == "a"
     assert "a" in loaded.repos
-    # On disk the [repos] key is the repo_id, never the alias.
+    # On disk the [repos] key is the repo_id, never the alias. Anchor to line
+    # start: a bare substring check false-positives when the hex repo_id itself
+    # happens to end in 'a'.
     raw = (project_root / "aim.toml").read_text()
-    assert "a = " not in raw  # no alias key
+    assert not re.search(r'^"?a"? = ', raw, re.MULTILINE)  # no alias key
     assert policy.repo_id_for_url(f"file://{bare}") in raw
 
 

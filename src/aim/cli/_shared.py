@@ -26,10 +26,13 @@ if TYPE_CHECKING:
 
 def _here(project: Path | None) -> Path:
     """Resolve the project root. Expands `~` so CLI users can pass `~/proj`
-    without `init` creating a literal `~/` directory in cwd."""
+    without `init` creating a literal `~/` directory in cwd, and resolves
+    symlinks so path math against resolved artifact paths never crashes
+    (`/tmp` on macOS is a symlink to `/private/tmp` — a raw cwd there made
+    `target.relative_to(project_root)` raise mid-install)."""
     if project is None:
-        return Path.cwd()
-    return project.expanduser()
+        return Path.cwd().resolve()
+    return project.expanduser().resolve()
 
 
 def _get_format(ctx: typer.Context) -> str:
@@ -133,6 +136,16 @@ _TREE_URL_RE = re.compile(
 )
 
 
+def _strip_url_noise(url: str) -> str:
+    """Drop a web URL's query string and fragment before parsing.
+
+    Pasted GitHub links routinely carry `?plain=1` (the raw/plain toggle) or
+    `#L10-L20` (copy-permalink line anchors); neither is part of the in-repo
+    path. Clone URLs never legitimately carry either, so stripping is safe.
+    """
+    return url.split("#", 1)[0].split("?", 1)[0]
+
+
 def _parse_source_url(url: str) -> tuple[str, str | None, str | None]:
     """Split a source URL into (clone_url, ref, inferred_name).
 
@@ -141,6 +154,7 @@ def _parse_source_url(url: str) -> tuple[str, str | None, str | None]:
     artifact name inferred from the in-repo path (a `<name>.md` file yields its
     stem; a `<name>/SKILL.md`/`AGENT.md` yields the directory name; a bare
     directory yields its last segment)."""
+    url = _strip_url_noise(url)
     match = _TREE_URL_RE.match(url.strip())
     if match is None:
         return url, None, None
@@ -157,6 +171,12 @@ def _parse_source_url(url: str) -> tuple[str, str | None, str | None]:
         else:
             name = last
     return clone_url, ref, name
+
+
+def _parse_source_subpath(url: str) -> str | None:
+    """Return the in-repo subpath of a web tree/blob URL, or None for clone URLs."""
+    match = _TREE_URL_RE.match(_strip_url_noise(url).strip())
+    return match.group("subpath").strip("/") if match else None
 
 
 def _resolve_or_register_repo(
@@ -306,6 +326,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         rule_install_mod.RuleNoHistoryToRollbackError,
         repo_rules_mod.RuleNotIndexedError,
         archetypes_mod.ArchetypeNotIndexedError,
+        archetypes_mod.ArchetypeLinkError,
         archetype_install_mod.NoArchetypeSelectedError,
         content_guard_mod.InsecureTransportError,
         content_guard_mod.HiddenUnicodeError,
@@ -313,6 +334,7 @@ def friendly_error_types() -> tuple[type[Exception], ...]:
         policy_mod.PolicyError,
         risk_mod.RiskBlockedError,
         install_mod.SkillNotIndexedError,
+        install_mod.TargetPathCollisionError,
         skills_mod.SkillNotIndexedError,
         install_mod.SkillNotInstalledError,
         install_mod.SkillSourcePathChangedError,

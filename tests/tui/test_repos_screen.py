@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -67,7 +68,47 @@ async def test_repos_screen_shows_ref_and_behind(home: Path, tmp_path: Path) -> 
         await pilot.pause()
         row = screen.query_one(DataTable).get_row_at(0)
         assert row[1] == "v0"  # ref column
+        # The behind column fills in from a background worker.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        row = screen.query_one(DataTable).get_row_at(0)
         assert row[2] == "1 behind main"  # behind column
+
+
+@pytest.mark.asyncio
+async def test_repos_screen_fills_behind_off_the_ui_thread(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_populate must not compute ref lag inline: the table renders immediately
+    with a placeholder, and a worker thread fills the behind column afterwards.
+    Pins the fix for the slow repos panel (git subprocesses off the UI thread)."""
+    _register_repo_tracking_stale_tag(tmp_path)
+    release = threading.Event()
+    calls: list[threading.Thread] = []
+    real = repos.tracked_ref_lag
+
+    def _blocking_spy(alias: str):  # type: ignore[no-untyped-def]
+        calls.append(threading.current_thread())
+        release.wait(timeout=10)
+        return real(alias)
+
+    monkeypatch.setattr(repos, "tracked_ref_lag", _blocking_spy)
+    app = AimApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = ReposScreen()
+        app.push_screen(screen)
+        await pilot.pause()
+        # The table rendered without waiting on the (still blocked) lag computation.
+        row = screen.query_one(DataTable).get_row_at(0)
+        assert row[2] == "…"
+        # Any lag calls so far came from the worker thread, never the UI thread.
+        assert all(t is not threading.main_thread() for t in calls)
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one(DataTable).get_row_at(0)[2] == "1 behind main"
+        assert calls and all(t is not threading.main_thread() for t in calls)
 
 
 @pytest.mark.asyncio
@@ -84,6 +125,9 @@ async def test_repos_screen_edit_ref_repoints(home: Path, tmp_path: Path) -> Non
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert repos.get("r").default_ref == "main"
+        # The pause above repopulated the table, kicking off the ref-lag worker.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         row = screen.query_one(DataTable).get_row_at(0)
         assert row[1] == "main"  # ref column updated
         assert row[2] == ""  # no longer behind

@@ -29,6 +29,17 @@ def test_first_init_inherits_profile_symlinks_by_default(home: Path, project_roo
     assert not (project_root / "GEMINI.md").exists()
 
 
+def test_init_rejects_symlink_that_is_agents_md_itself(home: Path, project_root: Path) -> None:
+    """`--symlink AGENTS.md` would create a self-referential link on sync,
+    bricking every subsequent render with ELOOP — reject it at init."""
+    import pytest
+
+    from aim.core.validation import MirrorNameError
+
+    with pytest.raises(MirrorNameError, match="cannot point at its own name"):
+        init_mod.run(init_mod.InitOptions(project_root=project_root, symlinks=("AGENTS.md",)))
+
+
 def test_first_init_records_symlinks(home: Path, project_root: Path) -> None:
     init_mod.run(
         init_mod.InitOptions(project_root=project_root, symlinks=("CLAUDE.md", "GEMINI.md"))

@@ -49,6 +49,10 @@ class SkillNotIndexedError(KeyError):
     """The requested qualified_name doesn't appear in the skill index — try `repo refresh`."""
 
 
+class TargetPathCollisionError(ValueError):
+    """A different artifact already owns this deploy path (same name, other repo)."""
+
+
 class SkillNotInstalledError(KeyError):
     """No entry for this skill in the project manifest."""
 
@@ -101,7 +105,17 @@ def _skill_index_row(qualified_name: str) -> SkillIndex:
 
 
 def _snapshot_dir(repo_alias: str, sha: str, skill_name: str) -> Path:
-    """Return the cache path where this skill's snapshot bytes live."""
+    """Return the cache path where this skill's snapshot bytes live.
+
+    Raises:
+        ValueError: If any component is not a single safe path segment. The
+            inputs are validated upstream (alias/name charsets, hex sha), but a
+            snapshot dir is later `rmtree`d, so this is defense in depth
+            against a traversal component ever reaching that delete.
+    """
+    for part in (repo_alias, sha, skill_name):
+        if not part or "/" in part or "\\" in part or part in (".", ".."):
+            raise ValueError(f"unsafe snapshot path component: {part!r}")
     return paths.snapshots_cache_dir() / repo_alias / sha / skill_name
 
 
@@ -312,7 +326,7 @@ def _repo_url(alias: str) -> str:
         return ""
 
 
-def _gather_skill_text(snap: Path) -> str:
+def _gather_skill_text(snap: Path) -> tuple[str, bool]:
     """Concatenate the UTF-8 text of a skill snapshot for risk classification.
 
     The total is capped so a large or hostile tree can't exhaust memory. Only
@@ -322,22 +336,32 @@ def _gather_skill_text(snap: Path) -> str:
         snap: the snapshot directory to read files from.
 
     Returns:
-        The concatenated text, truncated to the byte cap.
+        `(text, truncated)`: the concatenated text capped at the byte limit,
+        and whether any content was left unscanned. Truncation must not be
+        silent — every vendored file is loadable by the agent, so a payload
+        past the cap (cheap to arrange: filler files sort lexicographically
+        first) would reach the project unclassified. Callers fail closed in
+        block mode via `risk.gate_oversized`.
     """
     parts: list[str] = []
     total = 0
+    truncated = False
     for path in sorted(snap.rglob("*")):
-        if total >= _RISK_TEXT_CAP:
-            break
         if not path.is_file() or path.is_symlink():
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        parts.append(text[: _RISK_TEXT_CAP - total])
-        total += len(text)
-    return "\n".join(parts)
+        if total >= _RISK_TEXT_CAP:
+            truncated = True
+            break
+        take = text[: _RISK_TEXT_CAP - total]
+        if len(take) < len(text):
+            truncated = True
+        parts.append(take)
+        total += len(take)
+    return "\n".join(parts), truncated
 
 
 def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
@@ -368,8 +392,13 @@ def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
     # (agents/rules already hold their content, so they call risk.gate unconditionally).
     # A trusted repo skips the scan (and the gathering) entirely.
     if pol.risk.active_for("skill") and not policy.repo_is_trusted(pol, plan.repo_alias, repo_url):
+        text, truncated = _gather_skill_text(snap)
+        if truncated:
+            risk.gate_oversized(
+                source=plan.qualified_name, pol=pol, override_risk=override_risk, kind="skill"
+            )
         risk.gate(
-            _gather_skill_text(snap),
+            text,
             qualified_name=plan.qualified_name,
             pol=pol,
             override_risk=override_risk,
@@ -420,7 +449,26 @@ def install(
     Returns:
         The manifest entry for the installed skill.
     """
+    # Resolve like sync/lock do: _resolve_target_dir returns resolved paths, so
+    # a symlinked project root (macOS /tmp) would crash the relative_to math.
+    project_root = project_root.resolve()
     plan = _plan(project_root, qualified_name, track=track, pin=pin)
+
+    # Two same-named skills from different repos deploy to the same directory;
+    # letting the second one in silently destroys the first and permanently
+    # wedges `aim sync` (each sync flags the shared dir as edited-by-the-other).
+    rel_target = str(plan.target_dir.relative_to(project_root))
+    m0 = _load_manifest(project_root)
+    clash = next(
+        (s for s in m0.skills if s.target_dir == rel_target and s.qualified_name != qualified_name),
+        None,
+    )
+    if clash is not None:
+        raise TargetPathCollisionError(
+            f"{qualified_name}: target {rel_target} is already owned by "
+            f"{clash.qualified_name}; two skills with the same name cannot share a "
+            f"deploy path — remove one or rename the skill in its repo"
+        )
 
     # We don't auto-install prereqs across repos (per the plan); the user
     # gets a clear print-list to install themselves.

@@ -89,6 +89,16 @@ def run(options: InitOptions) -> InitResult:
     # Check the EFFECTIVE profile name (never None) against the allow-list.
     policy.assert_profile_allowed(policy.effective_policy(proj), active_profile.name)
 
+    # A mirror must never BE the instruction file itself: `--symlink AGENTS.md`
+    # with agents_md = AGENTS.md would create a self-referential link that
+    # bricks every subsequent render with ELOOP.
+    for link in options.symlinks:
+        if link == active_profile.agents_md:
+            raise MirrorNameError(
+                f"symlink {link!r} is the profile's agents_md target itself; "
+                "a mirror cannot point at its own name"
+            )
+
     # Symlink semantics: on first init fall back to profile defaults.
     requested_symlinks = list(options.symlinks)
     if not re_init and not requested_symlinks:

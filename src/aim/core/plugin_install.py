@@ -162,8 +162,13 @@ def _deploy(
             )
         _surface_executable_surface(kind, snap, qualified_name)
         if scan and pol.risk.active_for("plugin"):
+            text, truncated = install._gather_skill_text(snap)
+            if truncated:
+                risk.gate_oversized(
+                    source=qualified_name, pol=pol, override_risk=override_risk, kind="plugin"
+                )
             risk.gate(
-                install._gather_skill_text(snap),
+                text,
                 qualified_name=qualified_name,
                 pol=pol,
                 override_risk=override_risk,

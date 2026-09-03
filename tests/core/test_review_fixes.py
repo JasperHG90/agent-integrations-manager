@@ -315,3 +315,133 @@ def test_rollback_unavailable_when_both_gone(
 
     with pytest.raises(install.RollbackUnavailableError):
         install.rollback(project_root, "a/foo")
+
+
+# ---------- Sweep round 2: lockfile-engine findings (collisions, prune identity, symlinked roots) ----------
+
+from aim.core import declarations, lock, prune  # noqa: E402
+
+
+def _skill_repo(tmp_path: Path, name: str, body: str) -> Path:
+    working = git_fixtures.make_source_repo(
+        tmp_path / name, files={"skills/foo/SKILL.md": body, "README.md": "x\n"}
+    )
+    return git_fixtures.make_bare_remote(working, tmp_path / f"{name}.git")
+
+
+def _rule_repo(tmp_path: Path, name: str, body: str) -> Path:
+    working = git_fixtures.make_source_repo(
+        tmp_path / name, files={"rules/security.md": body, "README.md": "x\n"}
+    )
+    return git_fixtures.make_bare_remote(working, tmp_path / f"{name}.git")
+
+
+def test_install_rejects_same_named_skill_from_other_repo(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """Two skills named `foo` share `.claude/skills/foo` — the second install
+    must refuse instead of silently destroying the first and wedging sync."""
+    repos.add("a", f"file://{_skill_repo(tmp_path, 'a', '# foo (repo A)')}")
+    repos.add("b", f"file://{_skill_repo(tmp_path, 'b', '# foo (repo B)')}")
+    install.install(project_root, "a/foo")
+
+    with pytest.raises(install.TargetPathCollisionError, match="already owned by a/foo"):
+        install.install(project_root, "b/foo")
+
+    # The first install is untouched.
+    body = (project_root / ".claude" / "skills" / "foo" / "SKILL.md").read_text()
+    assert "repo A" in body
+
+
+def test_rule_install_rejects_same_named_rule(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    repos.add("a", f"file://{_rule_repo(tmp_path, 'a', 'A security rule\\n')}")
+    repos.add("b", f"file://{_rule_repo(tmp_path, 'b', 'B security rule\\n')}")
+    rule_install.install(project_root, "a/security")
+    with pytest.raises(install.TargetPathCollisionError, match="already installed as a/security"):
+        rule_install.install(project_root, "b/security")
+
+
+def test_lock_rejects_declared_deploy_collision(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """`aim lock` refuses declarations where two artifacts share a bare name."""
+    repos.add("a", f"file://{_skill_repo(tmp_path, 'a', '# A')}")
+    repos.add("b", f"file://{_skill_repo(tmp_path, 'b', '# B')}")
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    decl = declarations.load(project_root)
+    from aim.core.models import DeclaredSkill
+
+    decl.skills = [
+        DeclaredSkill(
+            qualified_name="a/foo",
+            repo_alias="a",
+            source_path="skills/foo",
+            target_dir=".claude/skills/foo",
+        ),
+        DeclaredSkill(
+            qualified_name="b/foo",
+            repo_alias="b",
+            source_path="skills/foo",
+            target_dir=".claude/skills/foo",
+        ),
+    ]
+    declarations.save(project_root, decl)
+
+    with pytest.raises(lock.LockError, match="both deploy as 'foo'"):
+        asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+
+
+def test_prune_is_keyed_by_identity_not_path(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """Pruning an undeclared rule must not delete a still-declared rule that
+    happens to share the deploy path (legacy lockfiles can carry both)."""
+    repos.add("a", f"file://{_rule_repo(tmp_path, 'a', 'A security rule\\n')}")
+    url_b = f"file://{_rule_repo(tmp_path, 'b', 'B security rule\\n')}"
+    repos.add("b", url_b)
+    rule_install.install(project_root, "a/security")
+    # Simulate a legacy collision: a second same-named rule already in the
+    # lockfile (pre-collision-guard state), declared in aim.toml for neither.
+    m = manifest.load(project_root)
+    ghost = m.rules[0].model_copy(
+        update={"qualified_name": "b/security", "repo_alias": "b", "repo_url": url_b}
+    )
+    m.rules.append(ghost)
+    manifest.save(project_root, m)
+
+    result = prune.run(prune.PruneOptions(project_root=project_root, force=True))
+
+    m_after = manifest.load(project_root)
+    assert [r.qualified_name for r in m_after.rules] == ["a/security"]
+    assert (project_root / ".claude" / "rules" / "security.md").exists()
+    assert any("shares" in w for w in result.warnings)
+
+
+def test_prune_works_on_install_path_lockfile(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A lockfile created by `skill add` (never locked) has layout_profile=None;
+    prune must resolve both sides to the default instead of demanding a sync
+    that can never reconcile them."""
+    repos.add("a", f"file://{_skill_repo(tmp_path, 'a', '# A')}")
+    install.install(project_root, "a/foo")
+
+    result = prune.plan(prune.PruneOptions(project_root=project_root))
+    # `a/foo` came from `skill add`, which declares it — nothing to remove.
+    assert [i for i in result.removed if i.action == "would-remove"] == []
+
+
+def test_install_into_symlinked_project_root(home: Path, tmp_path: Path) -> None:
+    """Installing into a project reached through a symlink (macOS /tmp) must
+    not crash on resolved-vs-raw path math."""
+    real = tmp_path / "real-proj"
+    real.mkdir()
+    linked = tmp_path / "link-proj"
+    linked.symlink_to(real)
+    repos.add("a", f"file://{_skill_repo(tmp_path, 'a', '# A')}")
+
+    install.install(linked, "a/foo")
+
+    assert (real / ".claude" / "skills" / "foo" / "SKILL.md").exists()

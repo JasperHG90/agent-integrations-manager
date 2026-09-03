@@ -245,6 +245,28 @@ def test_add_indexes_rules_alongside_skills(home: Path, tmp_path: Path) -> None:
     assert repos.artifact_kinds("mixed") == {"skill", "rules"}
 
 
+def test_artifact_kinds_many_matches_per_alias_lookup(home: Path, tmp_path: Path) -> None:
+    """The batched lookup agrees with artifact_kinds for every registered repo."""
+    _, mixed = _build_repo_with(
+        tmp_path / "a",
+        {
+            "skills/foo/SKILL.md": "# Foo\n",
+            "rules/r.md": "# R\n",
+            "README.md": "x\n",
+        },
+    )
+    _, rules_only = _build_repo_with(tmp_path / "b", {"rules/s.md": "# S\n", "README.md": "y\n"})
+    repos.add("mixed", f"file://{mixed}")
+    repos.add("rulesonly", f"file://{rules_only}")
+    kinds = repos.artifact_kinds_many()
+    assert kinds == {
+        "mixed": repos.artifact_kinds("mixed"),
+        "rulesonly": repos.artifact_kinds("rulesonly"),
+    }
+    assert kinds["mixed"] == {"skill", "rules"}
+    assert kinds["rulesonly"] == {"rules"}
+
+
 def test_rules_precedence_shadows_claude_path(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(
         tmp_path,

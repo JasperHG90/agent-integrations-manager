@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Static
+from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
 from aim.core import git, repos
@@ -56,6 +57,7 @@ class ReposScreen(Screen[None]):
     _refreshing: str | None = None
     _reindexing: str | None = None
     _editing: RepoEditRefResult | None = None
+    _behind_col: ColumnKey
 
     def compose(self) -> ComposeResult:
         """Build the title, repos table, status line, and key hint."""
@@ -71,7 +73,10 @@ class ReposScreen(Screen[None]):
     def on_mount(self) -> None:
         """Set up the table columns, populate rows, and focus the table."""
         table = self.query_one(DataTable)
-        table.add_columns("alias", "ref", "behind", "url", "head", "last fetched", "contains")
+        columns = table.add_columns(
+            "alias", "ref", "behind", "url", "head", "last fetched", "contains"
+        )
+        self._behind_col = columns[2]
         self._populate()
         table.focus()
 
@@ -80,7 +85,11 @@ class ReposScreen(Screen[None]):
         self._populate()
 
     def _populate(self) -> None:
-        """Rebuild the table from the current repo registry, preserving selection."""
+        """Rebuild the table from the current repo registry, preserving selection.
+
+        The behind column needs several git subprocess calls per repo, so it is
+        filled in by a background worker; everything else renders immediately.
+        """
         table = self.query_one(DataTable)
         selected_alias = self._selected_alias()
         table.clear()
@@ -89,6 +98,7 @@ class ReposScreen(Screen[None]):
             self._status("no repos registered — press [a] to add one")
             return
         now = datetime.now(UTC)
+        kinds_by_alias = repos.artifact_kinds_many()
         for r in rows:
             sha = (r.last_sha or "?")[:12]
             when = "?"
@@ -97,16 +107,45 @@ class ReposScreen(Screen[None]):
                 if fetched.tzinfo is None:
                     fetched = fetched.replace(tzinfo=UTC)
                 when = _humanize((now - fetched).total_seconds())
-            tag = kind_tag(repos.artifact_kinds(r.alias))
-            lag = repos.tracked_ref_lag(r.alias)
-            behind = f"{lag.behind} behind {lag.default_branch}" if lag else ""
-            table.add_row(r.alias, r.default_ref, behind, r.url, sha, when, tag, key=r.alias)
+            tag = kind_tag(kinds_by_alias.get(r.alias, set()))
+            table.add_row(r.alias, r.default_ref, "…", r.url, sha, when, tag, key=r.alias)
         if selected_alias is not None:
             try:
                 table.move_cursor(row=table.get_row_index(selected_alias), animate=False)
             except Exception:
                 pass
         self._status(f"{len(rows)} repo(s)")
+        self.run_worker(self._fill_lag_thread, group="ref-lag", exclusive=True, thread=True)
+
+    def _fill_lag_thread(self) -> None:
+        """Compute each repo's ref lag off the UI thread and fill the behind column."""
+        from textual.worker import get_current_worker
+
+        worker = get_current_worker()
+        for alias in [r.alias for r in repos.list_repos()]:
+            if worker.is_cancelled:
+                return
+            try:
+                lag = repos.tracked_ref_lag(alias)
+            except (repos.RepoNotFoundError, git.GitError):
+                lag = None  # repo removed mid-scan or clone unreadable — leave blank
+            behind = f"{lag.behind} behind {lag.default_branch}" if lag else ""
+            # Re-check after the slow git calls so a superseding _populate's scan
+            # never has a stale value written over its fresh placeholder.
+            if worker.is_cancelled:
+                return
+            try:
+                self.app.call_from_thread(self._set_behind_cell, alias, behind)
+            except RuntimeError:
+                return  # app shut down mid-scan
+
+    def _set_behind_cell(self, alias: str, value: str) -> None:
+        """Write a computed behind value into a row, ignoring vanished rows."""
+        try:
+            table = self.query_one(DataTable)
+            table.update_cell(alias, self._behind_col, value, update_width=True)
+        except Exception:
+            pass  # table was repopulated (or screen torn down); the new scan fills in
 
     def _selected_alias(self) -> str | None:
         """Return the alias under the cursor, or None when the table is empty."""
@@ -130,7 +169,7 @@ class ReposScreen(Screen[None]):
             return
         self._status(f"adding {result.alias}…")
         self._adding = result
-        self.run_worker(self._do_add_thread, exclusive=True, thread=True)
+        self.run_worker(self._do_add_thread, group="repo-add", exclusive=True, thread=True)
 
     def _do_add_thread(self) -> None:
         """Add the pending repo on a worker thread, reporting status to the UI."""
@@ -157,9 +196,18 @@ class ReposScreen(Screen[None]):
         self.app.call_from_thread(self._status, f"added {result.alias}")
 
     def on_worker_state_changed(self, event) -> None:  # type: ignore[no-untyped-def]
-        """Update status and repopulate when an add or refresh worker changes state."""
-        adding = getattr(self, "_adding", None)
-        if adding is not None:
+        """Update status and repopulate as each flow's own worker changes state.
+
+        Each flow runs in its own worker group and this handler dispatches on
+        the event's group, so one flow's lifecycle can never clear another's
+        pending state (regression: a refresh keypress mid-add cancelled the add
+        and silently dropped the registration).
+        """
+        group = event.worker.group
+        if group == "repo-add":
+            adding = self._adding
+            if adding is None:
+                return
             if event.state == WorkerState.RUNNING:
                 self._status(f"adding {adding.alias}…")
             elif event.state == WorkerState.SUCCESS:
@@ -167,8 +215,10 @@ class ReposScreen(Screen[None]):
                 self._populate()
             elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._adding = None
-        refreshing = getattr(self, "_refreshing", None)
-        if refreshing is not None:
+        elif group == "repo-refresh":
+            refreshing = self._refreshing
+            if refreshing is None:
+                return
             if event.state == WorkerState.RUNNING:
                 self._status(f"refreshing {refreshing}…")
             elif event.state == WorkerState.SUCCESS:
@@ -176,8 +226,10 @@ class ReposScreen(Screen[None]):
                 self._populate()
             elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._refreshing = None
-        reindexing = getattr(self, "_reindexing", None)
-        if reindexing is not None:
+        elif group == "repo-reindex":
+            reindexing = self._reindexing
+            if reindexing is None:
+                return
             if event.state == WorkerState.RUNNING:
                 self._status(f"reindexing {reindexing}…")
             elif event.state == WorkerState.SUCCESS:
@@ -185,8 +237,10 @@ class ReposScreen(Screen[None]):
                 self._populate()
             elif event.state in (WorkerState.CANCELLED, WorkerState.ERROR):
                 self._reindexing = None
-        editing = getattr(self, "_editing", None)
-        if editing is not None:
+        elif group == "repo-edit-ref":
+            editing = self._editing
+            if editing is None:
+                return
             if event.state == WorkerState.RUNNING:
                 self._status(f"setting {editing.alias} ref -> {editing.default_ref}…")
             elif event.state == WorkerState.SUCCESS:
@@ -203,7 +257,7 @@ class ReposScreen(Screen[None]):
             return
         self._status(f"refreshing {alias}…")
         self._refreshing = alias
-        self.run_worker(self._do_refresh_thread, exclusive=True, thread=True)
+        self.run_worker(self._do_refresh_thread, group="repo-refresh", exclusive=True, thread=True)
 
     def _do_refresh_thread(self) -> None:
         """Refresh the pending repo on a worker thread, reporting status to the UI."""
@@ -241,7 +295,9 @@ class ReposScreen(Screen[None]):
             return
         self._status(f"setting {result.alias} ref -> {result.default_ref}…")
         self._editing = result
-        self.run_worker(self._do_edit_ref_thread, exclusive=True, thread=True)
+        self.run_worker(
+            self._do_edit_ref_thread, group="repo-edit-ref", exclusive=True, thread=True
+        )
 
     def _do_edit_ref_thread(self) -> None:
         """Apply the pending ref change on a worker thread, reporting status to the UI."""
@@ -276,7 +332,7 @@ class ReposScreen(Screen[None]):
             return
         self._status(f"reindexing {alias}…")
         self._reindexing = alias
-        self.run_worker(self._do_reindex_thread, exclusive=True, thread=True)
+        self.run_worker(self._do_reindex_thread, group="repo-reindex", exclusive=True, thread=True)
 
     def _do_reindex_thread(self) -> None:
         """Reindex the pending repo on a worker thread, reporting status to the UI."""

@@ -289,10 +289,15 @@ class ProjectTemplatesScreen(Screen[None]):
         )
 
     def _dismiss_busy(self) -> None:
-        """Close the spinner overlay if one is showing. Runs on the UI thread."""
-        if self._busy is not None:
+        """Close the spinner overlay if one is showing. Runs on the UI thread.
+
+        Dismiss only when the overlay is the top screen: Screen.dismiss() pops
+        whatever is on top, so calling it while another screen covers the
+        overlay would pop THAT screen and leave the overlay stuck.
+        """
+        if self._busy is not None and self.app.screen is self._busy:
             self._busy.dismiss()
-            self._busy = None
+        self._busy = None
 
     def _do_apply_thread(self, name: str, project_root: Path) -> None:
         """Run the template apply off the event loop and report the outcome."""

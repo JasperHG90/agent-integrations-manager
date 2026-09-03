@@ -42,6 +42,7 @@ from aim.core import (
     templates,
 )
 from aim.core.models import (
+    HISTORY_CAP,
     DeclaredAgent,
     DeclaredArchetype,
     DeclaredMcpServer,
@@ -1079,6 +1080,13 @@ def _top_level_key(m: Manifest) -> tuple:
         m.policy_repo,
         m.policy_ref,
         m.policy_hash,
+        # Template provenance: omitting these made a template-only re-pin hit
+        # the unchanged fast-path, so `profile update` never landed in the lock.
+        m.template_repo,
+        m.template_qualified_name,
+        m.template_ref,
+        m.template_hash,
+        m.managed_base_hash,
     )
 
 
@@ -1123,55 +1131,140 @@ def _preserve_unchanged_metadata(existing: Manifest | None, new: Manifest) -> No
     if existing is None:
         return
 
-    skill_by_key = {_skill_key(s): s for s in existing.skills}
-    for s in new.skills:
-        prev_skill = skill_by_key.get(_skill_key(s))
-        if prev_skill is not None:
-            s.current = prev_skill.current
-            s.history = list(prev_skill.history)
+    def _carry(prev_items, new_items, full_key, identity):  # type: ignore[no-untyped-def]
+        """Carry version metadata across a re-lock.
 
-    agent_by_key = {_agent_key(a): a for a in existing.agents}
-    for a in new.agents:
-        prev_agent = agent_by_key.get(_agent_key(a))
-        if prev_agent is not None:
-            a.current = prev_agent.current
-            a.history = list(prev_agent.history)
+        Unchanged entry (full key matches): keep the prior `current` (original
+        installed_at) and history. Changed entry with the same IDENTITY: push
+        the prior `current` onto capped history — a version bump must not erase
+        the rollback trail the README promises (regression: a re-lock after any
+        upstream move produced history=[], breaking `rollback` immediately).
+        """
+        by_full = {full_key(p): p for p in prev_items}
+        by_id = {identity(p): p for p in prev_items}
+        for item in new_items:
+            exact = by_full.get(full_key(item))
+            if exact is not None:
+                item.current = exact.current
+                item.history = list(exact.history)
+                continue
+            prev = by_id.get(identity(item))
+            if prev is None:
+                continue
+            same_version = prev.current.model_dump(exclude={"installed_at"}) == (
+                item.current.model_dump(exclude={"installed_at"})
+            )
+            if same_version:
+                # Metadata-only change (pin/track/hash): the version itself did
+                # not move — pushing it would burn a history slot on a no-op.
+                item.current = prev.current
+                item.history = list(prev.history)
+            else:
+                item.history = [prev.current, *prev.history][:HISTORY_CAP]
 
-    mcp_by_key = {_mcp_key(m): m for m in existing.mcp_servers}
-    for m in new.mcp_servers:
-        prev_mcp = mcp_by_key.get(_mcp_key(m))
-        if prev_mcp is not None:
-            m.current = prev_mcp.current
-            m.history = list(prev_mcp.history)
+    _carry(existing.skills, new.skills, _skill_key, lambda s: s.qualified_name)
+    _carry(existing.agents, new.agents, _agent_key, lambda a: a.qualified_name)
+    _carry(existing.mcp_servers, new.mcp_servers, _mcp_key, lambda m: m.alias)
+    _carry(existing.rules, new.rules, _rule_key, lambda r: r.qualified_name)
+    _carry(existing.plugins, new.plugins, _plugin_key, lambda p: (p.qualified_name, p.flavor))
+    _carry(existing.targets, new.targets, _target_key, lambda t: t.qualified_name)
 
-    rule_by_key = {_rule_key(r): r for r in existing.rules}
-    for r in new.rules:
-        prev_rule = rule_by_key.get(_rule_key(r))
-        if prev_rule is not None:
-            r.current = prev_rule.current
-            r.history = list(prev_rule.history)
+    prev_arch = [existing.archetype] if existing.archetype is not None else []
+    new_arch = [new.archetype] if new.archetype is not None else []
+    _carry(prev_arch, new_arch, _archetype_key, lambda a: a.qualified_name)
 
-    plugin_by_key = {_plugin_key(p): p for p in existing.plugins}
-    for p in new.plugins:
-        prev_plugin = plugin_by_key.get(_plugin_key(p))
-        if prev_plugin is not None:
-            p.current = prev_plugin.current
-            p.history = list(prev_plugin.history)
 
-    target_by_key = {_target_key(t): t for t in existing.targets}
-    for t in new.targets:
-        prev_target = target_by_key.get(_target_key(t))
-        if prev_target is not None:
-            t.current = prev_target.current
-            t.history = list(prev_target.history)
+def _salvage_failed_entries(
+    existing: Manifest,
+    decl: ProjectDeclarations,
+    *,
+    skills: list[InstalledSkill],
+    agents: list[InstalledAgent],
+    mcps: list[InstalledMcpServer],
+    rules: list[InstalledRule],
+    plugins: list[InstalledPlugin],
+    targets: list[InstalledTarget],
+) -> None:
+    """Carry previously-locked entries through a partial lock verbatim.
 
-    if (
-        existing.archetype is not None
-        and new.archetype is not None
-        and _archetype_key(existing.archetype) == _archetype_key(new.archetype)
-    ):
-        new.archetype.current = existing.archetype.current
-        new.archetype.history = list(existing.archetype.history)
+    A per-artifact failure (deleted tag, unreachable repo, moved file) drops
+    the artifact from the freshly-locked lists. Without salvage, the save
+    that follows would strip a committed lockfile of a still-declared
+    artifact's pin, content hash, and history because of a transient foreign
+    event — and a later re-lock would restore it with fresh metadata and no
+    history. Salvaged entries keep their exact prior state; the raised
+    LockError still reports the underlying failure.
+    """
+
+    def _fill(new_list, declared_ids, existing_items, identity) -> None:  # type: ignore[no-untyped-def]
+        locked_ids = {identity(i) for i in new_list}
+        for prev in existing_items:
+            pid = identity(prev)
+            if pid in declared_ids and pid not in locked_ids:
+                new_list.append(prev)
+
+    _fill(
+        skills,
+        {s.qualified_name for s in decl.skills},
+        existing.skills,
+        lambda s: s.qualified_name,
+    )
+    _fill(
+        agents,
+        {a.qualified_name for a in decl.agents},
+        existing.agents,
+        lambda a: a.qualified_name,
+    )
+    _fill(mcps, {m.alias for m in decl.mcp_servers}, existing.mcp_servers, lambda m: m.alias)
+    _fill(rules, {r.qualified_name for r in decl.rules}, existing.rules, lambda r: r.qualified_name)
+    _fill(
+        plugins,
+        {(p.qualified_name, p.flavor) for p in decl.plugins},
+        existing.plugins,
+        lambda p: (p.qualified_name, p.flavor),
+    )
+    _fill(
+        targets,
+        {t.qualified_name for t in decl.targets},
+        existing.targets,
+        lambda t: t.qualified_name,
+    )
+
+
+def _reject_deploy_collisions(decl: ProjectDeclarations) -> None:
+    """Refuse to lock two same-named artifacts that share one deploy path.
+
+    Skills deploy to <skills_dir>/<name>, rules to <rules_dir>/<name>.md,
+    agents to <agents_dir>/<name>.md, targets to .aim/targets/<name>.toml —
+    all keyed by the BARE name, so `a/foo` and `b/foo` overwrite each other
+    and wedge sync in a permanent edited-since-install flip-flop.
+
+    Raises:
+        LockError: Naming which declarations collide.
+    """
+    # Plugins are deliberately absent: vendor paths are kind-owned templates —
+    # the built-in claude kind namespaces by repo id, so same-named plugins from
+    # different repos do NOT collide there, and blocking them here would
+    # false-positive. A declarative kind whose vendor_into uses only {name} can
+    # still collide; that is the kind author's contract to disambiguate.
+    groups = (
+        ("skill", [s.qualified_name for s in decl.skills]),
+        ("agent", [a.qualified_name for a in decl.agents]),
+        ("rule", [r.qualified_name for r in decl.rules]),
+        ("target", [t.qualified_name for t in decl.targets]),
+    )
+    for kind, qnames in groups:
+        seen: dict[str, str] = {}
+        for qn in qnames:
+            bare = qn.split("/", 1)[-1]
+            prior = seen.get(bare)
+            if prior is not None and prior != qn:
+                raise LockError(
+                    f"{kind}s {prior} and {qn} both deploy as {bare!r}; same-named "
+                    f"{kind}s from different repos cannot coexist in one project — "
+                    f"remove one from aim.toml"
+                )
+            seen[bare] = qn
 
 
 def _enforce_policy(
@@ -1229,8 +1322,14 @@ async def run(options: LockOptions) -> LockResult:
 
     resolved_policy = policy.resolve_effective(project_root)
     _enforce_policy(decl, resolved_policy, effective_profile=decl.layout_profile or profile.name)
+    _reject_deploy_collisions(decl)
 
     result = LockResult(project_root=project_root)
+    for entry in policy.non_url_trusted_entries(resolved_policy.policy):
+        result.warnings.append(
+            f"policy trusted_repos entry {entry!r} is not a URL and is ignored — "
+            "trust matches by normalized URL only (aliases are attacker-choosable)"
+        )
 
     try:
         existing = manifest.load(project_root)
@@ -1300,6 +1399,29 @@ async def run(options: LockOptions) -> LockResult:
         if archetype_error is not None:
             archetype_errors.append(archetype_error)
 
+    # Salvage BEFORE the region-hash computation so a rule that failed to
+    # re-lock keeps contributing its (previously pinned) body to the hashes —
+    # in inline mode a dropped rule would otherwise vanish from AGENTS.md on
+    # the next sync.
+    if existing is not None and not options.force:
+        _salvage_failed_entries(
+            existing,
+            decl,
+            skills=skills_locked,
+            agents=agents_locked,
+            mcps=mcps_locked,
+            rules=rules_locked,
+            plugins=plugins_locked,
+            targets=targets_locked,
+        )
+        if (
+            archetype_locked is None
+            and archetype_errors
+            and existing.archetype is not None
+            and existing.archetype.qualified_name == decl.archetype.qualified_name
+        ):
+            archetype_locked = existing.archetype
+
     # Region hashes depend on the locked rule bodies (read at their pinned
     # SHAs), so compute them after the rule lock — not concurrently — to avoid a
     # moving-HEAD race between the region hash and each rule's content_hash.
@@ -1317,6 +1439,9 @@ async def run(options: LockOptions) -> LockResult:
         symlinks=decl.symlinks,
         managed_files=list(dict.fromkeys(managed_files)),
         managed_region_hashes=region_hashes,
+        # Base ownership is established at render time (sync); lock never
+        # renders, so it must carry the marker forward, not reset it.
+        managed_base_hash=existing.managed_base_hash if existing is not None else None,
         skills=skills_locked,
         agents=agents_locked,
         mcp_servers=mcps_locked,

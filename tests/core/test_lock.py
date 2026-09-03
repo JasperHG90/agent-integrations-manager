@@ -568,6 +568,82 @@ def test_mcp_key_is_hashable_with_dict_overrides() -> None:
     hash(lock._mcp_key(m))  # must not raise TypeError: unhashable type: 'dict'
 
 
+def test_relock_after_upstream_bump_pushes_history(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A version change on re-lock pushes the previous pin onto history so
+    `rollback` keeps working (regression: lock rebuilt entries with history=[]
+    on every upstream move, erasing the trail the README promises)."""
+    working, _, _qn = _setup_project_with_skill(
+        project_root, tmp_path, files={"skills/foo/SKILL.md": "# foo v1\n"}
+    )
+    _run_lock(project_root)
+    m1 = _load_manifest(project_root)
+    old_sha = m1.skills[0].current.sha
+    # Seed prior history to prove it is carried, not just the bumped pin.
+    m1.skills[0].history = [
+        SkillVersion(tag="v0", sha="deadbeef" * 5, installed_at=m1.skills[0].current.installed_at)
+    ]
+    manifest.save(project_root, m1)
+
+    git_fixtures.add_commit(working, {"skills/foo/SKILL.md": "# foo v2\n"}, "bump")
+    git_fixtures.push_to_bare(working, tmp_path / "bare.git")
+    repos.refresh("a")
+    _run_lock(project_root)
+
+    m2 = _load_manifest(project_root)
+    assert m2.skills[0].current.sha != old_sha
+    assert [h.sha for h in m2.skills[0].history] == [old_sha, "deadbeef" * 5]
+
+
+def test_partial_lock_keeps_previously_locked_entry(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A transient per-artifact failure must not strip a previously-good entry
+    (pin, hash, history) from the committed lockfile."""
+    _working, _bare, qn = _setup_project_with_skill(
+        project_root, tmp_path, files={"skills/foo/SKILL.md": "# foo\n"}, pin=None
+    )
+    _run_lock(project_root)
+    before = _load_manifest(project_root).skills[0]
+
+    # Repoint the declaration at a pin that does not resolve — a deleted tag.
+    _write_aim_toml(project_root, source_path="skills/foo", pin="vanished-tag")
+    with pytest.raises(lock.LockError):
+        _run_lock(project_root)
+
+    after = _load_manifest(project_root)
+    assert [s.qualified_name for s in after.skills] == [qn]
+    assert after.skills[0].current.sha == before.current.sha
+    assert after.skills[0].content_hash == before.content_hash
+
+
+def test_template_only_change_is_not_unchanged(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    """A template re-pin with an unchanged artifact set must write the lockfile
+    (regression: template_* was missing from the unchanged fast-path key)."""
+    _setup_project_with_skill(project_root, tmp_path, files={"skills/foo/SKILL.md": "# foo\n"})
+    _run_lock(project_root)
+
+    decl = declarations.load(project_root)
+    from aim.core.models import DeclaredTemplate
+
+    decl.template = DeclaredTemplate(
+        qualified_name="a/tpl",
+        repo_alias="a",
+        url=_repo_url("a"),
+        ref="a" * 40,
+        template_hash="b" * 64,
+    )
+    declarations.save(project_root, decl)
+
+    result = _run_lock(project_root)
+    assert result.unchanged is False
+    m = _load_manifest(project_root)
+    assert m.template_hash == "b" * 64
+
+
 def test_preserve_metadata_carries_history_for_unchanged_mcp_with_overrides() -> None:
     """Regression: a re-lock of an MCP server with dict overrides must not crash
     and must copy prior `current`/`history` onto the matching new entry."""
@@ -589,9 +665,10 @@ def test_preserve_metadata_carries_history_for_unchanged_mcp_with_overrides() ->
     assert len(new.mcp_servers[0].history) == 1
 
 
-def test_preserve_metadata_treats_changed_overrides_as_new_mcp() -> None:
-    """When overrides differ, the entry is a different identity — prior metadata
-    must NOT be carried over, and no crash from the dict fields."""
+def test_preserve_metadata_pushes_history_when_mcp_overrides_change() -> None:
+    """When overrides differ the entry is a CHANGED version of the same server:
+    it keeps its fresh stamp, and the prior `current` moves onto history so
+    rollback still works (regression: any change used to erase the history)."""
     t0 = datetime(2024, 1, 1, tzinfo=UTC)
     t1 = datetime(2024, 6, 1, tzinfo=UTC)
 
@@ -604,6 +681,6 @@ def test_preserve_metadata_treats_changed_overrides_as_new_mcp() -> None:
 
     lock._preserve_unchanged_metadata(existing, new)
 
-    # Overrides changed → not matched → keeps its fresh stamp and gains no prior history.
+    # Changed version → fresh stamp kept, prior current pushed onto history.
     assert new.mcp_servers[0].current.installed_at == t1
-    assert new.mcp_servers[0].history == []
+    assert new.mcp_servers[0].history == [prev.current, *prev.history]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
@@ -11,7 +12,7 @@ from textual.widgets import Button, Static, TextArea
 class RuleViewModal(ModalScreen[None]):
     """Modal screen that displays a rule's source markdown read-only."""
 
-    BINDINGS = [("escape", "action_close", "Close")]
+    BINDINGS = [Binding("escape", "close", "Close", priority=True)]
 
     def __init__(self, qualified_name: str, content: str) -> None:
         """Initialize the modal with the rule's name and source content.

@@ -367,6 +367,25 @@ def _v16_to_v17(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v17_to_v18(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a v17 manifest forward to v18.
+
+    v18 adds ``managed_base_hash`` (ownership of the AGENTS.md content outside
+    aim regions). Purely additive: None means "never authored by aim", so
+    renders on legacy projects keep preserving the existing base until aim
+    authors one (fresh file, matching pristine render, or --force).
+
+    Args:
+        raw: The decoded manifest mapping at version 17.
+
+    Returns:
+        The same mapping, stamped at version 18.
+    """
+    raw.setdefault("managed_base_hash", None)
+    raw["manifest_version"] = 18
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
@@ -385,6 +404,7 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     14: _v14_to_v15,
     15: _v15_to_v16,
     16: _v16_to_v17,
+    17: _v17_to_v18,
 }
 
 

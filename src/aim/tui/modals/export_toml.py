@@ -25,7 +25,7 @@ class ExportTomlModal(ModalScreen[ExportTomlResult | None]):
     """Prompt for a destination path and export a profile to TOML."""
 
     BINDINGS = [
-        Binding("escape", "action_cancel", "Cancel", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("enter", "action_export", "Export", priority=True),
     ]
 

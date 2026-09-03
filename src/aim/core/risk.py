@@ -846,6 +846,31 @@ def assert_acceptable_risk(
     return verdict
 
 
+def gate_oversized(
+    *,
+    source: str,
+    pol: policy.Policy,
+    override_risk: bool = False,
+    kind: str | None = None,
+) -> None:
+    """Enforce the policy when an artifact exceeds the risk-scan byte cap.
+
+    Mirrors the classifier-unavailable rule: block mode demands enforcement, so
+    content the classifier cannot see must fail CLOSED — otherwise a payload
+    placed after ~256 KiB of filler ships unscanned. Advisory mode warns.
+    """
+    config = config_from_policy(pol, kind)
+    if not config.active:
+        return
+    override = override_risk and config.allow_override
+    if config.mode == "block" and not override:
+        raise RiskBlockedError(
+            f"{source}: content exceeds the risk-scan cap; block mode refuses what it "
+            "cannot fully scan (split the artifact or pass --override-risk)"
+        )
+    _warn(f"{source}: content exceeds the risk-scan cap; scanned a prefix only")
+
+
 def gate(
     content: str,
     *,

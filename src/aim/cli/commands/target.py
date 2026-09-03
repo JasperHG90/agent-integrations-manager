@@ -14,6 +14,7 @@ import typer
 
 from aim.cli._shared import _friendly, _get_format, _here, _qualified_for_add, _scanning
 from aim.core import format as format_mod
+from aim.core import risk as risk_mod
 from aim.core import target_install as target_install_mod
 from aim.core import targets as targets_mod
 
@@ -92,12 +93,21 @@ def target_add(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Register the source repo without prompting."
     ),
+    override_risk: bool = typer.Option(
+        False, "--override-risk", help="Install despite a risk block (unless policy forbids it)."
+    ),
 ) -> None:
     """Add a plugin target from a git repository, registering the repo if needed."""
     qualified_name = _qualified_for_add(ctx, url, name, alias, "target", assume_yes=yes)
     with _scanning(f"Installing {qualified_name}…"):
-        installed = target_install_mod.install(_here(project), qualified_name, pin=pin, track=track)
+        installed = target_install_mod.install(
+            _here(project), qualified_name, pin=pin, track=track, override_risk=override_risk
+        )
     typer.echo(f"added target {qualified_name} {installed.current.identifier()}")
+    for warn in target_install_mod.take_install_warnings():
+        typer.echo(f"  config: {warn}", err=True)
+    for warn in risk_mod.take_risk_warnings():
+        typer.echo(f"  risk: {warn}", err=True)
 
 
 @app.command("update")

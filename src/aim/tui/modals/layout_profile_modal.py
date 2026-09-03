@@ -14,6 +14,24 @@ from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 from aim.core import layout_profiles
 
 
+def _project_target_lines(project_root: Path) -> list[str]:
+    """Describe each plugin target active for the project, one line per target.
+
+    Targets — not the layout profile — own where a client's plugins vendor
+    (`vendor_into`), so the profile editor surfaces them read-only to complete
+    the layout picture.
+    """
+    from aim.core import plugin_kinds
+
+    lines: list[str] = []
+    for name, kind in sorted(plugin_kinds.load_kinds(project_root).items()):
+        spec = getattr(kind, "spec", None)
+        if spec is None:
+            continue  # built-in kinds (claude) have fixed, code-owned paths
+        lines.append(f"{name}: plugins → {spec.registration.vendor_into}")
+    return lines
+
+
 @dataclass(frozen=True)
 class LayoutProfileResult:
     """Outcome of the modal: the edited profile plus its prior name, if any."""
@@ -104,6 +122,19 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
                     value=(",".join(p.symlinks) if p else ""),
                     placeholder="CLAUDE.md, GEMINI.md",
                     id="symlinks",
+                ),
+                Static("Plugin targets (read-only):", markup=False),
+                Static(
+                    "\n".join(_project_target_lines(self._project_root))
+                    or "none — install targets on the Targets tab",
+                    id="targets-info",
+                    markup=False,
+                ),
+                Static(
+                    "Where plugins land is owned by each target's TOML (.aim/targets/), "
+                    "not the profile. View or install targets on the Targets tab.",
+                    id="targets-help",
+                    markup=False,
                 ),
                 Static("", id="error", markup=False, classes="modal-error"),
                 classes="modal-scroll",

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from textual.widgets import DataTable
 
-from aim.core import declarations, repos
+from aim.core import archetypes, declarations, repos
 from aim.core import init as init_mod
 from aim.tui.app import AimApp
 from aim.tui.screens.archetypes_screen import ArchetypesScreen
@@ -20,6 +20,8 @@ def _repo_with_archetype(tmp_path: Path) -> None:
     )
     bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
     repos.add("co", f"file://{bare}", allow_empty=True)
+    # Non-canonical paths are not discovered; the file counts via an explicit link.
+    archetypes.register_link("co", "bases/lean/AGENTS.md", name="lean")
 
 
 @pytest.mark.asyncio
@@ -39,8 +41,9 @@ async def test_archetypes_screen_lists_and_selects(
         # The built-in default always heads the list, then repo archetypes.
         assert table.row_count == 2
         assert table.get_row_at(0)[0] == "default"
-        # Discovered from a non-canonical `bases/lean/` directory.
+        # Explicitly linked from a non-canonical `bases/lean/` path.
         assert table.get_row_at(1)[0] == "co/lean"
+        assert table.get_row_at(1)[3] == "link"  # origin column
 
         table.move_cursor(row=1)
         await pilot.press("u")  # use co/lean as base

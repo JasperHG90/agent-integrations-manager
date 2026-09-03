@@ -68,6 +68,12 @@ class PluginsScreen(Screen[None]):
         self._repo_filter: str | None = None
         self._installing: tuple[str, str, PluginInstallConfig] | None = None
         self._busy: BusyModal | None = None
+        # Plugins live-discovered from project-only .aim/targets specs. None =
+        # discovery not finished yet; a background worker fills it exactly once
+        # per screen. It is git-subprocess-heavy across every registered repo,
+        # so it must never run on the paint path (opening this screen used to
+        # block for seconds per project-local target).
+        self._overlay: list | None = None
 
     def compose(self) -> ComposeResult:
         """Yield the title, search bar, plugins table, status line, and hint."""
@@ -87,6 +93,43 @@ class PluginsScreen(Screen[None]):
         table.add_columns("qualified name", "target", "sha", "description")
         self._populate("")
         table.focus()
+        self.run_worker(self._discover_overlay_thread, group="plugin-overlay", thread=True)
+
+    def _discover_overlay_thread(self) -> None:
+        """Discover project-target plugins off the UI thread, then repopulate."""
+        from textual.worker import get_current_worker
+
+        worker = get_current_worker()
+        try:
+            overlay = plugins.project_overlay_rows(
+                self._project_root, should_abort=lambda: worker.is_cancelled
+            )
+        except Exception:
+            overlay = []  # discovery is best-effort; indexed rows already render
+        if worker.is_cancelled:
+            return  # shutting down — don't touch widgets or cache partial rows
+        self._overlay = overlay
+        try:
+            self.app.call_from_thread(self._populate, self.query_one("#search-bar", Input).value)
+        except RuntimeError:
+            pass  # app shut down mid-discovery
+
+    def _overlay_rows(self, query: str) -> list:
+        """Return cached overlay rows filtered like `plugins.search` filters."""
+        rows = self._overlay or []
+        q = query.strip().lower()
+        if q:
+            rows = [
+                r
+                for r in rows
+                if q
+                in " ".join(
+                    filter(None, [r.qualified_name, r.description, r.category, r.keywords])
+                ).lower()
+            ]
+        if self._repo_filter is not None:
+            rows = [r for r in rows if r.repo_alias == self._repo_filter]
+        return rows
 
     def on_screen_resume(self) -> None:
         """Repopulate the table using the current search query when resumed."""
@@ -102,16 +145,21 @@ class PluginsScreen(Screen[None]):
         table = self.query_one(DataTable)
         selected = self._selected()
         table.clear()
-        rows = (
-            plugins.search(query, project_root=self._project_root)
-            if query
-            else plugins.list_plugins(project_root=self._project_root)
-        )
+        # DB-indexed rows only — the project-target overlay is git-heavy, so it
+        # comes from the background worker's cache, never from this paint path.
+        rows = plugins.search(query) if query else plugins.list_plugins()
         if self._repo_filter is not None:
             rows = [r for r in rows if r.repo_alias == self._repo_filter]
+        seen = {(r.qualified_name, r.flavor) for r in rows}
+        rows += [r for r in self._overlay_rows(query) if (r.qualified_name, r.flavor) not in seen]
+        rows.sort(key=lambda r: r.qualified_name)
         filter_label = f" [repo={self._repo_filter}]" if self._repo_filter else ""
+        if self._overlay is None:
+            filter_label += " — discovering project-target plugins…"
         if not rows:
-            if not query and self._repo_filter is None:
+            if self._overlay is None:
+                self._status("discovering project-target plugins…")
+            elif not query and self._repo_filter is None:
                 self._status("no plugins indexed — add a marketplace repo from the Repos screen")
             else:
                 bits = []
@@ -172,7 +220,12 @@ class PluginsScreen(Screen[None]):
         return _parse_row_key(str(row_key.value))
 
     def action_view_current(self) -> None:
-        """Open the selected plugin's full description + manifest in a scrollable modal."""
+        """Open the selected plugin's full description + manifest in a scrollable modal.
+
+        The fetch runs on a worker: for a project-target plugin it re-runs git
+        discovery across the registered repos, which must not block the UI
+        thread (the same latency the overlay worker exists to avoid).
+        """
         selected = self._selected()
         if selected is None:
             if self.query_one(DataTable).row_count == 0:
@@ -181,11 +234,21 @@ class PluginsScreen(Screen[None]):
                 self._status("no row selected")
             return
         qn, flavor = selected
+        self._status(f"loading {qn}…")
+        self.run_worker(
+            lambda: self._view_thread(qn, flavor), group="plugin-view", exclusive=True, thread=True
+        )
+
+    def _view_thread(self, qn: str, flavor: str) -> None:
+        """Fetch a plugin's row + manifest off-thread and open the view modal."""
         try:
             row = plugins.index_row(qn, flavor, self._project_root)
             content = plugins.read_plugin_content(qn, flavor, self._project_root)
-        except plugins.PluginNotIndexedError as exc:
-            self.app.notify(f"view failed: {exc}", severity="error")
+        except (plugins.PluginNotIndexedError, git.GitError) as exc:
+            try:
+                self.app.call_from_thread(self.app.notify, f"view failed: {exc}", severity="error")
+            except RuntimeError:
+                pass
             return
         # The table truncates the description; show it in full here (the modal's
         # text area scrolls), above the raw manifest.
@@ -198,6 +261,14 @@ class PluginsScreen(Screen[None]):
         if row.description:
             meta += ["", row.description]
         body = "\n".join(meta) + "\n\n---\n\n" + content
+        try:
+            self.app.call_from_thread(self._show_view_modal, qn, body)
+        except RuntimeError:
+            pass  # app shut down mid-fetch
+
+    def _show_view_modal(self, qn: str, body: str) -> None:
+        """Open the view modal and clear the loading status. Runs on the UI thread."""
+        self._status("")
         self.app.push_screen(PluginViewModal(qn, body))
 
     def action_install_current(self) -> None:
@@ -267,10 +338,15 @@ class PluginsScreen(Screen[None]):
             self.app.call_from_thread(self.app.notify, warn, severity="warning", title="risk")
 
     def _dismiss_busy(self) -> None:
-        """Close the loading overlay if one is showing. Runs on the UI thread."""
-        if self._busy is not None:
+        """Close the loading overlay if one is showing. Runs on the UI thread.
+
+        Dismiss only when the overlay is the top screen: Screen.dismiss() pops
+        whatever is on top, so calling it while another screen covers the
+        overlay would pop THAT screen and leave the overlay stuck.
+        """
+        if self._busy is not None and self.app.screen is self._busy:
             self._busy.dismiss()
-            self._busy = None
+        self._busy = None
 
     def _status(self, msg: str) -> None:
         """Update the status line with the given message."""

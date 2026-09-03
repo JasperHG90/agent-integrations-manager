@@ -1,14 +1,18 @@
 """Target install / update / delete / rollback.
 
 A *target* is a declarative plugin-kind TOML sourced from a registered repo,
-pinned to a SHA and content-hashed for drift detection. Unlike a rule, a target
-is config (not agent-facing instructions): it is NOT risk-scanned, and it always
-vendors to a fixed path — ``.aim/targets/<name>.toml`` — which is already a load
+pinned to a SHA and content-hashed for drift detection. Although a target is
+config rather than agent-facing prose, its ``[register.config]`` writes reach
+client config files, so the TOML passes the same policy/risk gate as other
+artifacts and its declared writes are surfaced at install. It always vendors
+to a fixed path — ``.aim/targets/<name>.toml`` — which is already a load
 source for ``plugin_kinds.load_kinds``, so installing a target activates it.
 """
 
 from __future__ import annotations
 
+import threading
+import tomllib
 from pathlib import Path
 
 from aim.core import (
@@ -20,6 +24,7 @@ from aim.core import (
     paths,
     policy,
     repos,
+    risk,
     targets,
     validation,
 )
@@ -118,22 +123,103 @@ def _check_local_edits(project_root: Path, installed: InstalledTarget, *, force:
         )
 
 
-def _gate_target(project_root: Path, qualified_name: str, content: str) -> None:
-    """Run repo-policy and content-safety checks on a target's TOML.
+def _gate_target(
+    project_root: Path, qualified_name: str, content: str, *, override_risk: bool = False
+) -> None:
+    """Run repo-policy, content-safety, and risk checks on a target's TOML.
 
-    Targets are not risk-scanned (they are config, not agent-facing instructions),
-    but the source repo must be policy-allowed and the bytes hidden-unicode-clean.
+    A target is "just config", but its ``[register.config]`` section writes
+    values into client config files — including files whose keys launch
+    commands — so the TOML passes the same risk gate as other artifacts, and
+    its config writes are surfaced via `take_install_warnings`.
     """
     pol = policy.effective_policy(project_root)
     alias = qualified_name.split("/", 1)[0]
-    policy.assert_repo_allowed(pol, alias, _repo_url(alias))
+    url = _repo_url(alias)
+    policy.assert_repo_allowed(pol, alias, url)
+    policy.assert_artifact_allowed(pol, "target", qualified_name)
     content_guard.assert_no_hidden_unicode(content, source=f"target {qualified_name}")
+    if not policy.repo_is_trusted(pol, alias, url):
+        risk.gate(
+            content,
+            qualified_name=qualified_name,
+            pol=pol,
+            override_risk=override_risk,
+            kind="target",
+        )
 
 
-def _deploy(project_root: Path, name: str, content: str, *, qualified_name: str) -> None:
-    """Gate then write the target TOML to ``.aim/targets/<name>.toml``."""
-    _gate_target(project_root, qualified_name, content)
+def _surface_config_writes(qualified_name: str, content: str) -> None:
+    """Record a warning for every client-config write a target spec declares.
+
+    Mirrors the executable-surface review plugins get: the user installing a
+    target should see exactly which files and keys it will touch on register.
+    """
+    try:
+        spec = tomllib.loads(content)
+    except tomllib.TOMLDecodeError:
+        return  # unparseable specs are rejected downstream; nothing to surface
+    register = spec.get("register")
+    if not isinstance(register, dict):
+        return
+    configs = register.get("config", [])
+    if not isinstance(configs, list):
+        return
+    for cfg in configs:
+        if not isinstance(cfg, dict):
+            continue
+        file_ = cfg.get("file", "?")
+        for key, value in (cfg.get("set") or {}).items():
+            _record_warning(
+                f"{qualified_name}: on plugin register, writes {file_}: {key} = {value!r} — "
+                "review before relying on it"
+            )
+
+
+_install_warnings: list[str] = []
+_install_warnings_lock = threading.Lock()
+
+
+def _record_warning(message: str) -> None:
+    with _install_warnings_lock:
+        _install_warnings.append(message)
+
+
+def take_install_warnings() -> list[str]:
+    """Drain and return warnings recorded during target installs."""
+    with _install_warnings_lock:
+        out = list(_install_warnings)
+        _install_warnings.clear()
+    return out
+
+
+def _deploy(
+    project_root: Path,
+    name: str,
+    content: str,
+    *,
+    qualified_name: str,
+    override_risk: bool = False,
+) -> None:
+    """Gate then write the target TOML to ``.aim/targets/<name>.toml``.
+
+    Raises:
+        TargetLocalEditsError: The destination exists but no manifest entry
+            tracks it — a hand-dropped spec (explicitly supported) that a
+            vendored install must not silently overwrite.
+    """
+    _gate_target(project_root, qualified_name, content, override_risk=override_risk)
+    _surface_config_writes(qualified_name, content)
     target = _target_path(project_root, name)
+    if target.exists():
+        m = _load_manifest(project_root)
+        tracked = any(_target_name(t.qualified_name) == name for t in m.targets)
+        if not tracked and target.read_text(encoding="utf-8") != content:
+            raise TargetLocalEditsError(
+                f"{qualified_name}: {target} exists but is not managed by aim "
+                "(hand-dropped target spec); move or remove the file to install "
+                "the vendored one in its place"
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
 
@@ -144,9 +230,31 @@ def install(
     *,
     track: str | None = None,
     pin: str | None = None,
+    override_risk: bool = False,
 ) -> InstalledTarget:
     """Install a plugin target into the project (vendored to ``.aim/targets/``)."""
     row = _index_row(qualified_name)
+    # Two same-named targets from different repos vendor to one
+    # .aim/targets/<name>.toml — refuse the second, mirroring the skill/rule/
+    # agent guards, instead of silently overwriting and wedging the next lock.
+    bare = _target_name(qualified_name)
+    m0 = _load_manifest(project_root)
+    clash = next(
+        (
+            t
+            for t in m0.targets
+            if _target_name(t.qualified_name) == bare and t.qualified_name != qualified_name
+        ),
+        None,
+    )
+    if clash is not None:
+        from aim.core.install import TargetPathCollisionError
+
+        raise TargetPathCollisionError(
+            f"{qualified_name}: target name {bare!r} is already installed as "
+            f"{clash.qualified_name}; two targets with the same name cannot share "
+            f".aim/targets/{bare}.toml — remove one first"
+        )
     version = resolve_install_version(
         row.repo_alias,
         row.target_toml_path,
@@ -155,7 +263,13 @@ def install(
         artifact_name=Path(row.target_toml_path).name,
     )
     content = targets.read_target_content(qualified_name)
-    _deploy(project_root, row.target_name, content, qualified_name=qualified_name)
+    _deploy(
+        project_root,
+        row.target_name,
+        content,
+        qualified_name=qualified_name,
+        override_risk=override_risk,
+    )
     content_hash = hashing.hash_text(content)
 
     m = _load_manifest(project_root)
@@ -170,6 +284,7 @@ def install(
             content_hash=content_hash,
             pin=pin,
             track=track,
+            risk_acknowledged=override_risk,
         )
         m.targets.append(installed)
         result = installed
@@ -178,6 +293,8 @@ def install(
         existing.repo_alias = row.repo_alias
         existing.source_path = row.target_toml_path
         existing.content_hash = content_hash
+        if override_risk:
+            existing.risk_acknowledged = True
         if pin is not None:
             existing.pin = pin
         if track is not None:
@@ -218,7 +335,13 @@ def update(
 
     _check_local_edits(project_root, existing, force=force)
     content = targets.read_target_content(qualified_name)
-    _deploy(project_root, _target_name(qualified_name), content, qualified_name=qualified_name)
+    _deploy(
+        project_root,
+        _target_name(qualified_name),
+        content,
+        qualified_name=qualified_name,
+        override_risk=existing.risk_acknowledged,
+    )
     existing.push_history(new_version)
     existing.content_hash = hashing.hash_text(content)
     manifest.save(project_root, m)
@@ -297,7 +420,13 @@ def rollback(project_root: Path, qualified_name: str, *, force: bool = False) ->
     target_version = existing.history[0]
 
     content = _read_at_sha(existing.source_path, existing.repo_alias, target_version.sha)
-    _deploy(project_root, _target_name(qualified_name), content, qualified_name=qualified_name)
+    _deploy(
+        project_root,
+        _target_name(qualified_name),
+        content,
+        qualified_name=qualified_name,
+        override_risk=existing.risk_acknowledged,
+    )
     existing.push_history(
         SkillVersion(
             tag=target_version.tag,

@@ -300,3 +300,65 @@ def test_install_plugin_owned_skill_emits_notice(
     warnings = install.take_install_warnings()
     assert any("bundled with plugin a/bundler" in w for w in warnings)
     assert (project_root / ".claude" / "skills" / "inner" / "SKILL.md").exists()
+
+
+def test_skill_version_sha_must_be_hex() -> None:
+    """A lockfile-supplied sha is untrusted input that reaches git argv and
+    cache paths — the model boundary rejects anything but a git object id."""
+    from datetime import UTC, datetime
+
+    from aim.core.models import SkillVersion
+
+    good = SkillVersion(sha="a" * 40, installed_at=datetime.now(UTC))
+    assert good.sha == "a" * 40
+    for bad in ("--output=/tmp/x", "../../../etc", "HEAD", "main", "ABC1234", "", "a" * 65):
+        with pytest.raises(ValueError, match="not a git object id"):
+            SkillVersion(sha=bad, installed_at=datetime.now(UTC))
+
+
+def test_gather_skill_text_reports_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Content past the risk-scan cap must be reported, not silently dropped —
+    filler files sort first, so a payload could otherwise ship unscanned."""
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "aaa-filler.md").write_text("x" * 100)
+    (snap / "zzz-payload.md").write_text("EVILMARKER")
+    monkeypatch.setattr(install, "_RISK_TEXT_CAP", 50)
+    text, truncated = install._gather_skill_text(snap)
+    assert truncated is True
+    assert "EVILMARKER" not in text  # the classifier never saw it — hence the flag
+
+    monkeypatch.setattr(install, "_RISK_TEXT_CAP", 1024)
+    text, truncated = install._gather_skill_text(snap)
+    assert truncated is False
+    assert "EVILMARKER" in text
+
+
+def test_gate_oversized_fails_closed_in_block_mode(home: Path) -> None:
+    from aim.core import policy as policy_mod
+    from aim.core import risk
+
+    pol = policy_mod.Policy(name="p", risk=policy_mod.RiskSettings(classifier=True, mode="block"))
+    with pytest.raises(risk.RiskBlockedError, match="exceeds the risk-scan cap"):
+        risk.gate_oversized(source="a/big", pol=pol, kind="skill")
+    # Advisory mode warns instead of raising.
+    pol_warn = policy_mod.Policy(
+        name="p", risk=policy_mod.RiskSettings(classifier=True, mode="warn")
+    )
+    risk.take_risk_warnings()
+    risk.gate_oversized(source="a/big", pol=pol_warn, kind="skill")
+    assert any("risk-scan cap" in w for w in risk.take_risk_warnings())
+
+
+def test_snapshot_dir_rejects_traversal_components(home: Path) -> None:
+    """Defense in depth: `_ensure_snapshot` rmtree's this path, so components
+    must be single safe segments even if upstream validation regresses."""
+    for bad in ("../escape", "a/b", "..", "", "x\\y"):
+        with pytest.raises(ValueError, match="unsafe snapshot path component"):
+            install._snapshot_dir("repo", bad, "skill")
+        with pytest.raises(ValueError, match="unsafe snapshot path component"):
+            install._snapshot_dir(bad, "d" * 40, "skill")
+    snap = install._snapshot_dir("repo", "d" * 40, "skill")
+    assert snap == paths.snapshots_cache_dir() / "repo" / ("d" * 40) / "skill"
