@@ -185,6 +185,10 @@ async def test_plugins_screen_shows_project_scoped_target(home: Path, tmp_path: 
         await pilot.pause()
         await pilot.press("g")
         await pilot.pause()
+        # Project-target discovery is git-heavy, so the screen paints first and
+        # a worker fills these rows in — wait for it rather than racing it.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.row_count == 1  # the project-scoped target's plugin shows in the TUI
 
