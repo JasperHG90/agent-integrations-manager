@@ -11,7 +11,7 @@ symlinks = [
 ]
 policy_repo = "https://github.com/jasperhg90/aim-policy"
 policy_ref = "c2b87682202bee3e972d4c113cc4da99d44dfe2e"
-policy_hash = "45d77498088835482279b70140a12a1efe67ab6be1eae67c30013760fd0977cb"
+policy_hash = "522d70113e4f7b7ae1a9c71b3ee75e9121a0e1c48e96d331666f6cb428c1fdba"
 
 [[skill]]
 qualified_name = "82a901da1b9bedec/theme-factory"

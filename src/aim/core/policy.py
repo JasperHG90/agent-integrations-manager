@@ -467,14 +467,23 @@ def compute_hash(policy: Policy) -> str:
     lockfile and detect drift/tampering. Custom rules are canonicalized by `id` so
     re-importing the same rules in a different order does not change the hash.
 
+    Fields left at their default are EXCLUDED, so the hash describes what a
+    policy actually asserts rather than the shape of the model that happens to
+    carry it. Without this, every additive schema change (a new
+    ``blocked_*``/``trusted_*`` list) silently re-hashes every unchanged policy
+    and breaks `aim policy validate` — "locked under a different policy" — in
+    every project on upgrade, which is exactly what happened when
+    ``trusted_repos`` was introduced.
+
     Args:
         policy: The policy to hash.
 
     Returns:
         The hex-encoded SHA-256 digest.
     """
-    data = policy.model_dump(mode="json")
-    data["custom_rules"] = sorted(data.get("custom_rules", []), key=lambda r: r["id"])
+    data = policy.model_dump(mode="json", exclude_defaults=True)
+    if "custom_rules" in data:
+        data["custom_rules"] = sorted(data["custom_rules"], key=lambda r: r["id"])
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

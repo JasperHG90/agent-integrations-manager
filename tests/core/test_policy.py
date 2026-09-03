@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
 from typer.testing import CliRunner
 
@@ -737,3 +738,29 @@ def test_lockfile_preserves_policy_fields(home: Path, project_root: Path) -> Non
     assert loaded.policy_repo == "https://example/p"
     assert loaded.policy_ref == "deadbeef"
     assert loaded.policy_hash == "cafe"
+
+
+def test_compute_hash_is_stable_across_additive_schema_changes() -> None:
+    """An additive policy field must not re-hash an unchanged policy.
+
+    Regression: compute_hash dumped every field, so introducing `trusted_repos`
+    (and later `blocked_targets`) changed the hash of policies that never set
+    them — every project's `aim policy validate` then failed with "locked under
+    a different policy" purely because aim was upgraded.
+    """
+    pol = policy.Policy(name="org", blocked_repos=["evil"])
+    baseline = policy.compute_hash(pol)
+
+    # Simulate the next additive field: a default-valued list on the model.
+    class _Extended(policy.Policy):
+        blocked_widgets: list[str] = pydantic.Field(default_factory=list)
+
+    extended = _Extended(name="org", blocked_repos=["evil"])
+    assert policy.compute_hash(extended) == baseline
+
+    # A field that is actually SET still changes the hash — drift is detected.
+    assert (
+        policy.compute_hash(_Extended(name="org", blocked_repos=["evil"], blocked_widgets=["w"]))
+        != baseline
+    )
+    assert policy.compute_hash(policy.Policy(name="org", blocked_repos=["other"])) != baseline
