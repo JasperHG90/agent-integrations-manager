@@ -865,3 +865,55 @@ def test_upgrade_replaces_id_key_with_semantic(
     assert f"design-audit@{mkt}" not in settings["enabledPlugins"]
     assert _key() in settings["extraKnownMarketplaces"]
     assert settings["enabledPlugins"][f"design-audit@{_key()}"] is True
+
+
+def _add_bom_marketplace(tmp_path: Path) -> tuple[Path, Path]:
+    """A marketplace whose plugin strips a BOM with a literal U+FEFF mid-line (okf's pattern)."""
+    files = _marketplace_files()
+    files["design-audit/servers/mcp.py"] = 'raw = text.lstrip("\ufeff")\n'
+    working = git_fixtures.make_source_repo(tmp_path / "src", files=files)
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    repos.add("a", f"file://{bare}")
+    return working, bare
+
+
+def test_add_hidden_unicode_blocks_without_override(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    _add_bom_marketplace(tmp_path)
+    res = _runner.invoke(cli.app, ["plugin", "add", "a/design-audit", str(project_root)])
+    assert res.exit_code != 0
+    assert "pass --override-risk to override" in res.output
+    assert not (project_root / ".claude" / "plugins" / _mkt() / "design-audit").exists()
+
+
+def test_add_override_risk_bypasses_hidden_unicode(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    _add_bom_marketplace(tmp_path)
+    res = _runner.invoke(
+        cli.app, ["plugin", "add", "a/design-audit", str(project_root), "--override-risk"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "hidden Unicode allowed by --override-risk" in res.output
+    assert "U+FEFF" in res.output
+    vendored = project_root / ".claude" / "plugins" / _mkt() / "design-audit"
+    assert (vendored / "servers" / "mcp.py").read_text() == 'raw = text.lstrip("\ufeff")\n'
+    assert manifest.load(project_root).plugins[0].risk_acknowledged
+
+
+def test_rollback_honors_acknowledged_override(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # The acknowledgement is sticky: rollback to a version carrying hidden Unicode
+    # re-vendors it instead of re-blocking, as sync does.
+    working, bare = _add_bom_marketplace(tmp_path)
+    plugin_install.install_plugin(project_root, "a/design-audit", override_risk=True)
+    git_fixtures.add_commit(working, {"design-audit/skills/audit/SKILL.md": "# audit v2\n"}, "bump")
+    git_fixtures.push_to_bare(working, bare)
+    repos.refresh("a")
+    plugin_install.update(project_root, "a/design-audit", override_risk=True)
+
+    plugin_install.rollback(project_root, "a/design-audit")
+    vendored = project_root / ".claude" / "plugins" / _mkt() / "design-audit"
+    assert (vendored / "skills" / "audit" / "SKILL.md").read_text() == "# audit\n"

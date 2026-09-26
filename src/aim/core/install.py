@@ -383,11 +383,13 @@ def _deploy(plan: InstallPlan, *, override_risk: bool = False) -> str:
     repo_url = _repo_url(plan.repo_alias)
     policy.assert_repo_allowed(pol, plan.repo_alias, repo_url)
     policy.assert_artifact_allowed(pol, "skill", plan.qualified_name)
-    hidden = content_guard.scan_directory(snap)
-    if hidden:
-        raise content_guard.HiddenUnicodeError(
-            f"{plan.qualified_name}: hidden Unicode found in skill files:\n" + "\n".join(hidden)
-        )
+    risk.gate_hidden_unicode(
+        content_guard.scan_directory(snap),
+        source=plan.qualified_name,
+        pol=pol,
+        override_risk=override_risk,
+        kind="skill",
+    )
     # Guarded because gathering skill text is risk-only work; skip it when risk is off
     # (agents/rules already hold their content, so they call risk.gate unconditionally).
     # A trusted repo skips the scan (and the gathering) entirely.

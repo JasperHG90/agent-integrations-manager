@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
-from aim.core import content_guard, init, manifest, repos, rule_install
+from aim.core import content_guard, init, manifest, repos, rule_install, sync
 from tests.fixtures import git_fixtures
 
 
@@ -132,10 +133,29 @@ def test_install_uses_tag(home: Path, tmp_path: Path, project_root: Path) -> Non
 
 
 def test_install_rejects_hidden_unicode(home: Path, tmp_path: Path, project_root: Path) -> None:
-    _, qn = _make_project_and_repo(tmp_path, project_root, body="Be concise.\n\nhidden​\n")
+    _, qn = _make_project_and_repo(tmp_path, project_root, body="Be concise.\n\nhidden\u200b\n")
     with pytest.raises(content_guard.HiddenUnicodeError):
         rule_install.install(project_root, qn)
     assert not (project_root / ".claude" / "rules" / "be-concise.md").exists()
+
+
+def test_override_risk_inlines_hidden_unicode_rule(
+    home: Path, tmp_path: Path, project_root: Path
+) -> None:
+    # Inline mode renders the rule body into AGENTS.md, whose final scan must
+    # honor the acknowledged override (regression: install passed, render refused).
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src", files={"rules/be-concise.md": "Be\u200bconcise.\n", "README.md": "x\n"}
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    init.run(init.InitOptions(project_root=project_root, layout_profile="gemini"))
+    repos.add("anth", f"file://{bare}")
+
+    rule_install.install(project_root, "anth/be-concise", override_risk=True)
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
+
+    assert manifest.load(project_root).rules[0].risk_acknowledged
+    assert "Be\u200bconcise." in (project_root / "AGENTS.md").read_text()
 
 
 def test_remove_prunes_orphan_repo_binding(home: Path, tmp_path: Path, project_root: Path) -> None:

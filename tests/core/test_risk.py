@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from aim.core import agent_install, policy, risk
+from aim.core import agent_install, content_guard, policy, risk
 
 
 @pytest.fixture(autouse=True)
@@ -450,3 +450,38 @@ def test_judge_real_llm_passes_benign(home: Path) -> None:
         pytest.skip("set GEMINI_API_KEY to run the real-LLM judge test")
     benign = "## Format\nFormat every Python file in the repository using black and isort."
     assert risk.JudgeClassifier(_gemini_judge_config()).classify(benign).level is risk.RiskLevel.LOW
+
+
+# ---------------------------------------------------------------------------
+# hidden-Unicode gate honors --override-risk
+# ---------------------------------------------------------------------------
+
+_HIDDEN = "hello\u200bworld"
+
+
+def test_hidden_unicode_blocks_without_override(home: Path, project_root: Path) -> None:
+    with pytest.raises(content_guard.HiddenUnicodeError, match="pass --override-risk"):
+        agent_install._gate_agent(project_root, "r/ok", _HIDDEN)
+
+
+def test_hidden_unicode_override_downgrades_to_warning(home: Path, project_root: Path) -> None:
+    # Risk scanning is off (no policy): the override still applies to the
+    # always-on hidden-Unicode scan, and every finding is surfaced as a warning.
+    agent_install._gate_agent(project_root, "r/ok", _HIDDEN, override_risk=True)
+    warnings = risk.take_risk_warnings()
+    assert len(warnings) == 1
+    assert "hidden Unicode allowed by --override-risk" in warnings[0]
+    assert "U+200B" in warnings[0]
+
+
+def test_hidden_unicode_override_refused_when_policy_forbids(
+    home: Path, project_root: Path
+) -> None:
+    _set_risk_policy(project_root, mode="block", allow_override=False)
+    with pytest.raises(content_guard.HiddenUnicodeError, match="override disabled by policy"):
+        agent_install._gate_agent(project_root, "r/ok", _HIDDEN, override_risk=True)
+
+
+def test_gate_hidden_unicode_noop_without_findings(home: Path, project_root: Path) -> None:
+    risk.gate_hidden_unicode([], source="x", pol=policy.Policy(name="local"), override_risk=False)
+    assert risk.take_risk_warnings() == []

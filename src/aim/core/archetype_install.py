@@ -72,7 +72,13 @@ def gate_archetype(
     url = _repo_url(alias)
     policy.assert_repo_allowed(pol, alias, url)
     policy.assert_archetype_allowed(pol, qualified_name)
-    content_guard.assert_no_hidden_unicode(content, source=f"archetype {qualified_name}")
+    risk.gate_hidden_unicode(
+        content_guard.scan_text(content, source=f"archetype {qualified_name}"),
+        source=f"archetype {qualified_name}",
+        pol=pol,
+        override_risk=override_risk,
+        kind="archetype",
+    )
     if not policy.repo_is_trusted(pol, alias, url):
         risk.gate(
             content,

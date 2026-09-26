@@ -268,10 +268,21 @@ def test_install_plugin_style_skill(home: Path, project_root: Path, tmp_path: Pa
     assert m.skills[0].source_path == "plugins/business-analytics/skills/data-storytelling"
 
 
+def test_install_override_risk_allows_hidden_unicode(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    _, bare = _build_repo(tmp_path, {"skills/foo/SKILL.md": "# foo\n\nhidden\u200b\n"})
+    repos.add("a", f"file://{bare}")
+    installed = install.install(project_root, "a/foo", override_risk=True)
+    assert installed.risk_acknowledged
+    skill_md = project_root / ".claude" / "skills" / "foo" / "SKILL.md"
+    assert skill_md.read_text() == "# foo\n\nhidden\u200b\n"
+
+
 def test_install_rejects_hidden_unicode(home: Path, project_root: Path, tmp_path: Path) -> None:
     _, bare = _build_repo(
         tmp_path,
-        {"skills/foo/SKILL.md": "# foo\n\nhidden​\n"},
+        {"skills/foo/SKILL.md": "# foo\n\nhidden\u200b\n"},
     )
     repos.add("a", f"file://{bare}")
     with pytest.raises(content_guard.HiddenUnicodeError):

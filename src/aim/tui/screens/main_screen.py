@@ -20,6 +20,7 @@ from aim.core import init as init_mod
 from aim.core import layout_profiles
 from aim.core import lock as lock_mod
 from aim.core import prune as prune_mod
+from aim.core import risk as risk_mod
 from aim.core import sync as sync_mod
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.init_modal import InitConfig, InitModal
@@ -408,6 +409,9 @@ class MainScreen(Screen[None]):
         except Exception as exc:
             self.app.call_from_thread(self.app.notify, f"sync failed: {exc}", severity="error")
             return
+        finally:
+            for warn in risk_mod.take_risk_warnings():
+                self.app.call_from_thread(self.app.notify, warn, severity="warning", title="risk")
         self.app.call_from_thread(
             self.app.notify,
             f"synced {len(result.synced_skills)} skills, "
