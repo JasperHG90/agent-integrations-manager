@@ -28,7 +28,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from aim.core import paths, policy
+from aim.core import content_guard, paths, policy
 
 _SEVERITY_TO_LEVEL: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
 
@@ -764,7 +764,10 @@ _warnings_lock = threading.Lock()
 def _warn(message: str) -> None:
     """Append an advisory risk message to the thread-safe warnings buffer."""
     with _warnings_lock:
-        _risk_warnings.append(message)
+        # The same artifact can pass several gates in one run (e.g. archetype
+        # select, then the AGENTS.md render); report each finding once.
+        if message not in _risk_warnings:
+            _risk_warnings.append(message)
 
 
 def take_risk_warnings() -> list[str]:
@@ -869,6 +872,41 @@ def gate_oversized(
             "cannot fully scan (split the artifact or pass --override-risk)"
         )
     _warn(f"{source}: content exceeds the risk-scan cap; scanned a prefix only")
+
+
+def gate_hidden_unicode(
+    findings: list[str],
+    *,
+    source: str,
+    pol: policy.Policy,
+    override_risk: bool = False,
+    kind: str | None = None,
+) -> None:
+    """Enforce the hidden-Unicode scan, honoring `--override-risk`.
+
+    Unlike the classifier/judge, this runs whether or not `[risk]` is active and
+    even for trusted repos. An override the policy permits (`allow_override`)
+    downgrades the block to a warning that still lists every finding.
+
+    Args:
+        findings: Hidden-Unicode findings from `content_guard` (may be empty).
+        source: Label for the artifact, used in messages.
+        pol: The governing policy supplying `allow_override`.
+        override_risk: Bypass the block when the policy permits overrides.
+        kind: Artifact kind, so per-type risk settings apply.
+
+    Raises:
+        content_guard.HiddenUnicodeError: Findings exist and no honored override applies.
+    """
+    if not findings:
+        return
+    detail = "\n".join(findings)
+    allow = config_from_policy(pol, kind).allow_override
+    if override_risk and allow:
+        _warn(f"{source}: hidden Unicode allowed by --override-risk:\n{detail}")
+        return
+    hint = "override disabled by policy" if not allow else "pass --override-risk to override"
+    raise content_guard.HiddenUnicodeError(f"{source}: hidden Unicode found ({hint}):\n{detail}")
 
 
 def gate(

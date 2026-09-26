@@ -155,11 +155,13 @@ def _deploy(
     if kind.source_unit == "dir":
         snap = install._ensure_snapshot(repo_alias, version.sha, source_path, plugin_name)
         install._ensure_symlinks_safe(snap)
-        hidden = content_guard.scan_directory(snap)
-        if hidden:
-            raise content_guard.HiddenUnicodeError(
-                f"{qualified_name}: hidden Unicode found in plugin files:\n" + "\n".join(hidden)
-            )
+        risk.gate_hidden_unicode(
+            content_guard.scan_directory(snap),
+            source=qualified_name,
+            pol=pol,
+            override_risk=override_risk,
+            kind="plugin",
+        )
         _surface_executable_surface(kind, snap, qualified_name)
         if scan and pol.risk.active_for("plugin"):
             text, truncated = install._gather_skill_text(snap)
@@ -190,7 +192,13 @@ def _deploy(
         raise install.RollbackUnavailableError(
             f"could not read {repo_alias}/{plugin_name}@{version.sha[:12]}: {exc}"
         ) from exc
-    content_guard.assert_no_hidden_unicode(content, source=qualified_name)
+    risk.gate_hidden_unicode(
+        content_guard.scan_text(content, source=qualified_name),
+        source=qualified_name,
+        pol=pol,
+        override_risk=override_risk,
+        kind="plugin",
+    )
     if scan and pol.risk.active_for("plugin"):
         risk.gate(
             content,
@@ -495,7 +503,7 @@ def rollback(
         source_path=existing.source_path,
         version=target_version,
         qualified_name=qualified_name,
-        override_risk=False,
+        override_risk=existing.risk_acknowledged,
     )
     existing.push_history(
         SkillVersion(tag=target_version.tag, sha=target_version.sha, installed_at=datetime.now(UTC))

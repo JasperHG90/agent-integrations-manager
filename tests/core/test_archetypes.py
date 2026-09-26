@@ -12,11 +12,13 @@ from aim import cli
 from aim.core import (
     archetype_install,
     archetypes,
+    content_guard,
     declarations,
     lock,
     manifest,
     policy,
     repos,
+    risk,
     sync,
 )
 from aim.core import init as init_mod
@@ -649,3 +651,53 @@ def test_assert_archetype_allowed_permits_builtin_and_empty_list() -> None:
     with pytest.raises(policy.PolicyViolationError):
         policy.assert_archetype_allowed(pol, "a/other")
     policy.assert_archetype_allowed(policy.Policy(), "anything")  # empty = all allowed
+
+
+_ZWSP_BASE = "# Lean Base\n\nBe\u200bterse.\n"
+
+
+def test_select_hidden_unicode_blocks_before_declaring(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    url = _repo_with_archetypes(tmp_path, {"instructions/lean/AGENTS.md": _ZWSP_BASE})
+    repos.add("co", url, allow_empty=True)
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+
+    with pytest.raises(content_guard.HiddenUnicodeError, match="pass --override-risk"):
+        archetype_install.select(project_root, "co/lean")
+    assert declarations.load(project_root).archetype.qualified_name == "default"
+
+
+def test_select_override_risk_renders_hidden_unicode_archetype(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    # The override must carry through the AGENTS.md render chokepoint, not just
+    # the select gate (regression: select declared it, then the render refused).
+    url = _repo_with_archetypes(tmp_path, {"instructions/lean/AGENTS.md": _ZWSP_BASE})
+    repos.add("co", url, allow_empty=True)
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    risk.take_risk_warnings()
+
+    archetype_install.select(project_root, "co/lean", override_risk=True)
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
+
+    assert "Be\u200bterse." in (project_root / "AGENTS.md").read_text()
+    warnings = [w for w in risk.take_risk_warnings() if "hidden Unicode" in w]
+    assert len(warnings) == 1  # select and render report the same finding once
+
+
+def test_acknowledged_archetype_does_not_excuse_hand_edits(
+    home: Path, project_root: Path, tmp_path: Path
+) -> None:
+    url = _repo_with_archetypes(tmp_path, {"instructions/lean/AGENTS.md": _ZWSP_BASE})
+    repos.add("co", url, allow_empty=True)
+    init_mod.run(init_mod.InitOptions(project_root=project_root))
+    archetype_install.select(project_root, "co/lean", override_risk=True)
+    asyncio.run(lock.run(lock.LockOptions(project_root=project_root)))
+    asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))
+
+    agents = project_root / "AGENTS.md"
+    agents.write_text(agents.read_text() + "\nsneaky\u2060edit\n")
+    with pytest.raises(content_guard.HiddenUnicodeError, match="U\\+2060"):
+        asyncio.run(sync.run(sync.SyncOptions(project_root=project_root)))

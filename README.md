@@ -384,7 +384,10 @@ unchanged artifacts). The default mode is `block`: a high-risk verdict stops the
 each fired rule. `--override-risk` overrides a block on `skill/agent/rule add`/`update` — unless
 the policy sets `allow_override = false`. The TUI install dialogs expose the same override as an
 "Override risk gate" checkbox. Set `mode = "warn"` to surface findings as advisories without
-blocking.
+blocking. The override also covers the always-on hidden-Unicode scan: findings become warnings
+instead of a block, subject to the same `allow_override` setting. An override is recorded in
+`aim.lock.toml` (`risk_acknowledged`) and honored by later `sync` runs, including teammates'.
+Set `allow_override = false` to prevent that.
 
 > Risk scanning is **off by default** — it runs only once `classifier` or `llm_judge` is enabled.
 

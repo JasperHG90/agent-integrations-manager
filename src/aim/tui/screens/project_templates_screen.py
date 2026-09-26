@@ -14,6 +14,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from aim.core import profiles as profiles_mod
+from aim.core import risk as risk_mod
 from aim.tui.modals.busy import BusyModal
 from aim.tui.modals.confirm import ConfirmModal
 from aim.tui.modals.export_toml import ExportTomlModal
@@ -310,6 +311,8 @@ class ProjectTemplatesScreen(Screen[None]):
             return
         finally:
             self.app.call_from_thread(self._dismiss_busy)
+            for warn in risk_mod.take_risk_warnings():
+                self.app.call_from_thread(self.app.notify, warn, severity="warning", title="risk")
         parts: list[str] = []
         if apply_result.installed_skills:
             parts.append(f"{len(apply_result.installed_skills)} skill(s)")

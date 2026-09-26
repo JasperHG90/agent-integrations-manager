@@ -161,7 +161,9 @@ With both toggles on, the local screen **gates** the judge: a screen hit blocks 
 and the judge never runs. Verdicts are cached by content hash, so re-scans are deterministic
 and unchanged artifacts aren't re-judged. `mode = "warn"` surfaces findings as advisories
 instead of blocking; `--override-risk` overrides a block on add/update unless the policy sets
-`allow_override = false`.
+`allow_override = false`. The same override (and the same `allow_override` setting) applies to
+the always-on hidden-Unicode scan. An override is recorded in `aim.lock.toml` and honored by
+later `sync` runs, including teammates'.
 
 ## Command reference
 

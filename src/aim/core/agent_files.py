@@ -113,6 +113,27 @@ def _render_for_template(
     )
 
 
+def _strip_acknowledged(doc: str, acknowledged: list[str]) -> str:
+    """Drop lines of ``doc`` that carry hidden Unicode from acknowledged sources.
+
+    Only lines of an acknowledged text that themselves hold hidden characters are
+    removed, so a hand edit or template line elsewhere is still scanned.
+
+    Args:
+        doc: The merged AGENTS.md document about to be written.
+        acknowledged: Texts whose hidden Unicode the user accepted via --override-risk.
+
+    Returns:
+        ``doc`` minus the acknowledged lines, for the final hidden-Unicode scan.
+    """
+    allowed = {
+        line for text in acknowledged for line in text.splitlines() if content_guard.scan_text(line)
+    }
+    if not allowed:
+        return doc
+    return "\n".join(line for line in doc.splitlines() if line not in allowed)
+
+
 def write_agent_files(
     project_root: Path,
     m,
@@ -252,7 +273,16 @@ def write_agent_files(
 
     # Write AGENTS.md last so symlinks can reference it safely.
     agents_path.parent.mkdir(parents=True, exist_ok=True)
-    content_guard.assert_no_hidden_unicode(merged, source=agents_path.name)
+    # Content the user let through with --override-risk (recorded as
+    # risk_acknowledged) is already gated upstream; scan everything else.
+    acknowledged = [
+        rendered.body for r, rendered in zip(m.rules, applied, strict=True) if r.risk_acknowledged
+    ]
+    if archetype_base is not None and m.archetype is not None and m.archetype.risk_acknowledged:
+        acknowledged.append(archetype_base)
+    content_guard.assert_no_hidden_unicode(
+        _strip_acknowledged(merged, acknowledged), source=agents_path.name
+    )
     agents_path.write_text(merged)
 
     m.managed_region_hashes = new_hashes
