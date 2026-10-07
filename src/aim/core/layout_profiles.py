@@ -30,6 +30,8 @@ from aim.core.models import LayoutProfile as LayoutProfileRow
 from aim.core.validation import is_valid_mirror_name
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# _NAME_RE in words, for error messages people read.
+_NAME_RULE = "use lowercase letters, digits, '-' or '_', starting with a letter or digit"
 _RELATIVE_PATH_RE = re.compile(
     r"^(?:(?!\.{1,2}$)[A-Za-z0-9_\-\.]+)(?:/(?:(?!\.{1,2}$)[A-Za-z0-9_\-\.]+))*$"
 )
@@ -91,9 +93,7 @@ class LayoutProfile(BaseModel):
             LayoutProfileNameError: If the name does not match the pattern.
         """
         if not _NAME_RE.fullmatch(value):
-            raise LayoutProfileNameError(
-                f"profile name {value!r} invalid: must match {_NAME_RE.pattern}"
-            )
+            raise LayoutProfileNameError(f"profile name {value!r} invalid: {_NAME_RULE}")
         return value
 
     @field_validator(
@@ -361,9 +361,7 @@ def project_profile_path(project_root: Path, name: str) -> Path:
         LayoutProfileNameError: If the name is invalid.
     """
     if not _NAME_RE.fullmatch(name):
-        raise LayoutProfileNameError(
-            f"profile name {name!r} invalid: must match {_NAME_RE.pattern}"
-        )
+        raise LayoutProfileNameError(f"profile name {name!r} invalid: {_NAME_RULE}")
     return project_profile_dir(project_root) / f"{name}.toml"
 
 
@@ -596,9 +594,7 @@ def delete_project_profile(project_root: Path, name: str) -> bool:
         LayoutProfileNameError: If the name is invalid.
     """
     if not _NAME_RE.fullmatch(name):
-        raise LayoutProfileNameError(
-            f"profile name {name!r} invalid: must match {_NAME_RE.pattern}"
-        )
+        raise LayoutProfileNameError(f"profile name {name!r} invalid: {_NAME_RULE}")
     path = project_profile_path(project_root, name)
     if not path.exists():
         return False
@@ -620,9 +616,7 @@ def delete_global_profile(project_root: Path, name: str) -> bool:
         LayoutProfileNameError: If the name is invalid.
     """
     if not _NAME_RE.fullmatch(name):
-        raise LayoutProfileNameError(
-            f"profile name {name!r} invalid: must match {_NAME_RE.pattern}"
-        )
+        raise LayoutProfileNameError(f"profile name {name!r} invalid: {_NAME_RULE}")
     deleted_db = _delete_db_profile(name)
     deleted_repo = delete_project_profile(project_root, name)
     return deleted_db or deleted_repo
@@ -663,9 +657,7 @@ def set_global_default(name: str | None) -> None:
         LayoutProfileNameError: If a non-None name is invalid.
     """
     if name is not None and not _NAME_RE.fullmatch(name):
-        raise LayoutProfileNameError(
-            f"profile name {name!r} invalid: must match {_NAME_RE.pattern}"
-        )
+        raise LayoutProfileNameError(f"profile name {name!r} invalid: {_NAME_RULE}")
     with db.session() as session:
         if name is None:
             row = session.get(GlobalSetting, _DEFAULT_LAYOUT_PROFILE_KEY)

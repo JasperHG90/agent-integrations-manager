@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from pydantic import ValidationError
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -38,6 +39,28 @@ class LayoutProfileResult:
 
     profile: layout_profiles.LayoutProfile
     original_name: str | None = None
+
+
+def _first_field_error(exc: ValidationError) -> tuple[str, str | None]:
+    """Reduce a profile ValidationError to its first message and the input to focus.
+
+    Pydantic's own rendering ("1 validation error for LayoutProfile ...
+    [type=value_error, ...]") is a developer dump; the validators already
+    word their messages for people, so show that message alone.
+
+    Args:
+        exc: The error raised while building the profile.
+
+    Returns:
+        The message, and the id of the input that holds the offending field,
+        or None for a check spanning several fields.
+    """
+    err = exc.errors()[0]
+    cause = err.get("ctx", {}).get("error")
+    msg = str(cause) if cause is not None else err["msg"]
+    if not err["loc"]:
+        return msg, None
+    return msg, str(err["loc"][0]).replace("_", "-")
 
 
 class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
@@ -77,6 +100,7 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
             VerticalScroll(
                 Static("Name:", markup=False),
                 Input(value=(p.name if p else ""), id="name"),
+                Static("", id="name-error", markup=False, classes="modal-error"),
                 Static("Display name:", markup=False),
                 Input(value=(p.display_name or "" if p else ""), id="display-name"),
                 Static("Description:", markup=False),
@@ -149,6 +173,7 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
 
     def on_mount(self) -> None:
         """Focus the name field and preselect radios matching the edited profile."""
+        self.query_one("#name-error", Static).display = False
         self.query_one("#name", Input).focus()
         if self._original:
             scope = self._original.scope
@@ -176,17 +201,24 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
         """Dismiss the modal without a result."""
         self.dismiss(None)
 
-    def _error(self, msg: str, focus_id: str) -> None:
+    def _error(self, msg: str, focus_id: str | None) -> None:
         """Show an inline error, focus the offending field, and notify the user.
+
+        Name errors show directly under the Name input; the rest at the bottom.
 
         Args:
             msg: Error message to display.
-            focus_id: Widget id to focus so the user can correct the input.
+            focus_id: Widget id to focus so the user can correct the input, or
+                None when no single field is at fault.
         """
-        self.query_one("#error", Static).update(msg)
-        widget = self.query_one(f"#{focus_id}")
-        if hasattr(widget, "focus"):
-            widget.focus()
+        name_error = self.query_one("#name-error", Static)
+        name_error.update(msg if focus_id == "name" else "")
+        name_error.display = focus_id == "name"
+        self.query_one("#error", Static).update("" if focus_id == "name" else msg)
+        if focus_id is not None:
+            widget = self.query_one(f"#{focus_id}")
+            if hasattr(widget, "focus"):
+                widget.focus()
         self.app.notify(msg, severity="error", title="Layout profile")
 
     def _submit(self) -> None:
@@ -223,8 +255,8 @@ class LayoutProfileModal(ModalScreen[LayoutProfileResult | None]):
                 agents_md=agents_md,
                 symlinks=symlinks,
             )
-        except Exception as exc:
-            self._error(f"invalid profile: {exc}", "name")
+        except ValidationError as exc:
+            self._error(*_first_field_error(exc))
             return
 
         if self._is_builtin and self._original is not None and name == self._original.name:

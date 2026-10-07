@@ -54,6 +54,15 @@ def test_rejects_invalid_name() -> None:
         layout_profiles.LayoutProfile(name="UpperCase", skills_dir=".claude/skills")
 
 
+@pytest.mark.parametrize("name", ["Opencode", "-leading", "has space", "dot.name"])
+def test_invalid_name_error_states_the_rule_in_words(name: str, project_root: Path) -> None:
+    rule = "use lowercase letters, digits, '-' or '_', starting with a letter or digit"
+    with pytest.raises(ValueError, match=rule):
+        layout_profiles.LayoutProfile(name=name)
+    with pytest.raises(layout_profiles.LayoutProfileNameError, match=rule):
+        layout_profiles.project_profile_path(project_root, name)
+
+
 def test_rejects_traversal_path() -> None:
     with pytest.raises(ValueError):
         layout_profiles.LayoutProfile(name="bad", skills_dir="../skills")

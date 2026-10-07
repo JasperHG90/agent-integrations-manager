@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent
 
 from aim.core import layout_profiles, manifest, repos
@@ -220,13 +221,7 @@ async def test_layout_profile_modal_invalid_name_shows_error_without_crashing(
     app = AimApp(project_root=project_root)
     # notifications=True so the error toast actually renders (and parses its message).
     async with app.run_test(notifications=True) as pilot:
-        await pilot.pause()
-        await pilot.press("l")
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        modal = app.screen
-        assert isinstance(modal, LayoutProfileModal)
+        modal = await _open_add_profile_modal(pilot)
         modal.query_one("#name", Input).value = "Opencode"
         await pilot.pause()
         modal.query_one("#save", Button).press()
@@ -234,4 +229,64 @@ async def test_layout_profile_modal_invalid_name_shows_error_without_crashing(
         await pilot.pause()
 
         assert app.screen is modal
-        assert "invalid profile" in str(modal.query_one("#error", Static).render())
+        name_error = str(modal.query_one("#name-error", Static).render())
+        assert name_error == (
+            "profile name 'Opencode' invalid: use lowercase letters, digits, '-' or '_', "
+            "starting with a letter or digit"
+        )
+        assert modal.query_one("#name-error", Static).display
+        assert str(modal.query_one("#error", Static).render()) == ""
+        assert modal.focused is modal.query_one("#name", Input)
+
+
+async def _open_add_profile_modal(pilot: Pilot[None]) -> LayoutProfileModal:
+    await pilot.pause()
+    await pilot.press("l")
+    await pilot.pause()
+    await pilot.press("a")
+    await pilot.pause()
+    modal = pilot.app.screen
+    assert isinstance(modal, LayoutProfileModal)
+    return modal
+
+
+@pytest.mark.asyncio
+async def test_layout_profile_modal_path_error_is_short_and_focuses_field(
+    home: Path, project_root: Path
+) -> None:
+    """A bad path reports the validator's message alone, at the bottom, and focuses that input."""
+    app = AimApp(project_root=project_root)
+    async with app.run_test() as pilot:
+        modal = await _open_add_profile_modal(pilot)
+        modal.query_one("#name", Input).value = "custom"
+        modal.query_one("#rules-dir", Input).value = "../escape"
+        modal.query_one("#save", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        error = str(modal.query_one("#error", Static).render())
+        assert error.startswith("path '../escape' invalid")
+        assert "validation error" not in error
+        assert "[type=" not in error
+        assert not modal.query_one("#name-error", Static).display
+        assert modal.focused is modal.query_one("#rules-dir", Input)
+
+
+@pytest.mark.asyncio
+async def test_layout_profile_modal_cross_field_error_shows_at_bottom(
+    home: Path, project_root: Path
+) -> None:
+    """A model-level check (AGENTS.md also listed as a symlink) has no single field to blame."""
+    app = AimApp(project_root=project_root)
+    async with app.run_test() as pilot:
+        modal = await _open_add_profile_modal(pilot)
+        modal.query_one("#name", Input).value = "custom"
+        modal.query_one("#symlinks", Input).value = "AGENTS.md"
+        modal.query_one("#save", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert str(modal.query_one("#error", Static).render()) == (
+            "agents_md 'AGENTS.md' must not also be listed in symlinks"
+        )
+        assert not modal.query_one("#name-error", Static).display
