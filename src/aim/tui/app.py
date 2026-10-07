@@ -8,6 +8,7 @@ from pathlib import Path
 
 from textual.app import App
 from textual.binding import Binding
+from textual.notifications import SeverityLevel
 
 from aim.core import default_mcp_servers, layout_profiles, mcp_registry
 from aim.tui import _threads
@@ -75,6 +76,33 @@ class AimApp(App[None]):
         # the sqlite cache is WAL crash-safe, and the MCP screen re-seeds on
         # open anyway (also detached — see aim.tui._threads).
         _threads.run_detached(self._seed_default_mcp_servers, name="mcp-seed")
+
+    def notify(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        severity: SeverityLevel = "information",
+        timeout: float | None = None,
+        markup: bool = False,
+    ) -> None:
+        """Post a toast, treating the message as plain text unless told otherwise.
+
+        Textual parses toast text as markup by default, so exception text that
+        contains brackets (Pydantic's `[type=..., input_value=...]`, TOML errors,
+        git stderr) raises `MarkupError` while rendering and crashes the app.
+        Screens and modals must call `self.app.notify`, never their own
+        `Widget.notify`: that one forwards `markup=True` explicitly and bypasses
+        this default.
+
+        Args:
+            message: Text to show.
+            title: Optional toast title.
+            severity: Toast severity.
+            timeout: Seconds to show the toast; Textual's default when None.
+            markup: Parse `message` as Textual markup. Off by default.
+        """
+        super().notify(message, title=title, severity=severity, timeout=timeout, markup=markup)
 
     def _sync_profiles(self) -> None:
         """Reconcile repo profiles with the DB cache, surfacing warnings on the UI thread."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.widgets import DataTable, Input, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, Static, TabbedContent
 
 from aim.core import layout_profiles, manifest, repos
 from aim.tui.app import AimApp
@@ -210,3 +210,28 @@ async def test_layout_screen_install_clears_overlay(
         assert screen._busy is None
 
     assert (project_root / ".aim" / "targets" / "opencode.toml").exists()
+
+
+@pytest.mark.asyncio
+async def test_layout_profile_modal_invalid_name_shows_error_without_crashing(
+    home: Path, project_root: Path
+) -> None:
+    """Issue #2: the Pydantic error's `[type=..., input_value=...]` must not be parsed as markup."""
+    app = AimApp(project_root=project_root)
+    # notifications=True so the error toast actually renders (and parses its message).
+    async with app.run_test(notifications=True) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, LayoutProfileModal)
+        modal.query_one("#name", Input).value = "Opencode"
+        await pilot.pause()
+        modal.query_one("#save", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert "invalid profile" in str(modal.query_one("#error", Static).render())

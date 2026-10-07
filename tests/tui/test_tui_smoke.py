@@ -132,3 +132,28 @@ async def test_rules_screen_lists_rules(home: Path, tmp_path: Path) -> None:
 
         table = app.screen.query_one(DataTable)
         assert table.row_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "x [type=value_error, input_value='Opencode', input_type=str]",
+        "add a repo first (press [a])",
+        "[/] unbalanced",
+    ],
+)
+async def test_notify_treats_message_as_plain_text(home: Path, message: str) -> None:
+    """Issue #2: bracketed error text must render literally, not be parsed as markup."""
+    # Toast is private, but it is the widget that parses the message; no public alias.
+    from textual.widgets._toast import Toast
+
+    app = AimApp()
+    async with app.run_test(notifications=True) as pilot:
+        await pilot.pause()
+        app.notify(message, severity="error")
+        await pilot.pause()
+        await pilot.pause()
+        toasts = list(app.screen.query(Toast))
+        assert toasts
+        assert message in str(toasts[-1].render())
