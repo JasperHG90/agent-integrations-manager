@@ -39,6 +39,23 @@ def test_install_writes_rule_file(home: Path, tmp_path: Path, project_root: Path
     assert m.rules[0].content_hash is not None
 
 
+def test_install_apm_instruction_writes_bare_name(
+    home: Path, tmp_path: Path, project_root: Path
+) -> None:
+    working = git_fixtures.make_source_repo(
+        tmp_path / "src",
+        files={".apm/instructions/be-concise.instructions.md": "Be concise.\n"},
+    )
+    bare = git_fixtures.make_bare_remote(working, tmp_path / "bare.git")
+    init.run(init.InitOptions(project_root=project_root))
+    repos.add("anth", f"file://{bare}")
+    rule_install.install(project_root, "anth/be-concise")
+    target = project_root / ".claude" / "rules" / "be-concise.md"
+    assert target.read_text() == "Be concise.\n"
+    m = manifest.load(project_root)
+    assert m.rules[0].source_path == ".apm/instructions/be-concise.instructions.md"
+
+
 def test_install_mirrors_to_declarations(home: Path, tmp_path: Path, project_root: Path) -> None:
     from aim.core import declarations
 

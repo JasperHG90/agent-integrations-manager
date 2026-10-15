@@ -162,7 +162,8 @@ A registered repo can expose skills, agents, and rules in **any** location. `aim
 
 - Any `SKILL.md` file anywhere in the repo. The skill name is its parent directory; a bare `SKILL.md` at the repo root uses the repo alias as its name.
 - Any `AGENT.md` file anywhere in the repo, plus flat `<name>.md` files inside any `agents/` directory. The agent name follows the same rules as skills.
-- Any `.md` file whose stem is a valid rule name anywhere in the repo. Common documentation names like `README.md` or `license.md` are ignored.
+- Any `.md` file under `rules/` or `.claude/rules/` whose stem is a valid rule name. Common documentation names like `README.md` or `license.md` are ignored.
+- [APM](https://github.com/microsoft/apm)-style instructions: `<name>.instructions.md` files directly inside `.apm/instructions/` or `.github/instructions/`, surfaced as rule `<name>`. When both directories hold the same name, `.apm/instructions/` wins, as in APM. Files are installed as they are, so their `applyTo:` frontmatter is not converted to Claude's `paths:`.
 - Any `instructions/<name>/` (or `.aim/instructions/<name>/`) directory holding a standard instruction file, surfaced as a selectable project-instruction archetype. Unlike the others, archetypes are never discovered at the repo root.
 - Any `targets/<name>.toml` that validates as a plugin-target spec, surfaced as an installable target named by the spec's `name` field (see [Sharing plugin targets](#sharing-plugin-targets-across-teams-and-projects)).
 

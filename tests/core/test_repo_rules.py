@@ -91,6 +91,82 @@ def test_precedence_rules_dir_wins(home: Path, tmp_path: Path) -> None:
     assert any(r.rule_md_path == ".claude/rules/dup.md" for r in d.shadowed)
 
 
+def test_discover_finds_apm_instructions(home: Path, tmp_path: Path) -> None:
+    # APM packages keep rules as `<name>.instructions.md` under
+    # `.apm/instructions/` or `.github/instructions/`; the rule name drops the
+    # `.instructions.md` suffix.
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".apm/instructions/python-style.instructions.md": "Use type hints.\n",
+            ".github/instructions/testing.instructions.md": "Write tests.\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    rows = repo_rules.list_rules()
+    assert [(r.qualified_name, r.rule_md_path) for r in rows] == [
+        ("a/python-style", ".apm/instructions/python-style.instructions.md"),
+        ("a/testing", ".github/instructions/testing.instructions.md"),
+    ]
+
+
+def test_discover_apm_instructions_matches_apm_patterns_only(home: Path, tmp_path: Path) -> None:
+    # APM scans `instructions/*.instructions.md` only: no plain `.md`, no
+    # subdirectories, and no `.instructions.md` outside the two directories.
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".apm/instructions/keep.instructions.md": "keep\n",
+            ".apm/instructions/plain.md": "ignored\n",
+            ".apm/instructions/sub/nested.instructions.md": "ignored\n",
+            ".github/instructions/notes.md": "ignored\n",
+            "docs/stray.instructions.md": "ignored\n",
+            ".github/copilot-instructions.md": "ignored\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    d = repo_rules.discover("a")
+    assert [r.rule_md_path for r in d.indexed] == [".apm/instructions/keep.instructions.md"]
+    assert d.shadowed == []
+
+
+def test_precedence_apm_dir_wins_over_github(home: Path, tmp_path: Path) -> None:
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".apm/instructions/dup.instructions.md": "apm\n",
+            ".github/instructions/dup.instructions.md": "github\n",
+            "rules/other.md": "x\n",
+            ".apm/instructions/other.instructions.md": "apm\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    d = repo_rules.discover("a")
+    assert {r.name: r.rule_md_path for r in d.indexed} == {
+        "dup": ".apm/instructions/dup.instructions.md",
+        "other": "rules/other.md",
+    }
+    assert sorted(r.rule_md_path for r in d.shadowed) == [
+        ".apm/instructions/other.instructions.md",
+        ".github/instructions/dup.instructions.md",
+    ]
+
+
+def test_precedence_apm_dir_wins_over_claude_rules(home: Path, tmp_path: Path) -> None:
+    # Same depth: the APM dirs rank with `rules/`, ahead of `.claude/rules/`.
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".apm/instructions/dup.instructions.md": "apm\n",
+            ".claude/rules/dup.md": "claude\n",
+        },
+    )
+    repos.add("a", f"file://{bare}")
+    d = repo_rules.discover("a")
+    assert [r.rule_md_path for r in d.indexed] == [".apm/instructions/dup.instructions.md"]
+    assert [r.rule_md_path for r in d.shadowed] == [".claude/rules/dup.md"]
+
+
 def test_arbitrary_path_not_even_shadowed(home: Path, tmp_path: Path) -> None:
     _, bare = _build_repo_with(
         tmp_path,
@@ -181,3 +257,29 @@ def test_dot_claude_rule_excludable(home: Path, tmp_path: Path) -> None:
     assert [r.qualified_name for r in repo_rules.list_rules()] == ["a/be-concise", "a/dotted"]
     only_canon = repo_rules.list_rules(include_dot_claude=False)
     assert [r.qualified_name for r in only_canon] == ["a/be-concise"]
+
+
+def test_plugin_owned_apm_instruction_indexed(home: Path, tmp_path: Path) -> None:
+    import json
+
+    from aim.core import origins
+
+    marketplace = {
+        "name": "demo-market",
+        "plugins": [{"name": "helper", "source": "./helper", "version": "1.0.0"}],
+    }
+    _, bare = _build_repo_with(
+        tmp_path,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(marketplace),
+            "helper/.claude-plugin/plugin.json": json.dumps({"name": "helper"}),
+            "helper/.apm/instructions/style.instructions.md": "Style rule.\n",
+        },
+    )
+    repos.add("pm", f"file://{bare}")
+    rows = repo_rules.list_rules()
+    assert [(r.qualified_name, r.rule_md_path) for r in rows] == [
+        ("pm/style", "helper/.apm/instructions/style.instructions.md")
+    ]
+    assert rows[0].origin == origins.ORIGIN_PLUGIN
+    assert rows[0].owning_plugin == "helper"

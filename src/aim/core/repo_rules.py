@@ -1,8 +1,10 @@
 """Rule discovery from registered source repos.
 
-A rule is any `.md` file whose stem is a valid rule name. The rule `name`
-is the filename stem (no directory components). Common documentation names
-like `README.md` are rejected because their stems are not valid rule names.
+A rule is a `.md` file under `rules/` or `.claude/rules/` whose stem is a
+valid rule name, or an APM instruction `<name>.instructions.md` directly
+under `.apm/instructions/` or `.github/instructions/`. The rule `name` is
+the filename stem, minus `.instructions` for APM instructions (no directory
+components). Common documentation names like `README.md` are rejected.
 
 If the same rule name appears at multiple locations, the shallower path
 wins (ties broken by lexicographic path); the other is ignored.
@@ -49,9 +51,14 @@ _RULE_DENYLIST = {
 _RULE_RE = re.compile(r"^(?:(?P<path>.*)/)?(?P<name>[^/]+)\.md$")
 
 
+# APM (Agent Package Manager) instruction directories. Matching APM's package
+# discovery, only `<name>.instructions.md` files directly inside them count.
+_APM_PREFIXES = (".apm/instructions/", ".github/instructions/")
+_APM_SUFFIX = ".instructions.md"
+
 # Only canonical rule locations are discovered. Arbitrary `*.md` elsewhere in a
 # repo (docs, notes) must not surface as installable rules.
-_RULE_PREFIXES = ("rules/", ".claude/rules/")
+_RULE_PREFIXES = ("rules/", ".claude/rules/", *_APM_PREFIXES)
 
 
 def _prefix_rank(path: str) -> int:
@@ -61,11 +68,12 @@ def _prefix_rank(path: str) -> int:
         path: Rule `.md` path relative to the repo root.
 
     Returns:
-        0 for `rules/`, 1 for `.claude/rules/` (lower wins).
+        1 for `.claude/rules/`, 0 for `rules/` and the APM directories
+        (lower wins).
     """
-    if path.startswith("rules/"):
-        return 0
-    return 1  # ".claude/rules/"
+    if path.startswith(".claude/rules/"):
+        return 1
+    return 0
 
 
 class DiscoveredRule(NamedTuple):
@@ -87,6 +95,27 @@ class IndexResult:
     shadowed: list[DiscoveredRule]  # skipped duplicates at lower precedence
 
 
+def _rule_name_from(rel: str) -> str | None:
+    """Return the rule name a location-relative path declares, or None.
+
+    Args:
+        rel: Path relative to the repo or owning plugin root, already known
+            to start with one of `_RULE_PREFIXES`.
+
+    Returns:
+        The filename stem for `rules/` and `.claude/rules/` files; for the
+        APM directories, the stem of a direct-child `<name>.instructions.md`.
+        None when the path does not name a rule.
+    """
+    if rel.startswith(_APM_PREFIXES):
+        filename = rel.split("/", 2)[2]
+        if "/" in filename or not filename.endswith(_APM_SUFFIX):
+            return None
+        return filename[: -len(_APM_SUFFIX)]
+    match = _RULE_RE.match(rel)
+    return match.group("name") if match else None
+
+
 def discover(repo_alias: str) -> IndexResult:
     """Discover installable rules in a registered repo at its default ref.
 
@@ -105,11 +134,13 @@ def discover(repo_alias: str) -> IndexResult:
 
     owned = plugins.owned_dirs(repo_alias, repo_dir, sha, paths)
 
-    # Group candidates by rule name. Only `rules/` and `.claude/rules/` are
-    # considered. Precedence: standalone beats plugin-owned; then shallower path
-    # wins; at the same depth `rules/` wins over `.claude/rules/`. Ties break by
-    # lexicographic path. Plugin-owned copies are indexed (origin="plugin",
-    # hidden from lists by default) but never outrank a standalone rule.
+    # Group candidates by rule name. Only `rules/`, `.claude/rules/` and the APM
+    # instruction dirs are considered. Precedence: standalone beats
+    # plugin-owned; then shallower path wins; at the same depth `rules/` and
+    # the APM dirs win over `.claude/rules/`. Ties break by lexicographic path (so
+    # `.apm/instructions/` wins over `.github/instructions/`, as in APM).
+    # Plugin-owned copies are indexed (origin="plugin", hidden from lists by
+    # default) but never outrank a standalone rule.
     by_name: dict[str, list[tuple[tuple[int, int, int, str], DiscoveredRule]]] = {}
     for p in paths:
         entry = plugins.owning_plugin(p, owned)
@@ -120,8 +151,8 @@ def discover(repo_alias: str) -> IndexResult:
         rel = p if entry is None or not entry[0] else p[len(entry[0]) + 1 :]
         if not rel.startswith(_RULE_PREFIXES):
             continue
-        match = _RULE_RE.match(p)
-        if not match:
+        name = _rule_name_from(rel)
+        if name is None:
             continue
 
         if not validation.is_safe_repo_path(p):
@@ -132,7 +163,6 @@ def discover(repo_alias: str) -> IndexResult:
             else origins.origin_from_rank(_prefix_rank(p))
         )
 
-        name = match.group("name")
         if not validation.is_valid_rule_name(name):
             continue
         if name.lower() in _RULE_DENYLIST:
